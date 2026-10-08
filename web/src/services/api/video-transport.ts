@@ -8,6 +8,7 @@ export type VideoTransport = {
     post: <T>(upstreamUrl: string, body: unknown, options?: RequestOptions) => Promise<T>;
     postForm: <T>(upstreamUrl: string, body: FormData, options?: RequestOptions) => Promise<T>;
     get: <T>(upstreamUrl: string, options?: RequestOptions) => Promise<T>;
+    getTaskStatus: <T>(upstreamUrl: string, options?: RequestOptions) => Promise<T>;
     getBlob: (upstreamUrl: string, options?: RequestOptions) => Promise<Blob>;
     getExternalBlob: (url: string, headers: Record<string, string>, options?: RequestOptions) => Promise<Blob>;
 };
@@ -22,6 +23,7 @@ export function createVideoTransport(config: ResolvedAiConfig): VideoTransport {
         post: (upstreamUrl, body, options) => transport.postJson(upstreamUrl, body, options),
         postForm: (upstreamUrl, body, options) => transport.postForm(upstreamUrl, body, options),
         get: (upstreamUrl, options) => transport.get(upstreamUrl, options),
+        getTaskStatus: (upstreamUrl, options) => transport.get(upstreamUrl, { ...options, allowBusinessErrorPayload: true }),
         getBlob: (upstreamUrl, options) => transport.getBlob(upstreamUrl, options),
         getExternalBlob: (url, headers, options) => transport.getExternalBlob(url, headers, options),
     };

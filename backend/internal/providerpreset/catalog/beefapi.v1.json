@@ -1,9 +1,10 @@
 {
   "id": "beefapi",
-  "displayName": "BeefAPI",
-  "baseUrl": "https://enterprise.beefapi.com",
+  "displayName": "Eggfans TV",
+  "baseUrl": "https://api.eggfans.com",
+  "catalogUrl": "https://api.eggfans.com/pricing",
   "catalogProtocol": "openai",
   "presetVersion": 1,
-  "pinned": true,
+  "pinned": false,
   "models": []
 }

@@ -3,7 +3,7 @@ import { Group, Leafer, Path, Rect } from "leafer-ui";
 
 import { activeConnectionPath, canvasConnectionPath } from "@/components/canvas/canvas-connections";
 import type { CanvasBatchConnectionPreview } from "@/lib/canvas/canvas-batch-connection";
-import { subscribeCanvasGraphicsViewportPreview, subscribeCanvasNodeDragPreview, subscribeCanvasSelectionPreview, type CanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
+import { subscribeCanvasGraphicsViewportPreview, subscribeCanvasNodeDragPreview, subscribeCanvasNodeGeometryPreview, subscribeCanvasSelectionPreview, type CanvasNodeDragPreview, type CanvasNodeGeometryPreview } from "@/lib/canvas/canvas-live-viewport";
 import { calculateCanvasPreviewTransform, sameCanvasViewport, shouldRebaseCanvasRaster } from "@/lib/canvas/canvas-leafer-viewport";
 import { offsetSelectedNodeBounds } from "@/lib/canvas/canvas-selection";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -42,6 +42,7 @@ type UnderlayScene = LeaferScene & {
     connectionIdsByNodeId: Map<string, Set<string>>;
     dragPreview: CanvasNodeDragPreview | null;
     dragPreviewConnectionIds: Set<string>;
+    geometryPreview: Map<string, CanvasNodeGeometryPreview>;
 };
 
 type ConnectionSceneEntry = {
@@ -123,12 +124,16 @@ export function CanvasLeaferGraphicsLayer(props: CanvasLeaferGraphicsLayerProps)
             overlay.dragPreview = preview;
             syncLiveSelectionBounds(overlay, propsRef.current, viewportRef.current.k);
         });
+        const unsubscribeNodeGeometry = subscribeCanvasNodeGeometryPreview(container, (preview) => {
+            applyConnectionGeometryPreview(underlay, propsRef.current, preview);
+        });
         resize();
 
         return () => {
             unsubscribe();
             unsubscribeSelection();
             unsubscribeNodeDrag();
+            unsubscribeNodeGeometry();
             resizeObserver.disconnect();
             window.removeEventListener("resize", resize);
             underlay.leafer.destroy(true);
@@ -193,7 +198,7 @@ function createUnderlayScene(host: HTMLDivElement): UnderlayScene {
     const connections = new Group({ hittable: false });
     world.add(connections);
     leafer.add(world);
-    return { leafer, world, host, connections, connectionEntries: new Map(), connectionIdsByNodeId: new Map(), dragPreview: null, dragPreviewConnectionIds: new Set() };
+    return { leafer, world, host, connections, connectionEntries: new Map(), connectionIdsByNodeId: new Map(), dragPreview: null, dragPreviewConnectionIds: new Set(), geometryPreview: new Map() };
 }
 
 function createOverlayScene(host: HTMLDivElement): OverlayScene {
@@ -237,7 +242,7 @@ function rebuildConnections(scene: UnderlayScene, props: CanvasLeaferGraphicsLay
         entry.from = from;
         entry.to = to;
         if (entry.signature !== signature || scene.dragPreview) {
-            syncConnectionPath(entry, props, scene.dragPreview, previewIds);
+            syncConnectionPath(entry, props, scene.dragPreview, previewIds, scene.geometryPreview);
             entry.signature = signature;
         }
         for (const nodeId of [from.id, to.id]) {
@@ -275,9 +280,9 @@ function connectionSceneSignature(connection: CanvasDisplayConnection["connectio
     ].join("|");
 }
 
-function syncConnectionPath(entry: ConnectionSceneEntry, props: CanvasLeaferGraphicsLayerProps, preview: CanvasNodeDragPreview | null, previewIds: ReadonlySet<string> | null = preview?.nodeIds || null) {
-    const from = translatePreviewNode(entry.from, previewIds, preview);
-    const to = translatePreviewNode(entry.to, previewIds, preview);
+function syncConnectionPath(entry: ConnectionSceneEntry, props: CanvasLeaferGraphicsLayerProps, preview: CanvasNodeDragPreview | null, previewIds: ReadonlySet<string> | null = preview?.nodeIds || null, geometryPreview?: ReadonlyMap<string, CanvasNodeGeometryPreview>) {
+    const from = translatePreviewNode(entry.from, previewIds, preview, geometryPreview);
+    const to = translatePreviewNode(entry.to, previewIds, preview, geometryPreview);
     const emphasized = props.selectedConnectionId === entry.connection.id || props.relatedConnectionIds.has(entry.connection.id);
     const denseReadonlyWire = entry.connection.id.startsWith("libtv-dense-");
     entry.path.set({
@@ -292,9 +297,11 @@ function syncConnectionPath(entry: ConnectionSceneEntry, props: CanvasLeaferGrap
     });
 }
 
-function translatePreviewNode(node: CanvasNodeData, previewIds: ReadonlySet<string> | null, preview: CanvasNodeDragPreview | null) {
-    if (!preview || !previewIds?.has(node.id) || (preview.x === 0 && preview.y === 0)) return node;
-    return { ...node, position: { x: node.position.x + preview.x, y: node.position.y + preview.y } };
+function translatePreviewNode(node: CanvasNodeData, previewIds: ReadonlySet<string> | null, preview: CanvasNodeDragPreview | null, geometryPreview?: ReadonlyMap<string, CanvasNodeGeometryPreview>) {
+    const geometry = geometryPreview?.get(node.id);
+    const nextNode = geometry ? { ...node, width: geometry.width, height: geometry.height, position: geometry.position } : node;
+    if (!preview || !previewIds?.has(node.id) || (preview.x === 0 && preview.y === 0)) return nextNode;
+    return { ...nextNode, position: { x: nextNode.position.x + preview.x, y: nextNode.position.y + preview.y } };
 }
 
 function collectPreviewConnectionIds(scene: UnderlayScene, preview: CanvasNodeDragPreview | null) {
@@ -315,7 +322,22 @@ function applyConnectionDragPreview(scene: UnderlayScene, props: CanvasLeaferGra
     for (const connectionId of affectedConnectionIds) {
         const entry = scene.connectionEntries.get(connectionId);
         if (!entry) continue;
-        syncConnectionPath(entry, props, preview, previewIds);
+		syncConnectionPath(entry, props, preview, previewIds, scene.geometryPreview);
+    }
+}
+
+function applyConnectionGeometryPreview(scene: UnderlayScene, props: CanvasLeaferGraphicsLayerProps, preview: CanvasNodeGeometryPreview | null) {
+    const affectedConnectionIds = new Set<string>();
+    if (preview) {
+        scene.geometryPreview.set(preview.nodeId, preview);
+        scene.connectionIdsByNodeId.get(preview.nodeId)?.forEach((connectionId) => affectedConnectionIds.add(connectionId));
+    } else {
+        scene.geometryPreview.forEach((_, nodeId) => scene.connectionIdsByNodeId.get(nodeId)?.forEach((connectionId) => affectedConnectionIds.add(connectionId)));
+        scene.geometryPreview.clear();
+    }
+    for (const connectionId of affectedConnectionIds) {
+        const entry = scene.connectionEntries.get(connectionId);
+        if (entry) syncConnectionPath(entry, props, scene.dragPreview, scene.dragPreview?.nodeIds, scene.geometryPreview);
     }
 }
 

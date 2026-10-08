@@ -156,12 +156,19 @@ function toolToEntry(tool: ToolDefinition, ctx: ToolContext): FloatingDockEntry 
         displayLabel: tool.displayLabel ? resolveText(tool.displayLabel, ctx) : undefined,
         icon: resolveIcon(tool.icon, ctx),
         active: tool.active?.(ctx),
-        disabled: tool.disabled?.(ctx),
+        disabled: tool.disabled?.(ctx) || selectionToolDisabled(tool.id, ctx),
         danger: tool.danger,
         prominent: tool.prominent,
         expands: tool.expands,
         onClick: (event) => tool.run(ctx, event),
     };
+}
+
+function selectionToolDisabled(id: string, ctx: ToolContext) {
+    if (ctx.selectedCount < 1 || !id.startsWith("selection-")) return false;
+    if (id === "selection-create-storyboard") return (ctx.selectedImageCount || 0) < 2;
+    if (id === "selection-create-reference-group") return (ctx.selectedMediaCount || 0) < 2;
+    return false;
 }
 
 function resolveText(value: string | ((ctx: ToolContext) => string), ctx: ToolContext): string {

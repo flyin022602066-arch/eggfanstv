@@ -38,8 +38,8 @@ const (
 )
 
 const (
-	defaultAppearanceBrandName = "BeefTV"
-	defaultAppearanceBrandSlug = "beeftv"
+	defaultAppearanceBrandName = "Eggfans TV"
+	defaultAppearanceBrandSlug = "eggfans-tv"
 	defaultAppearanceSkinID    = "classic"
 	defaultAppearanceLogoURL   = "/logo.svg"
 	defaultAppearanceVideoURL  = "https://boss-shjd.biliapi.net/updream/aniforge/video/video_bbcb00bd-650d-4249-9346-5cd21fd2484c_m1hc-u0-1pu13x-3v1s.mp4"

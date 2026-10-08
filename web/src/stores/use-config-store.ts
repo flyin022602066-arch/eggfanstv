@@ -349,6 +349,7 @@ export type ModelChannel = {
     publicAlias?: string;
     sortOrder?: number;
     baseUrl: string;
+    catalogUrl?: string;
     apiKey: string;
     secretKey?: string;
     headers?: ChannelHeader[];
@@ -421,13 +422,14 @@ export type AiConfig = {
 export const CONFIG_STORE_KEY = "open_ai_canvas:ai_config_store";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 const CHANNEL_MODEL_SEPARATOR = "::";
-const OPENAI_BASE_URL = "https://api.openai.com";
+const EGGFANS_BASE_URL = "https://api.eggfans.com";
+const EGGFANS_CATALOG_URL = `${EGGFANS_BASE_URL}/pricing`;
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const LEGACY_DEFAULT_MODEL_NAMES = new Set(["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"]);
 
 export const defaultConfig: AiConfig = {
     channelMode: "remote",
-    baseUrl: OPENAI_BASE_URL,
+    baseUrl: EGGFANS_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
     // 创作端模型目录只能来自后台公开逻辑模型和用户自定义渠道，不能内置供应商模型。
@@ -546,6 +548,12 @@ function isAudioModelName(model: string) {
 
 function isTextModelName(model: string) {
     return !isImageModelName(model) && !isVideoModelName(model) && !isAudioModelName(model) && !isTranscriptionModelName(model);
+}
+
+function isGeminiTextModelName(model: string) {
+    const value = modelOptionName(model).trim().toLowerCase();
+    if (!/^gemini(?:[-_]|$)/u.test(value)) return false;
+    return !["image", "vision", "veo", "video", "audio", "tts", "embedding", "live"].some((token) => value.includes(token));
 }
 
 export function modelMatchesCapability(model: string, capability?: ModelCapability) {
@@ -717,7 +725,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             models,
             model,
             imageModel: normalizeSelectedModel(config.imageModel || model, channels, imageModels),
-            videoModel: normalizeSelectedModel(config.videoModel, channels, videoModels),
+            videoModel: normalizeSelectedModel(config.videoModel, channels, videoModels, "sd-2.5-c"),
             textModel: normalizeSelectedModel(config.textModel || model, channels, textModels),
             audioModel: normalizeSelectedModel(config.audioModel || defaultConfig.audioModel, channels, audioModels),
             audioVoice: config.audioVoice || defaultConfig.audioVoice,
@@ -776,7 +784,7 @@ function beefApiSeedanceCapabilityConfig(model: string): ModelCapabilityConfig |
 }
 
 function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
-    if (!channel.baseUrl.toLowerCase().includes("enterprise.beefapi.com")) return channel;
+	if (channel.id !== "beefapi" && !channel.baseUrl.toLowerCase().includes("enterprise.beefapi.com")) return channel;
     const models = channel.models;
     const existing = new Map((channel.modelProfiles || []).map((item) => [item.model, item]));
     for (const model of models.filter(isImageModelName)) {
@@ -791,13 +799,15 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
     }
     for (const model of models.filter(isTextModelName)) {
         const current = existing.get(model);
-        if (current?.capability && current.capability !== "text") continue;
-        if (current?.protocol && modelProtocolCapability(current.protocol) !== "text") continue;
+        const forceText = isGeminiTextModelName(model);
+        if (current?.capability && current.capability !== "text" && !forceText) continue;
+        if (current?.protocol && modelProtocolCapability(current.protocol) !== "text" && !forceText) continue;
         existing.set(model, {
             ...(current || {}),
             model,
             capability: "text",
-            protocol: current?.protocol || "chat-completion",
+            protocol: forceText ? "chat-completion" : current?.protocol || "chat-completion",
+            ...(forceText ? { capabilityConfig: undefined } : {}),
         });
     }
     for (const model of models.filter(isAudioModelName)) {
@@ -832,9 +842,11 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };
 }
 
-function normalizeSelectedModel(value: string, channels: ModelChannel[], options: string[]) {
+function normalizeSelectedModel(value: string, channels: ModelChannel[], options: string[], preferredModel = "") {
     const model = normalizeModelOptionValue(value, channels);
-    return model && options.includes(model) ? model : options[0] || "";
+    if (model && options.includes(model)) return model;
+    const preferred = options.find((option) => modelOptionName(option).toLowerCase() === preferredModel);
+    return preferred || options[0] || "";
 }
 
 export function useEffectiveConfig() {
@@ -853,11 +865,14 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
     const apiFormat = normalizeApiFormat(channel?.apiFormat);
     const interfaceType = normalizeChannelInterfaceType(channel?.interfaceType);
     const providedBaseUrl = channel?.baseUrl?.trim();
+    const defaultBaseUrl = interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat);
+    const defaultCatalogUrl = !providedBaseUrl && apiFormat === "openai" && defaultBaseUrl === EGGFANS_BASE_URL ? EGGFANS_CATALOG_URL : undefined;
     return {
         id: channel?.id?.trim() || nanoid(),
         name: channel?.name?.trim() || "新渠道",
         sortOrder: channel?.sortOrder ?? 0,
-        baseUrl: providedBaseUrl || (interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat)),
+        baseUrl: providedBaseUrl || defaultBaseUrl,
+        catalogUrl: channel?.catalogUrl?.trim() || defaultCatalogUrl,
         apiKey: channel?.apiKey || "",
         secretKey: channel?.secretKey || "",
         headers: Array.isArray(channel?.headers) ? channel.headers.map((header) => ({ name: String(header.name || ""), value: String(header.value || "") })) : [],
@@ -960,7 +975,7 @@ export function logicalModelIDForConfig(config: AiConfig) {
 }
 
 export function channelConnectionSignature(channel: ModelChannel) {
-    return [channel.baseUrl.trim(), channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", JSON.stringify(channel.headers || [])].join("\n");
+    return [channel.baseUrl.trim(), channel.catalogUrl?.trim() || "", channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", JSON.stringify(channel.headers || [])].join("\n");
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -976,7 +991,9 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     return {
         ...config,
         model,
-        baseUrl: channel.baseUrl,
+        baseUrl: interfaceType === "eggfans-sd2-video" && channel.baseUrl.trim().replace(/\/+$/, "") === defaultConfig.baseUrl.trim().replace(/\/+$/, "")
+            ? "https://vip.eggfans.asia"
+            : channel.baseUrl,
         apiKey: channel.credentialRef ? "" : channel.apiKey,
         secretKey: channel.credentialRef ? "" : channel.secretKey,
         headers: channel.headers,
@@ -989,13 +1006,30 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 
 function normalizeChannels(config: AiConfig, ensureDefault = true) {
     const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
+    const persistedModelOptions = [
+        ...(Array.isArray(config.models) ? config.models : []),
+        config.model,
+        config.imageModel,
+        config.videoModel,
+        config.textModel,
+        config.audioModel,
+    ].filter((model): model is string => typeof model === "string");
+    const persistedModelsForChannel = (channel: Partial<ModelChannel>, index: number) => {
+        const models = uniqueRawModels(channel.models || []);
+        if (models.length) return models;
+        const channelId = channel.id || (index === 0 ? "default" : "channel-" + (index + 1));
+        return uniqueRawModels(persistedModelOptions.filter((value) => {
+            const decoded = decodeChannelModel(value);
+            return decoded ? decoded.channelId === channelId : persistedChannels.length === 1;
+        }));
+    };
     const channels = persistedChannels
         .map((channel, index) =>
             createModelChannel({
                 ...channel,
                 id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
                 name: channel.name || (index === 0 ? "默认渠道" : `渠道 ${index + 1}`),
-                models: uniqueRawModels(channel.models || []),
+                models: persistedModelsForChannel(channel, index),
             }),
         )
         .filter((channel) => !isEmptyDefaultChannel(channel));
@@ -1026,18 +1060,19 @@ function isEmptyDefaultChannel(channel: ModelChannel) {
 }
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
-    return apiFormat === "gemini" ? GEMINI_BASE_URL : OPENAI_BASE_URL;
+    return apiFormat === "gemini" ? GEMINI_BASE_URL : EGGFANS_BASE_URL;
 }
 
 export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfaceType) {
     if (interfaceType === "gemini-veo" || interfaceType === "gemini-image") return GEMINI_BASE_URL;
+    if (interfaceType === "eggfans-sd2-video") return "https://vip.eggfans.asia";
     if (interfaceType === "novita-video") return "https://api.novita.ai/v3";
     if (interfaceType === "volcengine-ark-agent-plan-image" || interfaceType === "volcengine-ark-agent-plan-video") return "https://ark.cn-beijing.volces.com/api/plan/v3";
     if (interfaceType === "volcengine-ark-image" || interfaceType === "volcengine-ark-video") return "https://ark.cn-beijing.volces.com/api/v3";
     if (interfaceType === "volcengine-jimeng-image" || interfaceType === "volcengine-jimeng-video") return "https://visual.volcengineapi.com";
     if (interfaceType === "minimax-video") return "https://api.minimaxi.com";
     if (interfaceType === "grok-image" || interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video") return "";
-    return OPENAI_BASE_URL;
+    return EGGFANS_BASE_URL;
 }
 
 function capabilityForChannelInterface(interfaceType?: ChannelInterfaceType): ModelCapability | undefined {

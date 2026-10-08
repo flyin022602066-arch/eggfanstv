@@ -192,7 +192,8 @@ describe("desktop update parsing", () => {
             error: "",
         });
         expect(parseDesktopUpdateState({ status: "nope", error: "boom" }).status).toBe("error");
-        expect(formatDesktopVersionLabel("1.5.1")).toBe("v1.5.1");
+        expect(formatDesktopVersionLabel("1.5.1")).toBe("1.5.1");
+        expect(formatDesktopVersionLabel("dev")).toBe("");
         expect(desktopUpdateActionLabel("available")).toBe("下载更新");
         expect(desktopUpdateActionLabel("ready")).toBe("安装更新");
         expect(desktopUpdateProgressLabel(state({ status: "downloading", downloadedBytes: 12 * 1024 * 1024, totalBytes: 40 * 1024 * 1024 }))).toBe("12 MB / 40 MB");

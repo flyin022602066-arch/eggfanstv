@@ -841,3 +841,61 @@ func TestOfficialArkSeedreamParsesB64JSONAsDataURL(t *testing.T) {
 		})
 	}
 }
+
+func TestOfficialEggfansSD2VideoUsesVideosLifecycle(t *testing.T) {
+	adapter := officialPackageAdapter(t, "eggfans-sd2-video.beeftv-plugin", "eggfans-sd2-video")
+	request := GenerationRequest{
+		Capability: CapabilityVideo, Model: "sd-2.5-C", Prompt: "walk toward the camera", Duration: 8, AspectRatio: "16:9", Resolution: "720p",
+		Images: []MediaReference{{URL: "https://cdn.example/character.png", Role: "reference_image"}},
+		Videos: []MediaReference{{URL: "https://cdn.example/motion.mp4", Role: "reference_video"}},
+		Audios: []MediaReference{{URL: "https://cdn.example/voice.mp3", Role: "reference_audio"}},
+	}
+	create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: request})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if create.Method != "POST" || create.Path != "/v1/videos" || create.ContentType != "application/json" || create.Auth.Type != "bearer" {
+		t.Fatalf("EggFans create = %#v", create)
+	}
+	body := manifestTestBody(t, create)
+	if body["model"] != request.Model || body["prompt"] != request.Prompt || body["duration"] != float64(8) || body["resolution"] != "720p" || body["aspect_ratio"] != "16:9" {
+		t.Fatalf("EggFans create fields = %#v", body)
+	}
+	for _, field := range []string{"image_refs", "video_refs", "audio_refs"} {
+		values, ok := body[field].([]any)
+		if !ok || len(values) != 1 {
+			t.Fatalf("EggFans %s = %#v", field, body[field])
+		}
+	}
+
+	created, err := adapter.ParseCreate(context.Background(), []byte(`{"taskId":"task-eggfans","status":"queued"}`))
+	if err != nil || created.TaskID != "task-eggfans" || created.Status != StatusPending {
+		t.Fatalf("EggFans create result = %#v, %v", created, err)
+	}
+	poll, err := adapter.BuildPoll(context.Background(), PollContext{Request: request, TaskID: created.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poll.Method != "GET" || poll.Path != "/v1/videos/task-eggfans" {
+		t.Fatalf("EggFans poll = %#v", poll)
+	}
+	state, err := adapter.ParsePoll(context.Background(), PollContext{Request: request, TaskID: created.TaskID}, []byte(`{"status":"completed","output":{"url":"https://cdn.example/result.mp4"}}`))
+	if err != nil || state.Status != StatusSucceeded || state.Result == nil || len(state.Result.Videos) != 1 || state.Result.Videos[0].URL != "https://cdn.example/result.mp4" {
+		t.Fatalf("EggFans poll result = %#v, %v", state, err)
+	}
+
+	frames, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: request.Model, Prompt: request.Prompt, Duration: request.Duration, AspectRatio: request.AspectRatio,
+		Images: []MediaReference{{URL: "https://cdn.example/first.png", Role: "first_frame"}, {URL: "https://cdn.example/last.png", Role: "last_frame"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frameBody := manifestTestBody(t, frames)
+	if frameBody["first_image"] != "https://cdn.example/first.png" || frameBody["last_image"] != "https://cdn.example/last.png" {
+		t.Fatalf("EggFans frame fields = %#v", frameBody)
+	}
+	if _, exists := frameBody["image_refs"]; exists {
+		t.Fatalf("EggFans frame mode must not send image_refs: %#v", frameBody)
+	}
+}

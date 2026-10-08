@@ -128,6 +128,50 @@ func TestEnsureSkillPackagesMigratesAndRefreshesBuiltinSkills(t *testing.T) {
 	}
 }
 
+func TestEnsureBuiltinSkillStatesAddsMissingWithoutResetting(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+kernel.NewID()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Skill{}, &model.UserSkillState{}); err != nil {
+		t.Fatal(err)
+	}
+	builtinAdded := model.Skill{ID: kernel.NewID(), Name: "内置一", Description: "内置技能", Instruction: "# 一", CurrentVersionID: "version-1", Status: skillStatusEnabled, Source: 3}
+	builtinRemoved := model.Skill{ID: kernel.NewID(), Name: "内置二", Description: "内置技能", Instruction: "# 二", CurrentVersionID: "version-2", Status: skillStatusEnabled, Source: 3}
+	userSkill := model.Skill{ID: kernel.NewID(), Name: "用户技能", Description: "用户技能", Instruction: "# 用户", Status: skillStatusEnabled, Source: skillSourceUser}
+	if err := db.Create(&[]model.Skill{builtinAdded, builtinRemoved, userSkill}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.UserSkillState{ID: kernel.NewID(), UserID: "local", SkillID: builtinRemoved.ID, Added: false}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repository.New(db).EnsureBuiltinSkillStates("local", skillSourceUser); err != nil {
+		t.Fatal(err)
+	}
+	added, err := repository.New(db).UserSkillState("local", builtinAdded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added == nil || !added.Added || added.InstalledVersionID != builtinAdded.CurrentVersionID {
+		t.Fatalf("missing builtin state = %#v", added)
+	}
+	removed, err := repository.New(db).UserSkillState("local", builtinRemoved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed == nil || removed.Added {
+		t.Fatalf("existing removal was reset = %#v", removed)
+	}
+	userState, err := repository.New(db).UserSkillState("local", userSkill.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userState != nil {
+		t.Fatalf("user skill unexpectedly added = %#v", userState)
+	}
+}
+
 func assertSkillVersionCount(t *testing.T, db *gorm.DB, skillID string, want int64) {
 	t.Helper()
 	var got int64

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 
@@ -12,12 +12,14 @@ import { applyBatchPrimaryImage, applyNodeConfigPatch } from "@/lib/canvas/canva
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
+import { applyCanvasNodeGeometryPreview } from "@/lib/canvas/canvas-live-viewport";
 import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 
 type UseCanvasNodeEditorOptions = {
     canvasId: string;
     canvasTitle: string;
     domainProjectId?: string;
+    containerRef: RefObject<HTMLDivElement | null>;
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
@@ -31,6 +33,7 @@ export function useCanvasNodeEditor({
     canvasId,
     canvasTitle,
     domainProjectId,
+    containerRef,
     nodesRef,
     setNodes,
     setSelectedNodeIds,
@@ -44,9 +47,12 @@ export function useCanvasNodeEditor({
     const [collapsingBatchIds, setCollapsingBatchIds] = useState<Set<string>>(new Set());
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
     const batchMotionTimers = useRef(new Map<string, number>());
+    const resizePreviewTimer = useRef<number | null>(null);
     useEffect(() => () => {
         batchMotionTimers.current.forEach((timer) => window.clearTimeout(timer));
-    }, []);
+        if (resizePreviewTimer.current) window.clearTimeout(resizePreviewTimer.current);
+        applyCanvasNodeGeometryPreview(containerRef.current, null);
+    }, [containerRef]);
 
     const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
         setNodes((current) => {
@@ -64,7 +70,13 @@ export function useCanvasNodeEditor({
             });
             return changed ? next : current;
         });
-    }, [setNodes]);
+        applyCanvasNodeGeometryPreview(containerRef.current, { nodeId, width, height, position: position || nodesRef.current.find((node) => node.id === nodeId)?.position || { x: 0, y: 0 } });
+        if (resizePreviewTimer.current) window.clearTimeout(resizePreviewTimer.current);
+        resizePreviewTimer.current = window.setTimeout(() => {
+            applyCanvasNodeGeometryPreview(containerRef.current, null);
+            resizePreviewTimer.current = null;
+        }, 120);
+    }, [containerRef, nodesRef, setNodes]);
 
     const toggleFrameCollapsed = useCallback((nodeId: string) => {
         const frame = nodesRef.current.find((node) => node.id === nodeId && isFrameNode(node));

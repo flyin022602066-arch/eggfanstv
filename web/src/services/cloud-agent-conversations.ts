@@ -26,7 +26,13 @@ export type CloudAgentConversation = {
 };
 
 type CloudAgentConversationDocument = {
-    version: 1;
+    version: 2;
+    activeId: string | null;
+    conversations: CloudAgentConversation[];
+};
+
+type StoredCloudAgentConversationDocument = {
+    version: 1 | 2;
     activeId: string | null;
     conversations: CloudAgentConversation[];
 };
@@ -43,7 +49,9 @@ const CLOUD_AGENT_CONVERSATIONS_KEY = "cloud-agent-conversations-v1";
 
 export async function loadCloudAgentConversations(canvasId: string): Promise<CloudAgentConversationDocument> {
     if (!canvasId) throw new Error("缺少画布 ID，无法读取 Agent 对话");
-    const value = await localForageStorageForScope(getActiveUserScope()).getItem(storageKey(canvasId));
+    const storage = localForageStorageForScope(getActiveUserScope());
+    const key = storageKey(canvasId);
+    const value = await storage.getItem(key);
     if (!value) return emptyDocument();
 
     let parsed: unknown;
@@ -52,13 +60,17 @@ export async function loadCloudAgentConversations(canvasId: string): Promise<Clo
     } catch {
         throw new Error("Agent 对话历史已损坏");
     }
-    if (!isConversationDocument(parsed)) throw new Error("Agent 对话历史格式无效");
-    return parsed;
+    const document = migrateCloudAgentConversationDocument(parsed);
+    if (!document) throw new Error("Agent 对话历史格式无效");
+    if ((parsed as { version?: unknown }).version !== document.version) {
+        await storage.setItem(key, JSON.stringify(document));
+    }
+    return document;
 }
 
 export async function saveCloudAgentConversations(canvasId: string, activeId: string | null, conversations: CloudAgentConversation[]) {
     if (!canvasId) throw new Error("缺少画布 ID，无法保存 Agent 对话");
-    const document: CloudAgentConversationDocument = { version: 1, activeId, conversations };
+    const document: CloudAgentConversationDocument = { version: 2, activeId, conversations };
     await localForageStorageForScope(getActiveUserScope()).setItem(storageKey(canvasId), JSON.stringify(document));
 }
 
@@ -111,13 +123,23 @@ function pendingStorageKey(canvasId: string, conversationId: string) {
 }
 
 function emptyDocument(): CloudAgentConversationDocument {
-    return { version: 1, activeId: null, conversations: [] };
+    return { version: 2, activeId: null, conversations: [] };
 }
 
-function isConversationDocument(value: unknown): value is CloudAgentConversationDocument {
+export function migrateCloudAgentConversationDocument(value: unknown): CloudAgentConversationDocument | null {
+    if (!isConversationDocument(value)) return null;
+    if (value.version === 2) return value;
+    return {
+        version: 2,
+        activeId: value.activeId,
+        conversations: value.conversations.map((conversation) => ({ ...conversation, permissionMode: "auto" })),
+    };
+}
+
+function isConversationDocument(value: unknown): value is StoredCloudAgentConversationDocument {
     if (!value || typeof value !== "object") return false;
-    const document = value as Partial<CloudAgentConversationDocument>;
-    if (document.version !== 1 || !Array.isArray(document.conversations)) return false;
+    const document = value as Partial<StoredCloudAgentConversationDocument>;
+    if ((document.version !== 1 && document.version !== 2) || !Array.isArray(document.conversations)) return false;
     return document.conversations.every((conversation) => {
         if (!conversation || typeof conversation !== "object") return false;
         const candidate = conversation as Partial<CloudAgentConversation>;

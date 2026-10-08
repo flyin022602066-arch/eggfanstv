@@ -40,11 +40,14 @@ camera_language_guide.md
 .playwright-cli/
 # Local Playwright / browser verification artifacts.
 /output/
+/installed/
+/InstallationLog.txt
 /project-memory/
 .workbuddy/
 .worktrees/
 
 # Local backend and desktop artifacts; never commit build output.
+/msys64/
 build/depth-runtime/*.zip
 backend/cmd/server/server
 backend/server

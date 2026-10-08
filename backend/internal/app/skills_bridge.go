@@ -72,6 +72,17 @@ func (s *Service) EnsureBuiltinSkills() error {
 	return s.skillDomain().EnsureBuiltinSkills()
 }
 
+func (s *Service) EnsureLocalBuiltinSkills() error {
+	if !s.IsLocalMode() {
+		return nil
+	}
+	user, err := s.LocalWorkspaceOwner()
+	if err != nil {
+		return err
+	}
+	return s.skillDomain().EnsureBuiltinSkillsAdded(user.ID)
+}
+
 func (s *Service) EnsureSkillPackages() error {
 	return s.skillDomain().EnsureSkillPackages()
 }

@@ -399,6 +399,16 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                                             onBlur={(event) => updateChannel(channel.id, { baseUrl: event.target.value.trim().replace(/\/+$/u, "") })}
                                                         />
                                                     </Form.Item>
+                                                    <Form.Item label="模型目录 URL" htmlFor={`channel-${channel.id}-catalog-url`} className="mb-0 sm:col-span-1" extra="默认使用 Base URL/models；Eggfans TV 的 /pricing 会自动读取 /api/pricing_new">
+                                                        <Input
+                                                            id={`channel-${channel.id}-catalog-url`}
+                                                            inputMode="url"
+                                                            value={channel.catalogUrl || ""}
+                                                            placeholder="可选，例如：https://api.eggfans.com/pricing"
+                                                            onChange={(event) => updateChannel(channel.id, { catalogUrl: event.target.value })}
+                                                            onBlur={(event) => updateChannel(channel.id, { catalogUrl: event.target.value.trim().replace(/\/+$/u, "") || undefined })}
+                                                        />
+                                                    </Form.Item>
                                                     {builtinBeefAPI ? (
                                                         <Form.Item label="账号连接" className="mb-0 sm:col-span-2">
                                                             <p className="m-0 text-sm leading-6 text-foreground/80">{beefAPIConnectionLabel(beefConnection)}</p>
@@ -538,18 +548,19 @@ export function shouldRefreshBeefAPICatalog(previous: string | undefined, next: 
 }
 
 export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig): AiConfig {
-    const serverBeef = server.channels.find((channel) => channel.id === "beefapi");
+    const normalizedServer = normalizeConfigSnapshot({ config: server }).config;
+    const serverBeef = normalizedServer.channels.find((channel) => channel.id === "beefapi");
     let found = false;
     const channels = current.channels.map((channel) => {
         if (channel.id !== "beefapi") return channel;
         found = true;
-        if (!serverBeef) {
-            return { ...channel, models: [], modelProfiles: [], apiKey: "", secretKey: "", credentialRef: undefined, hasApiKey: false, hasSecretKey: false };
-        }
+        if (!serverBeef) return channel;
+        const models = serverBeef.models.length ? [...serverBeef.models] : [...channel.models];
+        const modelProfiles = serverBeef.modelProfiles?.length ? serverBeef.modelProfiles.map((item) => ({ ...item })) : (channel.modelProfiles || []).map((item) => ({ ...item }));
         return {
             ...channel,
-            models: [...(serverBeef.models || [])],
-            modelProfiles: (serverBeef.modelProfiles || []).map((item) => ({ ...item })),
+            models,
+            modelProfiles,
             apiKey: "",
             secretKey: "",
             credentialRef: serverBeef.credentialRef,
@@ -645,7 +656,7 @@ function BeefAPIConnectionActions({
     }
     return (
         <Button className={buttonClass} size="small" type="primary" loading={busy} onClick={onConnect}>
-            连接 BeefAPI
+            连接 Eggfans TV
         </Button>
     );
 }
@@ -712,7 +723,7 @@ function channelConnectionError(channel: ModelChannel, connection?: BeefAPIConne
     }
     if (isBuiltinBeefAPIChannel(channel)) {
         if (connection?.state === "connected" || channelHasManagedBeefAPICredential(channel)) return "";
-        return "请先连接 BeefAPI";
+        return "请先连接 Eggfans TV";
     }
     if (!channelHasGenerationCredential(channel)) return "请填写 API Key / Access Key";
     if (requiresSecretKey(channel) && !channel.secretKey?.trim()) return "当前协议需要填写 Secret Key";
@@ -720,7 +731,7 @@ function channelConnectionError(channel: ModelChannel, connection?: BeefAPIConne
 }
 
 function channelConnectionSignature(channel: ModelChannel) {
-    return [channel.baseUrl.trim(), channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, JSON.stringify(channel.headers || [])].join("\n");
+    return [channel.baseUrl.trim(), channel.catalogUrl?.trim() || "", channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, JSON.stringify(channel.headers || [])].join("\n");
 }
 
 function channelProtocolLabel(channel: ModelChannel) {

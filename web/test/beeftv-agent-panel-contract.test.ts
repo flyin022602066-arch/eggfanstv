@@ -5,6 +5,12 @@ import { resolve } from "node:path";
 const panel = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-cloud-agent-panel.tsx"), "utf8");
 
 describe("BeefTV Agent canvas panel contract", () => {
+    test("grants canvas editing by default", () => {
+        expect(panel).toContain('useState<AgentPermissionMode>("auto")');
+        expect(panel).toContain('useState<AgentContextKey[]>(["canvas"])');
+        expect(panel).toContain("permissionMode, contextScope,");
+    });
+
     test("exposes stable view and run state for project-first interaction", () => {
         expect(panel).toContain('data-agent-view={view}');
         expect(panel).toContain('data-agent-status={status}');

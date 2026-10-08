@@ -88,8 +88,8 @@ export function parseDesktopUpdateState(value: unknown, fallbackCurrentVersion =
 
 export function formatDesktopVersionLabel(version: string): string {
     const raw = version.trim();
-    if (!raw) return "";
-    return raw.startsWith("v") ? raw : `v${raw.replace(/^v/, "")}`;
+    if (!/^v?\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?$/.test(raw)) return "";
+    return raw.replace(/^v/, "");
 }
 
 export function hasDesktopUpdateBinding(binding: DesktopRuntimeBinding | undefined): binding is Required<Pick<DesktopRuntimeBinding, "UpdateStatus" | "CheckForUpdate" | "DownloadUpdate" | "InstallUpdate">> & DesktopRuntimeBinding {

@@ -15,6 +15,7 @@ import { createMiniMaxVideoTask, pollMiniMaxVideoTask } from "./video-provider-m
 import { createVideoGenerationsTask, pollVideoGenerationsTask } from "./video-provider-newapi";
 import { createNovitaVideoTask, pollNovitaVideoTask } from "./video-provider-novita";
 import { createOpenAIVideoTask, pollOpenAIVideoTask } from "./video-provider-openai";
+import { createEggfansSd2VideoTask, pollEggfansSd2VideoTask } from "./video-provider-eggfans-sd2";
 import { createSeedanceTask, isSeedanceConfig, pollSeedanceTask } from "./video-provider-seedance";
 import { createVideoTransport } from "./video-transport";
 
@@ -41,6 +42,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     [videoReferences, audioReferences] = await Promise.all([Promise.all(videoReferences.map(resolveReferenceMediaDuration)), Promise.all(audioReferences.map(resolveReferenceMediaDuration))]);
     assertVideoCapability(modelCapabilityConfigFor(config, selectedModel).video!, references, videoReferences, audioReferences, config.videoSeconds);
     const deps: VideoProviderDeps = { transport: createVideoTransport(requestConfig), response: videoResponseTools };
+    if (requestConfig.interfaceType === "eggfans-sd2-video") return createEggfansSd2VideoTask(deps, requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     if (requestConfig.interfaceType === "newapi-channel-2") return createVideoGenerationsTask(deps, requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     if (requestConfig.interfaceType === "gemini-veo") return createGeminiVeoTask(deps, requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     if (requestConfig.interfaceType === "novita-video") return createNovitaVideoTask(deps, requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
@@ -55,6 +57,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, task.model);
     const deps: VideoProviderDeps = { transport: createVideoTransport(requestConfig), response: videoResponseTools };
+    if (task.provider === "eggfans-sd2") return pollEggfansSd2VideoTask(deps, requestConfig, task, options);
     if (task.provider === "video-generations") return pollVideoGenerationsTask(deps, requestConfig, task, options);
     if (task.provider === "gemini-veo") return pollGeminiVeoTask(deps, requestConfig, task, options);
     if (task.provider === "novita") return pollNovitaVideoTask(deps, requestConfig, task, options);

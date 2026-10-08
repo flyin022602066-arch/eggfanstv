@@ -73,11 +73,11 @@ export async function normalizeChannelFailure(error: unknown): Promise<never> {
     throw new ChannelResponseError(payload, error.response?.status);
 }
 
-async function channelResponse<T>(request: Promise<{ data: T; status: number }>): Promise<T> {
+async function channelResponse<T>(request: Promise<{ data: T; status: number }>, allowBusinessErrorPayload = false): Promise<T> {
     try {
         const response = await request;
         if (response.data instanceof Blob) await assertChannelBlob(response.data);
-        else assertChannelPayload(response.data, response.status);
+        else if (!allowBusinessErrorPayload) assertChannelPayload(response.data, response.status);
         return response.data;
     } catch (error) {
         return normalizeChannelFailure(error);
@@ -93,6 +93,7 @@ export type ChannelTransportConfig = Parameters<typeof channelRequest>[0] & {
 export type ChannelCallOptions = {
     signal?: AbortSignal;
     headers?: Record<string, string>;
+    allowBusinessErrorPayload?: boolean;
 };
 
 export type ChannelTransport = {
@@ -127,6 +128,7 @@ export function createChannelTransport(config: ChannelTransportConfig, scene?: C
                 signal: options?.signal,
                 responseType: options?.responseType,
             }),
+            options?.allowBusinessErrorPayload,
         );
     };
 

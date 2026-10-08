@@ -169,6 +169,41 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		ok(c, gin.H{"resource": resource})
 	})
+	r.GET("/resources/:id/direct-url", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		url, err := svc.DirectResourceURL(user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"url": url})
+	})
+	r.GET("/public/resources/:id/file/:filename", func(c *gin.Context) {
+		stream, err := svc.OpenPublicResourceRange(c.Param("id"), c.Query("expires"), c.Query("signature"), c.GetHeader("Range"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		defer stream.Body.Close()
+		c.Header("Cache-Control", "private, max-age=300")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Accept-Ranges", "bytes")
+		contentType := stream.Resource.MimeType
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		c.Header("Content-Type", contentType)
+		if seeker, ok := stream.Body.(io.ReadSeeker); ok {
+			http.ServeContent(c.Writer, c.Request, c.Param("filename"), stream.Resource.UpdatedAt, seeker)
+			return
+		}
+		c.DataFromReader(stream.StatusCode, stream.ContentLength, contentType, stream.Body, nil)
+	})
 	r.GET("/resources/:id/file", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

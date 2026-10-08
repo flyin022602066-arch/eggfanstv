@@ -876,7 +876,7 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 		return s.terminateCloudAgent(run, "审批内容与待执行操作不一致，本轮已停止")
 	}
 	allowed := cloudAgentToolAllowed(state.Request, call.Function.Name)
-	if allowed && cloudAgentWrite(call.Function.Name) && (state.Request.PermissionMode == "request_approval" || call.Function.Name == "generate_media") && state.Approval == nil {
+	if allowed && cloudAgentRequiresApproval(state.Request.PermissionMode, call.Function.Name) && state.Approval == nil {
 		var plan *cloudAgentMediaPlan
 		var modelName string
 		policy, err := s.RuntimePolicy()

@@ -352,6 +352,28 @@ func TestCloudAgentAdmissionNeedsNoCommerceSchema(t *testing.T) {
 	}
 }
 
+func TestCloudAgentCanvasWritesAutoExecuteButMediaAlwaysNeedsApproval(t *testing.T) {
+	cases := []struct {
+		mode string
+		tool string
+		want bool
+	}{
+		{mode: "auto", tool: "canvas_apply_ops", want: false},
+		{mode: "auto", tool: "canvas_edit_storyboard", want: false},
+		{mode: "request_approval", tool: "canvas_apply_ops", want: true},
+		{mode: "auto", tool: "generate_media", want: true},
+		{mode: "read_only", tool: "canvas_apply_ops", want: false},
+		{mode: "auto", tool: "ask_user", want: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.mode+"/"+testCase.tool, func(t *testing.T) {
+			if got := cloudAgentRequiresApproval(testCase.mode, testCase.tool); got != testCase.want {
+				t.Fatalf("cloudAgentRequiresApproval(%q, %q) = %t, want %t", testCase.mode, testCase.tool, got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestCloudAgentWorkerPersistsRealResponse(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	t.Setenv("REDIS_URL", "")

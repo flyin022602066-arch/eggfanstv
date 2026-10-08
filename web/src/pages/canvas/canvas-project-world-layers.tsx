@@ -127,7 +127,7 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
     return (
         <>
             <svg
-                className="absolute overflow-visible"
+                className="canvas-static-connections absolute overflow-visible"
                 viewBox={`${props.connectionLayerBounds.left} ${props.connectionLayerBounds.top} ${props.connectionLayerBounds.width} ${props.connectionLayerBounds.height}`}
                 style={{ left: props.connectionLayerBounds.left, top: props.connectionLayerBounds.top, width: props.connectionLayerBounds.width, height: props.connectionLayerBounds.height, pointerEvents: "none", zIndex: 0 }}
             >

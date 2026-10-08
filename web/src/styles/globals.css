@@ -1918,8 +1918,8 @@
 
     .canvas-topbar-brand-mark { display: grid; width: 24px; height: 24px; flex: 0 0 24px; place-items: center; overflow: hidden; border-radius: 6px; background: #f4f4f4; }
     .canvas-topbar-brand-mark[data-logo-frame-enabled="false"] { background: #f4f4f4 !important; border-radius: 6px !important; }
-    .canvas-topbar-brand-mark-image { width: 18px; height: 18px; object-fit: contain; filter: invert(1); }
-    .canvas-topbar-brand-mark-fallback { color: #101010; font-size: 14px; font-weight: 700; line-height: 1; }
+    .canvas-topbar-brand-mark-image { width: 18px; height: 18px; object-fit: contain; }
+    .canvas-topbar-brand-mark-fallback { display: block; width: 18px; height: 18px; background: url('/eggfans-logo.png') center / contain no-repeat; }
 
     /* LibTV's project menu is intentionally sparse: four text-only rows at
        the same scale as the compact 32px top bar, with one structural divider. */
@@ -2823,7 +2823,7 @@
     }
 
     .full-screen-loader-logo-image { width: 38px; height: 38px; }
-    .full-screen-loader-logo-fallback { display: block; width: 36px; height: 36px; background: currentColor; mask: url('/beef-logo.png') center / contain no-repeat; -webkit-mask: url('/beef-logo.png') center / contain no-repeat; }
+    .full-screen-loader-logo-fallback { display: block; width: 36px; height: 36px; background: url('/eggfans-logo.png') center / contain no-repeat; }
     .workspace-route-loader-logo .full-screen-loader-logo-fallback { width: 16px; height: 16px; }
 
     .full-screen-loader-orbit {
@@ -11465,6 +11465,10 @@ html:not(.dark) .creation-studio-control:hover,
         animation: none !important;
     }
 
+    [data-canvas-node-resizing="true"] .canvas-static-connections {
+        visibility: hidden;
+    }
+
     [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, [data-canvas-node-panel]) {
         will-change: transform;
     }
@@ -11931,6 +11935,7 @@ html:not(.dark) .creation-chat-reference:hover:not(:disabled) { background: rgba
 .creation-chat-control[aria-pressed="true"]:hover {
     background: var(--control-selected-bg);
     color: var(--control-selected-fg);
+    box-shadow: inset 0 0 0 1px var(--control-selected-border);
 }
 .creation-chat-control[aria-pressed="true"] > svg { color: var(--control-selected-fg); }
 .creation-chat-control[aria-pressed="true"]:disabled,

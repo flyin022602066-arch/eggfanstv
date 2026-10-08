@@ -2,7 +2,7 @@ import { ArrowRight, Plus, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import type { CanvasLibrarySummary } from "@/services/api/workspace-data";
 import { ProjectPreview } from "@/components/canvas/canvas-project-card";
-import { beefTVCapabilityItems } from "./home-data";
+import { eggfansCapabilityItems } from "./home-data";
 function formatDate(value: string) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "刚刚更新";
@@ -12,7 +12,7 @@ function formatDate(value: string) {
 export function HomeDashboard({ projects, loading, error, onRetry }: { projects: CanvasLibrarySummary[]; loading: boolean; error: boolean; onRetry: () => void }) {
     const navigate = useNavigate();
     return (
-        <main className="beeftv-home" aria-label="BeefTV 首页">
+        <main className="beeftv-home" aria-label="Eggfans TV 首页">
             <section className="beeftv-home-hero" aria-label="新建画布">
                 <span className="beeftv-home-dot-base" aria-hidden />
                 <span className="beeftv-home-dot-flow" aria-hidden />
@@ -24,7 +24,7 @@ export function HomeDashboard({ projects, loading, error, onRetry }: { projects:
             </section>
 
             <nav className="beeftv-capabilities" aria-label="创作能力">
-                {beefTVCapabilityItems.map(({ id, label, detail, to, icon: Icon, disabled }) => (
+                {eggfansCapabilityItems.map(({ id, label, detail, to, icon: Icon, disabled }) => (
                     disabled ? (
                         <span key={id} className="beeftv-capability is-disabled" aria-disabled="true" title={`${label}：${detail}`}>
                             <span className="beeftv-capability-icon"><Icon /></span>

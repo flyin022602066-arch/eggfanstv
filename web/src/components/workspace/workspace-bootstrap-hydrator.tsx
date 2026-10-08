@@ -6,7 +6,7 @@ import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { applyUserSession, localWorkspaceConfig } from "@/lib/user-session";
 import { getWorkspaceBootstrap, type WorkspaceBootstrapPayload } from "@/services/api/workspace";
 import { commitModelConfig, flushModelConfig, hydrateModelConfig } from "@/services/model-config-repository";
-import { normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
+import { normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }) {
@@ -94,13 +94,38 @@ export function shouldSaveLocalModelConfig({ subscriptionReady, modelConfigReady
 
 async function hydrateLocalModelConfig() {
     const result = await hydrateModelConfig();
-    const normalizedConfig = localWorkspaceConfig(normalizeConfigSnapshot({ config: result.config }).config);
+    const localConfig = useConfigStore.getState().config;
+    const mergedConfig = mergeHydratedModelConfig(localConfig, result.config);
+    const normalizedConfig = localWorkspaceConfig(normalizeConfigSnapshot({ config: mergedConfig }).config);
     useConfigStore.getState().replaceConfig(normalizedConfig);
-    if (shouldPersistHydratedModelConfig(result.health)) await commitModelConfig(normalizedConfig);
+    if (shouldPersistHydratedModelConfigSnapshot(result.health, mergedConfig, normalizedConfig)) {
+        await commitModelConfig(normalizedConfig);
+    }
+}
+
+export function mergeHydratedModelConfig(localConfig: AiConfig, remoteConfig: AiConfig): AiConfig {
+    const localChannels = new Map(localConfig.channels.map((channel) => [channel.id, channel]));
+    return {
+        ...remoteConfig,
+        apiKey: remoteConfig.apiKey || localConfig.apiKey,
+        channels: remoteConfig.channels.map((remoteChannel) => mergeHydratedChannel(localChannels.get(remoteChannel.id), remoteChannel)),
+    };
+}
+
+function mergeHydratedChannel(localChannel: ModelChannel | undefined, remoteChannel: ModelChannel): ModelChannel {
+    if (!localChannel || remoteChannel.credentialRef === "beefapi-enterprise") return remoteChannel;
+    const nextChannel = { ...remoteChannel };
+    if (!remoteChannel.apiKey?.trim() && remoteChannel.hasApiKey && localChannel.apiKey?.trim()) nextChannel.apiKey = localChannel.apiKey;
+    if (!remoteChannel.secretKey?.trim() && remoteChannel.hasSecretKey && localChannel.secretKey?.trim()) nextChannel.secretKey = localChannel.secretKey;
+    return nextChannel;
 }
 
 export function shouldPersistHydratedModelConfig(health: string) {
     return health === "migrated" || health === "recovered";
+}
+
+export function shouldPersistHydratedModelConfigSnapshot(health: string, mergedConfig: AiConfig, normalizedConfig: AiConfig) {
+    return shouldPersistHydratedModelConfig(health) || JSON.stringify(mergedConfig) !== JSON.stringify(normalizedConfig);
 }
 
 function createLocalWorkspacePayload(): WorkspaceBootstrapPayload {

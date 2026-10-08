@@ -289,6 +289,13 @@ func cloudAgentWrite(name string) bool {
 	return name == "canvas_apply_ops" || name == "generate_media" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table"
 }
 
+func cloudAgentRequiresApproval(permissionMode, name string) bool {
+	if !cloudAgentWrite(name) || permissionMode == "read_only" {
+		return false
+	}
+	return permissionMode == "request_approval" || name == "generate_media"
+}
+
 func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {
 	var service *Service
 	if len(services) > 0 {

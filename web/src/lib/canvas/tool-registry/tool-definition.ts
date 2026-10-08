@@ -111,6 +111,8 @@ export type ToolContext = {
     selectedCount: number;
     selectedNodeTypes: Set<CanvasNodeTypeId>;
     selectedVideoCount: number;
+    selectedImageCount?: number;
+    selectedMediaCount?: number;
     canvasTool: CanvasToolMode;
     workspaceMode: CanvasWorkspaceMode;
     isProjectLinked: boolean;

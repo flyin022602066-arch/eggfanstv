@@ -1426,7 +1426,7 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         if (!projectLoaded) return;
         const requestedType = searchParams.get("add");
-        const nodeType = requestedType === "video" ? CanvasNodeType.Video : requestedType === "image" ? CanvasNodeType.Image : requestedType === "audio" ? CanvasNodeType.Audio : null;
+        const nodeType = requestedType === "video" ? CanvasNodeType.Video : requestedType === "image" ? CanvasNodeType.Image : requestedType === "audio" ? CanvasNodeType.Audio : requestedType === "edit" ? CanvasNodeType.MediaConversion : null;
         if (!nodeType) return;
         let frame = 0;
         let focusFrame = 0;
@@ -1754,6 +1754,7 @@ function InfiniteCanvasPage() {
         canvasId: projectId,
         canvasTitle: currentProject?.title || "未命名画布",
         domainProjectId: linkedProjectId,
+        containerRef,
         nodesRef,
         setNodes,
         setSelectedNodeIds,
@@ -1904,6 +1905,9 @@ function InfiniteCanvasPage() {
         relatedHighlight,
         resourceReferenceByNodeId,
         selectedNodeBounds,
+        selectedNodeTypes,
+        selectedImageNodes,
+        selectedMediaNodes,
         selectedVideoNodes,
         skillMentionReferences,
         superResolveNode,
@@ -3381,6 +3385,9 @@ function InfiniteCanvasPage() {
                                 anchorRef={selectionBoundsElementRef}
                                 containerRef={containerRef}
                                 count={selectedNodeBounds.count}
+                                selectedNodeTypes={selectedNodeTypes}
+                                selectedImageCount={selectedImageNodes.length}
+                                selectedMediaCount={selectedMediaNodes.length}
                                 selectedVideoCount={selectedVideoNodes.length}
                                 mergingVideos={Boolean(mergeVideoProgress)}
                                 onAlign={alignSelectedNodes}

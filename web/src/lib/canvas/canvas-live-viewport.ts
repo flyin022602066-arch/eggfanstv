@@ -4,11 +4,19 @@ export const CANVAS_VIEWPORT_PREVIEW_EVENT = "canvas:viewport-preview";
 export const CANVAS_GRAPHICS_VIEWPORT_PREVIEW_EVENT = "canvas:graphics-viewport-preview";
 export const CANVAS_SELECTION_PREVIEW_EVENT = "canvas:selection-preview";
 export const CANVAS_NODE_DRAG_PREVIEW_EVENT = "canvas:node-drag-preview";
+export const CANVAS_NODE_GEOMETRY_PREVIEW_EVENT = "canvas:node-geometry-preview";
 
 export type CanvasNodeDragPreview = {
     x: number;
     y: number;
     nodeIds: ReadonlySet<string>;
+};
+
+export type CanvasNodeGeometryPreview = {
+    nodeId: string;
+    width: number;
+    height: number;
+    position: { x: number; y: number };
 };
 
 type NodeDragPreviewDomState = {
@@ -130,6 +138,19 @@ export function subscribeCanvasNodeDragPreview(container: HTMLDivElement, listen
     const handlePreview = (event: Event) => listener((event as CustomEvent<CanvasNodeDragPreview | null>).detail);
     container.addEventListener(CANVAS_NODE_DRAG_PREVIEW_EVENT, handlePreview);
     return () => container.removeEventListener(CANVAS_NODE_DRAG_PREVIEW_EVENT, handlePreview);
+}
+
+export function applyCanvasNodeGeometryPreview(container: HTMLDivElement | null, preview: CanvasNodeGeometryPreview | null) {
+    if (!container) return;
+    if (preview) container.dataset.canvasNodeResizing = "true";
+    else delete container.dataset.canvasNodeResizing;
+    container.dispatchEvent(new CustomEvent<CanvasNodeGeometryPreview | null>(CANVAS_NODE_GEOMETRY_PREVIEW_EVENT, { detail: preview }));
+}
+
+export function subscribeCanvasNodeGeometryPreview(container: HTMLDivElement, listener: (preview: CanvasNodeGeometryPreview | null) => void) {
+    const handlePreview = (event: Event) => listener((event as CustomEvent<CanvasNodeGeometryPreview | null>).detail);
+    container.addEventListener(CANVAS_NODE_GEOMETRY_PREVIEW_EVENT, handlePreview);
+    return () => container.removeEventListener(CANVAS_NODE_GEOMETRY_PREVIEW_EVENT, handlePreview);
 }
 
 /**

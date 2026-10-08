@@ -10,7 +10,7 @@ import (
 func TestProviderConfigMigratesLegacyBeefAPIStateWithoutLosingLocalChoices(t *testing.T) {
 	dir := t.TempDir()
 	legacy := `{
-        "channels":[{"id":"beefapi","name":"BeefAPI old","baseUrl":"https://old.invalid","apiKey":"local-secret","headers":[{"name":"X-Site","value":"desktop"}],"enabled":false,"models":["legacy-model"],"modelProfiles":[{"model":"seedance-2.0-fast","protocol":"newapi-channel-1","capability":"video"}]}],
+        "channels":[{"id":"beefapi","name":"BeefAPI","baseUrl":"https://enterprise.beefapi.com","apiKey":"local-secret","headers":[{"name":"X-Site","value":"desktop"}],"enabled":false,"models":["legacy-model"],"modelProfiles":[{"model":"seedance-2.0-fast","protocol":"newapi-channel-1","capability":"video"}]}],
         "imageModel":"beefapi::gpt-image-2","videoModel":"beefapi::seedance-2.0-fast","textModel":"beefapi::gpt-5.6-sol","audioModel":"beefapi::minimax-music-v3.0"
     }`
 	if err := os.WriteFile(filepath.Join(dir, LocalProviderConfigFile), []byte(legacy), 0o600); err != nil {
@@ -29,7 +29,7 @@ func TestProviderConfigMigratesLegacyBeefAPIStateWithoutLosingLocalChoices(t *te
 		t.Fatalf("health = %q", health)
 	}
 	channel := requireEffectiveChannel(t, effective, "beefapi")
-	if channel["name"] != "BeefAPI" || channel["baseUrl"] != "https://enterprise.beefapi.com" {
+	if channel["name"] != "Eggfans TV" || channel["baseUrl"] != "https://api.eggfans.com" {
 		t.Fatalf("preset-owned identity was not repaired: %#v", channel)
 	}
 	if channel["apiKey"] != "local-secret" || channel["enabled"] != false {
@@ -54,6 +54,80 @@ func TestProviderConfigMigratesLegacyBeefAPIStateWithoutLosingLocalChoices(t *te
 		if effective.Config[key] != want {
 			t.Fatalf("%s = %#v", key, effective.Config[key])
 		}
+	}
+}
+
+func TestProviderConfigMigratesTopLevelChannelModelsIntoEmptyChannel(t *testing.T) {
+	store, err := NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+        "channels":[{"id":"beefapi","models":[],"apiKey":"local-secret","headers":[{"name":"X-Site","value":"desktop"}]}],
+        "models":["beefapi::gemini-3.8-flash","beefapi::seedance-2.0","beefapi::gemini-3.8-flash"],
+        "textModels":["beefapi::gemini-3.8-flash"],
+        "videoModels":["beefapi::seedance-2.0"]
+    }`
+	if err := store.SaveLocalModelConfig([]byte(legacy)); err != nil {
+		t.Fatal(err)
+	}
+
+	effective, _, err := store.LoadEffectiveModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := requireEffectiveChannel(t, effective, "beefapi")
+	models, ok := channel["models"].([]string)
+	if !ok {
+		t.Fatalf("migrated models have type %T: %#v", channel["models"], channel["models"])
+	}
+	if len(models) != 2 || models[0] != "gemini-3.8-flash" || models[1] != "seedance-2.0" {
+		t.Fatalf("migrated models = %#v", models)
+	}
+	if channel["apiKey"] != "local-secret" || len(channel["headers"].([]any)) != 1 {
+		t.Fatalf("local channel state was not preserved: %#v", channel)
+	}
+}
+
+func TestProviderConfigDoesNotReplaceExistingChannelModelsDuringLegacyMigration(t *testing.T) {
+	store, err := NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+        "channels":[{"id":"beefapi","models":["already-saved"]}],
+        "models":["beefapi::new-model"]
+    }`
+	if err := store.SaveLocalModelConfig([]byte(legacy)); err != nil {
+		t.Fatal(err)
+	}
+
+	effective, _, err := store.LoadEffectiveModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, ok := requireEffectiveChannel(t, effective, "beefapi")["models"].([]string)
+	if !ok || len(models) != 1 || models[0] != "already-saved" {
+		t.Fatalf("existing channel models were replaced: %#v", models)
+	}
+}
+
+func TestProviderConfigPreservesCustomBeefAPIIdentity(t *testing.T) {
+	store, err := NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom := `{"channels":[{"id":"beefapi","name":"Custom Eggfans Channel","baseUrl":"https://proxy.example.com/v1","catalogUrl":"https://proxy.example.com/models","apiKey":"local-secret"}]}`
+	if err := store.SaveLocalModelConfig([]byte(custom)); err != nil {
+		t.Fatal(err)
+	}
+	effective, _, err := store.LoadEffectiveModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := requireEffectiveChannel(t, effective, "beefapi")
+	if channel["name"] != "Custom Eggfans Channel" || channel["baseUrl"] != "https://proxy.example.com/v1" || channel["catalogUrl"] != "https://proxy.example.com/models" {
+		t.Fatalf("custom channel identity was overwritten: %#v", channel)
 	}
 }
 

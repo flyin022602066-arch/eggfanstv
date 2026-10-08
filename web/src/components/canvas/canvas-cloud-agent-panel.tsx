@@ -119,10 +119,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     const [approvalSubmitting, setApprovalSubmitting] = useState(false);
     const [stopping, setStopping] = useState(false);
     const [approval, setApproval] = useState<ApprovalState | null>(null);
-    const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("request_approval");
-    // Plain chat is conversation-scoped. Canvas context is opt-in and is
-    // enabled when the user asks Agent to create or edit workspace content.
-    const [contextScope, setContextScope] = useState<AgentContextKey[]>([]);
+    const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("auto");
+    // This panel is attached to a canvas, so let Agent inspect and edit it by default.
+    const [contextScope, setContextScope] = useState<AgentContextKey[]>(["canvas"]);
     const [maxGenerationTasks, setMaxGenerationTasks] = useState("0");
     const [maxVideoSeconds, setMaxVideoSeconds] = useState("0");
     const [conversations, setConversations] = useState<CloudAgentConversation[]>([]);
@@ -242,10 +241,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     useEffect(() => {
         if (!open) return;
         let active = true;
-        if (localMode) {
-            setSkills([]);
-            return () => { active = false; };
-        }
         const refresh = () => { void listAddedSkills()
             .then((result) => {
                 if (!active) return;
@@ -271,12 +266,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
 
     useEffect(() => {
         if (view !== "settings" && !skillsOpen) return;
-        if (localMode) {
-            setMarketSkills([]);
-            setSkillHasMore(false);
-            setSkillsLoading(false);
-            return;
-        }
         let active = true;
         setSkillsLoading(true);
         void listSkills({
@@ -306,7 +295,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     }, [view, skillsOpen, debouncedSkillSearch, skillTag, localMode]);
 
     const loadMoreSkills = async () => {
-        if (localMode || skillsLoading || skillPageRequestRef.current || !skillHasMore || skillSearch.trim() !== debouncedSkillSearch) return;
+        if (skillsLoading || skillPageRequestRef.current || !skillHasMore || skillSearch.trim() !== debouncedSkillSearch) return;
         skillPageRequestRef.current = true;
         setSkillsLoading(true);
         try {

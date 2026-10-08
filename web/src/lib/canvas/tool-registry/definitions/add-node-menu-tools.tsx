@@ -18,7 +18,7 @@ export const addNodeMenuCommands: AddNodeMenuCommand[] = [
     nodeCommand(CanvasNodeType.Image, { defaultOrder: 20, run: (ctx) => ctx.handlers.onAddImage() }),
     nodeCommand(CanvasNodeType.Video, { defaultOrder: 30, run: (ctx) => ctx.handlers.onAddVideo() }),
     nodeCommand(CanvasNodeType.Audio, { defaultOrder: 40, applicable: (ctx) => ctx.workspaceMode !== "simple", run: (ctx) => ctx.handlers.onAddAudio() }),
-    { ...nodeCommand(CanvasNodeType.MediaConversion, { defaultOrder: 50, run: (ctx) => ctx.handlers.onAddExtensionNode(CanvasNodeType.MediaConversion) }), label: "智能剪辑", badge: CANVAS_DEVELOPING_LABEL, disabledReason: getCanvasNodeCreationDisabledReason(CanvasNodeType.MediaConversion) },
+    { ...nodeCommand(CanvasNodeType.MediaConversion, { defaultOrder: 50, run: (ctx) => ctx.handlers.onAddExtensionNode(CanvasNodeType.MediaConversion) }), label: "智能剪辑" },
     // 导演台落在节点分区，但它开的是导演工作台、不是某种画布节点，故不走注册表。
     { id: "director", label: "导演台", icon: <Layers3 />, badge: CANVAS_DEVELOPING_LABEL, disabledReason: CANVAS_DEVELOPING_LABEL, section: "node", defaultOrder: 60, applicable: (ctx) => ctx.workspaceMode !== "simple", run: (ctx) => ctx.handlers.onOpenDirector() },
     { ...nodeCommand(CanvasNodeType.Frame, { defaultOrder: 70, applicable: (ctx) => ctx.workspaceMode !== "simple", run: (ctx) => ctx.handlers.onAddFrame() }), label: "逐帧拉片", badge: CANVAS_DEVELOPING_LABEL, disabledReason: getCanvasNodeCreationDisabledReason(CanvasNodeType.Frame) },

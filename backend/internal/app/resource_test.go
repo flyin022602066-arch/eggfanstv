@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,6 +122,46 @@ func TestBeefAPIPrefersHTTPSResourceURLWhenPublicBaseConfigured(t *testing.T) {
 	}
 	if !strings.HasPrefix(input.ReferenceAudios[0].URL, "https://example.com/") || strings.HasPrefix(input.ReferenceAudios[0].DataURL, "data:") {
 		t.Fatalf("audio = %#v, want HTTPS public URL", input.ReferenceAudios[0])
+	}
+}
+
+func TestDirectResourceURLIsShortLivedSignedHttps(t *testing.T) {
+	svc := newResourceTestService(t)
+	t.Setenv("CANVAS_PUBLIC_BASE_URL", "https://1.1.1.1")
+	resourceDir := filepath.Join(svc.dataDir, "resources", "users", "user-1", "image")
+	if err := os.MkdirAll(resourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resourceDir, "reference.png"), []byte("image-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "signed-reference", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "local", ObjectKey: "users/user-1/image/reference.png", MimeType: "image/png", Size: 10,
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	publicURL, err := svc.DirectResourceURL("user-1", resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(publicURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != "1.1.1.1" {
+		t.Fatalf("direct resource URL = %q, %v", publicURL, err)
+	}
+	expires := parsed.Query().Get("expires")
+	signature := parsed.Query().Get("signature")
+	if expires == "" || signature == "" {
+		t.Fatalf("direct resource URL lacks signed expiry: %q", publicURL)
+	}
+	stream, err := svc.OpenPublicResourceRange(resource.ID, expires, signature, "")
+	if err != nil {
+		t.Fatalf("valid signed resource URL rejected: %v", err)
+	}
+	_ = stream.Body.Close()
+	if _, err := svc.OpenPublicResourceRange(resource.ID, expires, "invalid", ""); err == nil {
+		t.Fatal("invalid public resource signature was accepted")
 	}
 }
 

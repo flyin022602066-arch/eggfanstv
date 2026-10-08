@@ -2,16 +2,18 @@ import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Navigate, Outlet, useLocation, useParams } from "react-router";
 
 import { FullScreenLoader, WorkspaceRouteLoader } from "@/components/ui/aceternity/full-screen-loader";
-import { loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadHomePage, loadProjectDetailPage } from "@/lib/workspace-route-modules";
+import { loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadEditorPage, loadHomePage, loadProjectsPage, loadProjectDetailPage, loadSkillsPage } from "@/lib/workspace-route-modules";
 import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
 import RouteErrorPage from "@/pages/route-error";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 const AssetsPage = lazy(loadAssetsPage);
 const HomePage = lazy(loadHomePage);
 const CanvasPage = lazy(loadCanvasPage);
 const CanvasProjectPage = lazy(loadCanvasProjectPage);
 const CreatePage = lazy(loadCreatePage);
+const EditorPage = lazy(loadEditorPage);
+const ProjectsPage = lazy(loadProjectsPage);
+const SkillsPage = lazy(loadSkillsPage);
 const NotFound = lazy(() => import("@/pages/not-found"));
 const PluginsPage = lazy(() => import("@/pages/plugins"));
 const EagleLibraryPage = lazy(() => import("@/pages/plugins/eagle"));
@@ -37,9 +39,6 @@ function WorkspaceLayout() {
 }
 
 function LocalAwareProjectRoute() {
-    const { projectId } = useParams();
-    const localMode = isLocalWorkspaceMode();
-    if (localMode && projectId) return <Navigate to={`/canvas/${projectId}`} replace />;
     return deferred(<ProjectDetailPage />);
 }
 
@@ -73,15 +72,16 @@ export const router = createBrowserRouter([
         children: [
             { path: "/", element: deferred(<HomePage />) },
             { path: "/create", element: deferred(<CreatePage />) },
+            { path: "/editor", element: deferred(<EditorPage />) },
             {
                 path: "/tasks",
                 // 任务页暂不开放，保留路由以避免旧链接进入半成品界面。
                 element: <Navigate to="/" replace />,
             },
             { path: "/assets", element: deferred(<AssetsPage />) },
-            { path: "/skills", element: <Navigate to="/" replace /> },
-            { path: "/skill", element: <Navigate to="/" replace /> },
-            { path: "/skills/reference", element: <Navigate to="/" replace /> },
+            { path: "/skills", element: deferred(<SkillsPage />) },
+            { path: "/skill", element: <Navigate to="/skills" replace /> },
+            { path: "/skills/reference", element: <Navigate to="/skills" replace /> },
             {
                 path: "/plugins",
                 element: <RequireFeature feature="pluginCenterEnabled">{deferred(<PluginsPage />)}</RequireFeature>,
@@ -94,13 +94,13 @@ export const router = createBrowserRouter([
             { path: "/test-voice-recording", element: deferred(<TestVoiceRecording />) },
             {
                 path: "/projects",
-                element: deferred(<CanvasPage />),
+                element: deferred(<ProjectsPage />),
             },
             // LibTV 使用单数 `/project` 作为项目库入口；直接渲染本地项目库，
             // 保留原始 URL，避免像素复刻时出现一次重定向造成的布局/加载闪烁。
             {
                 path: "/project",
-                element: deferred(<CanvasPage />),
+                element: deferred(<ProjectsPage />),
             },
             {
                 path: "/projects/:projectId",

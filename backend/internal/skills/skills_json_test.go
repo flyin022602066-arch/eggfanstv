@@ -58,3 +58,23 @@ func TestParseShowcaseMediaAcceptsStoredSnakeCase(t *testing.T) {
 		t.Fatalf("unexpected camelCase parse: %+v", items)
 	}
 }
+
+func TestBuiltinSkillSeedContainsAllSkills(t *testing.T) {
+	var definitions []builtinSkillDefinition
+	if err := json.Unmarshal(builtinSkillsJSON, &definitions); err != nil {
+		t.Fatal(err)
+	}
+	if len(definitions) != 33 {
+		t.Fatalf("builtin skill count = %d, want 33", len(definitions))
+	}
+	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		if strings.TrimSpace(definition.SkillID) == "" || strings.TrimSpace(definition.SkillName) == "" || strings.TrimSpace(definition.Instruction) == "" {
+			t.Fatalf("builtin skill is incomplete: %#v", definition)
+		}
+		if _, exists := seen[definition.SkillID]; exists {
+			t.Fatalf("duplicate builtin skill ID: %s", definition.SkillID)
+		}
+		seen[definition.SkillID] = struct{}{}
+	}
+}

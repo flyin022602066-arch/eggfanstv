@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -76,6 +77,42 @@ func (r *Repository) UpsertBuiltinSkills(skills []model.Skill) error {
 			"markdown_url", "showcase_media_json", "extra_info", "initial_like_count", "initial_added_count", "created_at", "updated_at",
 		}),
 	}).Create(&skills).Error
+}
+
+func (r *Repository) EnsureBuiltinSkillStates(userID string, userSource int) error {
+	var skills []model.Skill
+	if err := r.db.Where("status = ? AND source <> ?", 1, userSource).Find(&skills).Error; err != nil {
+		return err
+	}
+	if len(skills) == 0 {
+		return nil
+	}
+	states := make([]model.UserSkillState, 0, len(skills))
+	for _, skill := range skills {
+		states = append(states, model.UserSkillState{
+			ID:                 kernel.NewID(),
+			UserID:             userID,
+			SkillID:            skill.ID,
+			InstalledVersionID: skill.CurrentVersionID,
+			Added:              true,
+		})
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&states).Error; err != nil {
+			return err
+		}
+		for _, skill := range skills {
+			if skill.CurrentVersionID == "" {
+				continue
+			}
+			if err := tx.Model(&model.UserSkillState{}).
+				Where("user_id = ? AND skill_id = ? AND added = ? AND installed_version_id = ?", userID, skill.ID, true, "").
+				Update("installed_version_id", skill.CurrentVersionID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (r *Repository) Skill(id string) (*model.Skill, error) {

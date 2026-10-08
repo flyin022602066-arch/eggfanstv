@@ -50,6 +50,17 @@ func TestRequireLaunchTokenLeavesLivenessPublic(t *testing.T) {
 	}
 }
 
+func TestRequireLaunchTokenAllowsSignedPublicResourceRoute(t *testing.T) {
+	protected := RequireLaunchToken("desktop-secret")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	response := httptest.NewRecorder()
+	protected.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/public/resources/resource-1/file/video.mp4?expires=1&signature=signature", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want signed public resource passthrough", response.Code)
+	}
+}
+
 func TestRequireLaunchTokenAllowsCORSPreflight(t *testing.T) {
 	protected := RequireLaunchToken("desktop-secret")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

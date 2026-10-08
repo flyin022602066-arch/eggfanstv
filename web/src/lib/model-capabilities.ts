@@ -380,6 +380,17 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.resolutions = ["1080p"];
         video.defaultResolution = "1080p";
     }
+    if (protocol === "eggfans-sd2-video") {
+        video.references.maxImages = /^(?:sd-2\.5-b|sd-2\.5-d)$/i.test(String(model ?? "").trim()) ? 9 : 30;
+        video.references.maxVideos = 10;
+        video.references.maxAudios = 10;
+        video.duration = { selection: "range", min: 4, max: 30, step: 1, default: 6 };
+        video.resolutions = ["720p"];
+        video.defaultResolution = "720p";
+        video.generateAudio = { supported: false, default: false };
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+        video.defaultOperation = "text_to_video";
+    }
     if (protocol === "minimax-video") {
         video.references.maxImages = 9;
         video.references.maxImageBytes = 30 * 1024 * 1024;

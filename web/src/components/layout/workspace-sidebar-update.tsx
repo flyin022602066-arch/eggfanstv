@@ -16,7 +16,7 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const { state, persistBusy, actionBusy, runtime } = updater;
     const [detailsOpen, setDetailsOpen] = useState(false);
     const [confirmOpen, setConfirmOpen] = useState(false);
-    const installed = formatDesktopVersionLabel(state.currentVersion || APP_VERSION);
+    const installed = formatDesktopVersionLabel(state.currentVersion) || formatDesktopVersionLabel(APP_VERSION);
     const latest = formatDesktopVersionLabel(state.latestVersion);
     const showControls = shouldShowDesktopUpdaterControls(updater.snapshot);
     const busy = persistBusy || actionBusy || state.status === "checking" || state.status === "downloading" || state.status === "installing";

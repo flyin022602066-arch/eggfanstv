@@ -81,6 +81,7 @@ export function inferProtocolCapabilityFromModel(model: string): ProtocolCapabil
         lower.includes("runway") ||
         lower.includes("omni") ||
         lower.includes("cogvideo") ||
+        /^sd-2\.5-[a-e]$/i.test(lower) ||
         lower.includes("wan")
     ) {
         return "video";
@@ -97,6 +98,7 @@ export function defaultProtocolForCapability(capability: ProtocolCapability, ava
 }
 
 export function defaultProtocolForModel(model: string, availableProtocols: ModelProtocolDefinition[] = []): ModelProtocol {
+    if (/^sd-2\.5-[a-e]$/i.test(model.trim())) return "eggfans-sd2-video";
     return defaultProtocolForCapability(inferProtocolCapabilityFromModel(model), availableProtocols);
 }
 

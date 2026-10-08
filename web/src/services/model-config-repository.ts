@@ -113,7 +113,7 @@ function omitManagedBeefAPISecrets(config: AiConfig): AiConfig {
     return {
         ...config,
         channels: config.channels.map((channel) => {
-            if (channel.id !== "beefapi" || !channel.pinned) return channel;
+            if (channel.id !== "beefapi" || channel.credentialRef !== "beefapi-enterprise") return channel;
             return { ...channel, apiKey: "", secretKey: "" };
         }),
     };

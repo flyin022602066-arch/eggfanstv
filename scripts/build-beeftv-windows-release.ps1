@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Native Windows amd64 release entrypoint for the BeefTV Wails desktop app.
+    Native Windows amd64 release entrypoint for the Eggfans TV Wails desktop app.
 
 .DESCRIPTION
     Builds the same desktop source as scripts/build-beeftv-release.sh, packages
-    official *.beeftv-plugin archives next to BeefTV.exe, and fails loudly when
+    official *.beeftv-plugin archives next to EggfansTV.exe, and fails loudly when
     CGO/go-sqlite3 compiler prerequisites are missing.
 
     This script does not install compilers, Bun, Go, Git, WebView2, or NSIS.
@@ -21,7 +21,7 @@
     - Go 1.25+ Windows CGO DWARF 5 / binutils 2.37+: https://go.dev/wiki/MinimumRequirements#cgo
 
 .OUTPUTS
-    backend\cmd\desktop\build\bin\BeefTV.exe
+    backend\cmd\desktop\build\bin\EggfansTV.exe
     backend\cmd\desktop\build\bin\plugin-packages\*.beeftv-plugin
 #>
 [CmdletBinding()]
@@ -41,7 +41,10 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $desktopDir = Join-Path $repoRoot "backend\cmd\desktop"
 $pluginSourceDir = Join-Path $repoRoot "plugin-packages"
 $binDir = Join-Path $desktopDir "build\bin"
-$exePath = Join-Path $binDir "BeefTV.exe"
+$desktopIconSource = Join-Path $repoRoot "web\public\eggfans-logo.png"
+$desktopIconPath = Join-Path $desktopDir "build\appicon.png"
+$desktopWindowsIconPath = Join-Path $desktopDir "build\windows\icon.ico"
+$exePath = Join-Path $binDir "EggfansTV.exe"
 $pluginResourceDir = Join-Path $binDir "plugin-packages"
 $versionFile = Join-Path $repoRoot "VERSION"
 $wailsModule = "github.com/wailsapp/wails/v2/cmd/wails@v2.16.0"
@@ -124,7 +127,16 @@ function Get-OfficialPluginPackages([string]$Directory) {
 
 function Find-CgoCompiler {
     if (-not [string]::IsNullOrWhiteSpace($env:CC) -and (Test-Path -LiteralPath $env:CC -PathType Leaf)) {
-        return $env:CC
+        $compilerPath = (Resolve-Path -LiteralPath $env:CC).Path
+        $compilerDirectory = Split-Path -Parent $compilerPath
+        $env:PATH = "$compilerDirectory;$env:PATH"
+        return [IO.Path]::GetFileNameWithoutExtension($compilerPath)
+    }
+    $workspaceCompiler = Join-Path $repoRoot "msys64\ucrt64\bin\gcc.exe"
+    if (Test-Path -LiteralPath $workspaceCompiler -PathType Leaf) {
+        $workspaceCompilerDir = Split-Path -Parent $workspaceCompiler
+        $env:PATH = "$workspaceCompilerDir;$env:PATH"
+        return "gcc"
     }
     foreach ($name in @("gcc", "clang")) {
         $path = Get-CommandPath $name
@@ -137,9 +149,8 @@ function Find-CgoCompiler {
 
 function Get-CommonCgoCompilerHints {
     $candidates = @(
-        "C:\msys64\ucrt64\bin\gcc.exe",
-        "C:\msys64\mingw64\bin\gcc.exe",
-        "C:\msys64\clang64\bin\gcc.exe",
+        (Join-Path $repoRoot "msys64\ucrt64\bin\gcc.exe"),
+        (Join-Path $repoRoot "msys64\mingw64\bin\gcc.exe"),
         "C:\mingw64\bin\gcc.exe",
         "C:\TDM-GCC-64\bin\gcc.exe"
     )
@@ -165,7 +176,7 @@ function Test-PluginZipEntries([string]$ZipPath) {
         }
         foreach ($name in $names) {
             if ($name.Contains("\")) {
-                throw "Plugin package $ZipPath entry '$name' uses backslash paths. BeefTV rejects those archives; zip entries must use forward slashes."
+                throw "Plugin package $ZipPath entry '$name' uses backslash paths. Eggfans TV rejects those archives; zip entries must use forward slashes."
             }
         }
     }
@@ -387,7 +398,15 @@ if (-not [string]::IsNullOrWhiteSpace($env:BEEFTV_EXTRA_LDFLAGS)) {
     $ldflags = "$ldflags $($env:BEEFTV_EXTRA_LDFLAGS.Trim())"
 }
 
-Write-Step "Building BeefTV $versionValue ($commitValue) for windows/amd64"
+Write-Step "Building Eggfans TV $versionValue ($commitValue) for windows/amd64"
+if (-not (Test-Path -LiteralPath $desktopIconSource -PathType Leaf)) {
+    throw "Desktop icon source is missing: $desktopIconSource"
+}
+Copy-Item -LiteralPath $desktopIconSource -Destination $desktopIconPath -Force
+if (Test-Path -LiteralPath $desktopWindowsIconPath -PathType Leaf) {
+    Remove-Item -LiteralPath $desktopWindowsIconPath -Force
+}
+Write-Step "Using Eggfans chick logo for the Windows app icon"
 Push-Location $desktopDir
 try {
     $wailsArgs = @(
@@ -426,7 +445,7 @@ if ($copied.Count -eq 0) {
 
 Write-Host "Release executable: $exePath"
 Write-Host "Official plugins: $pluginResourceDir ($($copied.Count) packages)"
-Write-Host "Launch data directory (unless CANVAS_DESKTOP_DATA_DIR is set): %AppData%\BeefTV"
+Write-Host "Launch data directory (unless CANVAS_DESKTOP_DATA_DIR is set): %AppData%\BeefTV (legacy-compatible path)"
 Write-Host "Official plugins are loaded from the executable directory, not from the process working directory."
 Write-Host "WebView2 is required at runtime; Windows 11 usually already has it. Missing runtimes use Wails -webview2 download. See https://wails.io/docs/guides/windows"
-Write-Host "This machine still has to launch BeefTV.exe before the Windows build is accepted. NSIS installer output is not produced."
+Write-Host "This machine still has to launch EggfansTV.exe before the Windows build is accepted. NSIS installer output is not produced."

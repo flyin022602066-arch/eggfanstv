@@ -5,6 +5,7 @@ import { Tooltip } from "@/components/ui/base/tooltip";
 import { Boxes, Check, Clapperboard, Heart, Library, LoaderCircle, Megaphone, MoreHorizontal, Palette, Plus, Puzzle, Search, ShoppingBag, Sparkles, UserRound } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useSearchParams } from "react-router";
 
 import { PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceState } from "@/components/layout/workspace-state";
@@ -40,6 +41,7 @@ const sortOptions: { label: string; value: SkillSort }[] = [
 
 export default function SkillsPage() {
     const { message, modal } = App.useApp();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [scope, setScope] = useState<SkillScope>("public");
     const [sort, setSort] = useState<SkillSort>("popular");
     const [search, setSearch] = useState("");
@@ -70,6 +72,15 @@ export default function SkillsPage() {
     const [editorOpen, setEditorOpen] = useState(false);
     const [installOpen, setInstallOpen] = useState(false);
     const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
+
+    useEffect(() => {
+        if (searchParams.get("create") !== "1") return;
+        setEditingSkill(null);
+        setEditorOpen(true);
+        const next = new URLSearchParams(searchParams);
+        next.delete("create");
+        setSearchParams(next, { replace: true });
+    }, [searchParams, setSearchParams]);
 
     const reload = useCallback(() => setReloadKey((value) => value + 1), []);
 

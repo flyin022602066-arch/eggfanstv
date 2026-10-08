@@ -7,11 +7,11 @@ func TestBeefAPIPresetIsPinnedWithoutFreezingRemoteModelCatalog(t *testing.T) {
 	if preset.ID != "beefapi" {
 		t.Fatalf("preset id = %q", preset.ID)
 	}
-	if preset.DisplayName != "BeefAPI" || preset.BaseURL != "https://enterprise.beefapi.com" {
+	if preset.DisplayName != "Eggfans TV" || preset.BaseURL != "https://api.eggfans.com" || preset.CatalogURL != "https://api.eggfans.com/pricing" {
 		t.Fatalf("unexpected BeefAPI identity: %#v", preset)
 	}
-	if !preset.Pinned || preset.PresetVersion < 1 {
-		t.Fatalf("preset must be pinned and versioned: %#v", preset)
+	if preset.Pinned || preset.PresetVersion < 1 {
+		t.Fatalf("preset must remain editable and versioned: %#v", preset)
 	}
 
 	if len(preset.Models) != 0 {

@@ -23,6 +23,7 @@ type ChannelPreset struct {
 	ID              string         `json:"id"`
 	DisplayName     string         `json:"displayName"`
 	BaseURL         string         `json:"baseUrl"`
+	CatalogURL      string         `json:"catalogUrl,omitempty"`
 	CatalogProtocol string         `json:"catalogProtocol"`
 	PresetVersion   int            `json:"presetVersion"`
 	Pinned          bool           `json:"pinned"`

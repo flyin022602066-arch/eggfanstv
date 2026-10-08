@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 
 type ChannelModelsRequest struct {
 	BaseURL       string           `json:"baseUrl"`
+	CatalogURL    string           `json:"catalogUrl"`
 	APIKey        string           `json:"apiKey"`
 	APIFormat     string           `json:"apiFormat"`
 	Headers       []OutboundHeader `json:"headers"`
@@ -30,10 +32,12 @@ type channelModelsPayload struct {
 
 type channelModelItem struct {
 	ID                     string                        `json:"id"`
+	ModelName              string                        `json:"model_name"`
 	Name                   string                        `json:"name"`
 	DisplayName            string                        `json:"display_name"`
 	ModelType              string                        `json:"model_type"`
 	SupportedEndpointTypes []string                      `json:"supported_endpoint_types"`
+	ShowImageUpload        *int                          `json:"show_image_upload"`
 	DefaultParameters      channelModelCatalogParameters `json:"default_parameters"`
 	Options                channelModelCatalogOptions    `json:"options"`
 	SupportsImages         *bool                         `json:"supports_images"`
@@ -130,7 +134,14 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 		return nil, err
 	}
 
-	target := apiURL(baseURL, "/models")
+	target := strings.TrimSpace(input.CatalogURL)
+	if target == "" {
+		target = apiURL(baseURL, "/models")
+	} else if strings.HasPrefix(target, "/") {
+		target = apiURL(baseURL, target)
+	} else if normalized, ok := normalizeEggfansCatalogURL(target); ok {
+		target = normalized
+	}
 	if apiFormat == "gemini" {
 		if !strings.HasSuffix(strings.ToLower(baseURL), "/v1beta") {
 			baseURL += "/v1beta"
@@ -174,15 +185,19 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 	seen := make(map[string]bool, len(items))
 	catalog := make([]ChannelModelCatalogItem, 0, len(items))
 	for _, item := range items {
-		name := strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(item.ID, item.Name)), "models/")
+		name := strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(item.ID, item.Name, item.ModelName)), "models/")
 		if name == "" || seen[name] {
 			continue
 		}
 		seen[name] = true
+		modelType := normalizeCatalogModelType(item.ModelType)
+		if modelType == "" && item.ShowImageUpload != nil && *item.ShowImageUpload > 0 {
+			modelType = "image"
+		}
 		catalog = append(catalog, ChannelModelCatalogItem{
 			ID:                     name,
-			DisplayName:            strings.TrimSpace(item.DisplayName),
-			ModelType:              normalizeCatalogModelType(item.ModelType),
+			DisplayName:            strings.TrimSpace(firstNonEmpty(item.DisplayName, item.ModelName)),
+			ModelType:              modelType,
 			SupportedEndpointTypes: normalizeCatalogEndpointTypes(item.SupportedEndpointTypes),
 			DefaultParameters: ChannelModelCatalogDefaultParameters{
 				AspectRatio:     strings.TrimSpace(item.DefaultParameters.AspectRatio),
@@ -213,9 +228,34 @@ func normalizeCatalogModelType(value string) string {
 	switch normalized {
 	case "text", "image", "video", "audio":
 		return normalized
+	case "对话", "文本", "聊天", "chat", "conversation", "embedding", "embeddings":
+		return "text"
+	case "图片", "图像", "图像生成", "image generation":
+		return "image"
+	case "音视频":
+		return "audio"
+	case "视频", "视频生成", "video generation":
+		return "video"
+	case "音频", "语音", "音频生成", "audio generation":
+		return "audio"
 	default:
 		return ""
 	}
+}
+
+func normalizeEggfansCatalogURL(raw string) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return raw, false
+	}
+	if strings.EqualFold(parsed.Hostname(), "api.eggfans.com") && strings.EqualFold(strings.TrimRight(parsed.Path, "/"), "/pricing") {
+		parsed.Path = "/api/pricing_new"
+		parsed.RawPath = ""
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return parsed.String(), true
+	}
+	return raw, true
 }
 
 func normalizeCatalogOptions(options []ChannelModelCatalogOption) []ChannelModelCatalogOption {

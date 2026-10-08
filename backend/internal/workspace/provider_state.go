@@ -3,6 +3,7 @@ package workspace
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"infinite-canvas/backend/internal/providerpreset"
 )
@@ -75,6 +76,7 @@ func mergeBuiltinProviderPresets(config map[string]any) (map[string]any, error) 
 			order = append(order, id)
 		}
 	}
+	migrateLegacyTopLevelModels(result, channels)
 
 	for _, preset := range providerpreset.BuiltinChannels() {
 		local := channels[preset.ID]
@@ -96,6 +98,62 @@ func mergeBuiltinProviderPresets(config map[string]any) (map[string]any, error) 
 	}
 	result["channels"] = mergedChannels
 	return result, nil
+}
+
+func migrateLegacyTopLevelModels(config map[string]any, channels map[string]map[string]any) {
+	modelsByChannel := map[string][]string{}
+	for _, key := range []string{"models", "imageModels", "videoModels", "textModels", "audioModels"} {
+		rawModels, ok := config[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawModel := range rawModels {
+			value, ok := rawModel.(string)
+			if !ok {
+				continue
+			}
+			channelID, model, ok := strings.Cut(strings.TrimSpace(value), "::")
+			if !ok {
+				continue
+			}
+			channelID = strings.TrimSpace(channelID)
+			model = strings.TrimSpace(model)
+			if channelID == "" || model == "" || containsString(modelsByChannel[channelID], model) {
+				continue
+			}
+			modelsByChannel[channelID] = append(modelsByChannel[channelID], model)
+		}
+	}
+
+	for channelID, models := range modelsByChannel {
+		channel := channels[channelID]
+		if channel == nil || hasNonEmptyModels(channel["models"]) {
+			continue
+		}
+		migrated := make([]any, 0, len(models))
+		for _, model := range models {
+			migrated = append(migrated, model)
+		}
+		channel["models"] = migrated
+	}
+}
+
+func hasNonEmptyModels(value any) bool {
+	switch models := value.(type) {
+	case []any:
+		for _, model := range models {
+			if text, ok := model.(string); ok && strings.TrimSpace(text) != "" {
+				return true
+			}
+		}
+	case []string:
+		for _, model := range models {
+			if strings.TrimSpace(model) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any) (map[string]any, error) {
@@ -138,17 +196,38 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 		}
 	}
 	result := map[string]any{
-		"id": preset.ID, "name": preset.DisplayName, "baseUrl": preset.BaseURL,
+		"id": preset.ID, "name": preset.DisplayName, "baseUrl": preset.BaseURL, "catalogUrl": preset.CatalogURL,
 		"apiFormat": preset.CatalogProtocol, "scope": "user", "pinned": preset.Pinned,
 		"presetVersion": preset.PresetVersion, "models": models, "modelProfiles": profiles,
 		"apiKey": "", "secretKey": "", "headers": []any{}, "enabled": true,
 	}
-	for _, key := range []string{"apiKey", "secretKey", "headers", "enabled"} {
+	for _, key := range []string{"name", "baseUrl", "catalogUrl", "apiFormat", "apiKey", "secretKey", "headers", "enabled"} {
 		if value, ok := local[key]; ok {
+			if isLegacyBeefAPIDefault(preset, key, value) {
+				continue
+			}
 			result[key] = value
 		}
 	}
 	return result, nil
+}
+
+func isLegacyBeefAPIDefault(preset providerpreset.ChannelPreset, key string, value any) bool {
+	if preset.ID != "beefapi" {
+		return false
+	}
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	switch key {
+	case "name":
+		return strings.EqualFold(strings.TrimSpace(text), "BeefAPI")
+	case "baseUrl":
+		return strings.EqualFold(strings.TrimRight(strings.TrimSpace(text), "/"), "https://enterprise.beefapi.com")
+	default:
+		return false
+	}
 }
 
 func builtinPresetVersions() map[string]int {

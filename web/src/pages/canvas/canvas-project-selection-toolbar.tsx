@@ -7,11 +7,15 @@ import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
 import { defaultToolbarPrefs, readToolbarPrefs, resolveToolbarEntries, type ToolContext, type ToolbarHandlers } from "@/lib/canvas/tool-registry";
 import type { CanvasAlignmentMode } from "@/lib/canvas/canvas-layout";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
+import type { CanvasNodeTypeId } from "@/types/canvas";
 
 type CanvasProjectSelectionToolbarProps = {
     anchorRef: RefObject<HTMLDivElement | null>;
     containerRef: RefObject<HTMLDivElement | null>;
     count: number;
+    selectedNodeTypes: Set<CanvasNodeTypeId>;
+    selectedImageCount: number;
+    selectedMediaCount: number;
     selectedVideoCount: number;
     mergingVideos: boolean;
     onAlign: (mode: CanvasAlignmentMode) => void;
@@ -23,7 +27,7 @@ type CanvasProjectSelectionToolbarProps = {
     onSendSelectionToAgent: () => void;
 };
 
-export function CanvasProjectSelectionToolbar({ anchorRef, containerRef, count, selectedVideoCount, mergingVideos, onAlign, onArrange, onCreateStoryboard, onCreateReferenceGroup, onBatchConnect, onMergeVideos, onSendSelectionToAgent }: CanvasProjectSelectionToolbarProps) {
+export function CanvasProjectSelectionToolbar({ anchorRef, containerRef, count, selectedNodeTypes, selectedImageCount, selectedMediaCount, selectedVideoCount, mergingVideos, onAlign, onArrange, onCreateStoryboard, onCreateReferenceGroup, onBatchConnect, onMergeVideos, onSendSelectionToAgent }: CanvasProjectSelectionToolbarProps) {
     const theme = canvasThemes[useCanvasThemeStore((state) => state.theme)];
 
     const handlers = {
@@ -32,7 +36,9 @@ export function CanvasProjectSelectionToolbar({ anchorRef, containerRef, count, 
 
     const ctx: ToolContext = {
         selectedCount: count,
-        selectedNodeTypes: new Set(),
+        selectedNodeTypes,
+        selectedImageCount,
+        selectedMediaCount,
         selectedVideoCount,
         canvasTool: "move",
         workspaceMode: "professional",

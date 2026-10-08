@@ -256,6 +256,22 @@ export function useCanvasRenderModel({
                 }),
         [nodeById, renderHiddenNodeIds, selectedNodeIds],
     );
+    const selectedNodeTypes = useMemo(
+        () => new Set([...selectedNodeIds].map((nodeId) => nodeById.get(nodeId)?.type).filter((type): type is CanvasNodeData["type"] => Boolean(type))),
+        [nodeById, selectedNodeIds],
+    );
+    const selectedImageNodes = useMemo(
+        () => [...selectedNodeIds]
+            .map((nodeId) => nodeById.get(nodeId))
+            .filter((node): node is CanvasNodeData => Boolean(node && node.type === CanvasNodeType.Image && node.metadata?.content && !node.metadata?.locked && !renderHiddenNodeIds.has(node.id))),
+        [nodeById, renderHiddenNodeIds, selectedNodeIds],
+    );
+    const selectedMediaNodes = useMemo(
+        () => [...selectedNodeIds]
+            .map((nodeId) => nodeById.get(nodeId))
+            .filter((node): node is CanvasNodeData => Boolean(node && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && node.metadata?.content && !node.metadata?.locked && !renderHiddenNodeIds.has(node.id))),
+        [nodeById, renderHiddenNodeIds, selectedNodeIds],
+    );
     const relatedHighlight = useMemo(() => {
         const nodeIds = new Set<string>();
         const connectionIds = new Set<string>();
@@ -384,6 +400,9 @@ export function useCanvasRenderModel({
         relatedHighlight,
         resourceReferenceByNodeId,
         selectedNodeBounds,
+        selectedNodeTypes,
+        selectedImageNodes,
+        selectedMediaNodes,
         selectedVideoNodes,
         semanticNodes,
         skillMentionReferences,

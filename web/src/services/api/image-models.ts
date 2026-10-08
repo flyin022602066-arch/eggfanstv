@@ -18,27 +18,31 @@ type GeminiModelPayload = { models?: Array<{ name?: string }> };
 type OpenAIModelRecord = {
     id?: string;
     name?: string;
+    model_name?: string;
     display_name?: string;
     model_type?: string;
+    show_image_upload?: number;
     supported_endpoint_types?: string[];
 };
 type OpenAIModelPayload = { data?: OpenAIModelRecord[]; error?: { message?: string } };
+type ModelCatalogConfig = Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat"> & { headers?: ModelChannel["headers"] };
 
-async function fetchOpenAIModelCatalog(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
-    const payload = await createChannelTransport(config, "image").get<OpenAIModelPayload>(buildApiUrl(config.baseUrl, "/models"));
+async function fetchOpenAIModelCatalog(config: ModelCatalogConfig, catalogUrl?: string) {
+    const payload = await createChannelTransport(config, "image").get<OpenAIModelPayload>(catalogRequestUrl(config.baseUrl, catalogUrl));
     return (payload.data || [])
         .map((model) =>
             sanitizeChannelModelCatalogItem({
-                id: model.id || model.name,
-                displayName: model.display_name || model.name,
-                modelType: model.model_type,
+                id: model.id || model.name || model.model_name,
+                displayName: model.display_name || model.name || model.model_name,
+                modelType: normalizeEggfansModelType(model.model_type, model.show_image_upload),
+                supportsImages: model.show_image_upload ? true : undefined,
                 supportedEndpointTypes: model.supported_endpoint_types,
             }),
         )
         .filter((item): item is ChannelModelCatalogItem => Boolean(item));
 }
 
-export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+export async function fetchImageModels(config: ModelCatalogConfig) {
     try {
         if (config.apiFormat === "gemini") {
             const requestConfig = { ...defaultGeminiConfig, ...config };
@@ -70,7 +74,7 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
     }
     if (!viaBackend) {
         if (channel.apiFormat !== "gemini") {
-            const catalog = await fetchOpenAIModelCatalog({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+            const catalog = await fetchOpenAIModelCatalog({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat, headers: channel.headers }, channel.catalogUrl);
             return { models: catalog.map((item) => item.id).sort((a, b) => a.localeCompare(b)), catalog };
         }
         const models = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
@@ -80,6 +84,7 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
         // 登录态由同源后端代取模型目录，避免每个 OpenAI 兼容服务分别维护浏览器 CORS 白名单。
         const result = await http.post<{ models?: Array<string | ChannelModelCatalogItem> }>("/ai/models", {
             baseUrl: channel.baseUrl,
+            catalogUrl: channel.catalogUrl,
             apiKey: managed ? "" : channel.apiKey,
             apiFormat: channel.apiFormat,
             headers: channel.headers,
@@ -99,4 +104,23 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
     } catch (error) {
         throw new Error(readAxiosError(error, "读取模型失败"));
     }
+}
+
+function catalogRequestUrl(baseUrl: string, catalogUrl?: string) {
+    const configured = catalogUrl?.trim();
+    if (!configured) return buildApiUrl(baseUrl, "/models");
+    if (/^https:\/\/api\.eggfans\.com\/pricing\/?$/i.test(configured)) return "https://api.eggfans.com/api/pricing_new";
+    if (configured.startsWith("/")) return buildApiUrl(baseUrl, configured);
+    return configured;
+}
+
+function normalizeEggfansModelType(value?: string, showImageUpload?: number) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (["text", "image", "video", "audio"].includes(normalized)) return normalized;
+    if (["对话", "文本", "聊天", "chat", "conversation", "embedding", "embeddings"].includes(normalized)) return "text";
+    if (["图片", "图像", "图像生成", "image generation"].includes(normalized) || showImageUpload) return "image";
+    if (normalized === "音视频") return "audio";
+    if (["视频", "视频生成", "video generation"].includes(normalized)) return "video";
+    if (["音频", "语音", "音频生成", "audio generation"].includes(normalized)) return "audio";
+    return undefined;
 }

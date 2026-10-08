@@ -89,6 +89,34 @@ describe("public channel model catalog", () => {
         expect(resolveModelRequestConfig(normalized, "beefapi::gpt-5.6-sol").interfaceType).toBe("chat-completion");
     });
 
+    test("classifies Gemini 3.8 Flash as text and repairs a stale video profile", () => {
+        const channel = createModelChannel({
+            id: "beefapi",
+            name: "Eggfans TV",
+            baseUrl: "https://api.eggfans.com",
+            apiKey: "synthetic-test-key",
+            models: ["gemini-3.8-flash"],
+            modelProfiles: [
+                { model: "gemini-3.8-flash", capability: "video", protocol: "newapi-channel-2" },
+            ],
+        });
+        const catalog = [
+            { id: "gemini-3.8-flash", modelType: "video" as const },
+        ];
+
+        const fetchedProfiles = mergeFetchedChannelModelProfiles(channel, catalog);
+        expect(fetchedProfiles).toEqual([
+            { model: "gemini-3.8-flash", capability: "text", protocol: "chat-completion" },
+        ]);
+
+        const normalized = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
+        expect(normalized.channels[0]?.modelProfiles).toEqual([
+            { model: "gemini-3.8-flash", capability: "text", protocol: "chat-completion", capabilityConfig: undefined },
+        ]);
+        expect(selectableModelsByCapability(normalized, "video")).toEqual([]);
+        expect(selectableModelsByCapability(normalized, "text")).toEqual(["beefapi::gemini-3.8-flash"]);
+    });
+
     test("maps BeefAPI speech and music to audio without treating ASR as chat or TTS", () => {
         const catalog: ChannelModelCatalogItem[] = [
             { id: "gpt-5.6-sol", modelType: "text", supportedEndpointTypes: ["openai"] },

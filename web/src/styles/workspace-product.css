@@ -1253,12 +1253,10 @@
     box-shadow: none !important;
 }
 .app-user-workspace.app-product-workspace .app-workspace-brand-placeholder {
-    color: #0b0b0b;
-    font-size: 20px;
-    font-style: italic;
-    font-weight: 900;
-    letter-spacing: -.08em;
-    line-height: 1;
+    display: block;
+    width: 20px;
+    height: 20px;
+    background: url('/eggfans-logo.png') center / contain no-repeat;
 }
 .app-user-workspace.app-product-workspace .app-workspace-brand-wordmark {
     overflow: visible !important;

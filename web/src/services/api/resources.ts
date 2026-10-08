@@ -278,6 +278,15 @@ export async function getResourceOSSUrl(storageKey?: string) {
     }
 }
 
+export async function getResourceUpstreamUrl(storageKey?: string, options?: { signal?: AbortSignal }) {
+    if (!isLocalRuntimeMode()) return getResourceOSSUrl(storageKey);
+    const id = resourceIdFromStorageKey(storageKey);
+    if (!id) throw new Error("本地素材尚未保存到工作区资源库");
+    const data = await http.get<{ url: string }>(`/resources/${encodeURIComponent(id)}/direct-url`, options);
+    if (!/^https:\/\//i.test(data.url || "")) throw new Error("本地素材需要 HTTPS 公开地址，请配置 CANVAS_PUBLIC_BASE_URL");
+    return data.url;
+}
+
 function resourceCacheKey(id: string) {
     return `${getActiveUserScope()}:${id}`;
 }

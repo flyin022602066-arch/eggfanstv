@@ -792,6 +792,53 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /resources/{id}/direct-url:
+    get:
+      tags: [resources]
+      summary: 为当前用户的本地资源签发短时 HTTPS 下载 URL
+      description: 要求服务器配置 CANVAS_PUBLIC_BASE_URL。链接有效期为 5 分钟，只能读取当前用户拥有的本地资源。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 信封 data.url 为带有效期与签名的 HTTPS URL
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /public/resources/{id}/file/{filename}:
+    get:
+      tags: [resources]
+      security: []
+      summary: 读取短时签名资源 URL 指向的文件
+      description: 仅接受 direct-url 签发的 expires 与 signature；桌面运行时不要求 launch token，签名有效期 5 分钟。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: filename
+          required: true
+          schema: { type: string }
+        - in: query
+          name: expires
+          required: true
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: signature
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 资源文件流
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /tasks:
     post:
       tags: [tasks]

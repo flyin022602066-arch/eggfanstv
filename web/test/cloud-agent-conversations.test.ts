@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { buildCanvasAgentMentionReferences } from "@/lib/canvas/canvas-resource-references";
-import { cloudAgentConversationTitle } from "@/services/cloud-agent-conversations";
+import { cloudAgentConversationTitle, migrateCloudAgentConversationDocument } from "@/services/cloud-agent-conversations";
 import { CanvasNodeType } from "@/types/canvas";
 
 describe("cloud Agent conversations", () => {
@@ -21,5 +21,23 @@ describe("cloud Agent conversations", () => {
         expect(cloudAgentConversationTitle([{ id: "2", role: "user", text: "  帮我整理分镜  " }])).toBe("帮我整理分镜");
         expect(cloudAgentConversationTitle([{ id: "3", role: "user", text: "一".repeat(40) }])).toBe(`${"一".repeat(28)}...`);
         expect(cloudAgentConversationTitle([{ id: "4", role: "user", text: "规划短剧 @[skill:internal-skill-id]" }])).toBe("规划短剧 技能包");
+    });
+
+    it("migrates saved conversations to canvas editing permissions without dropping history", () => {
+        const legacy = {
+            version: 1,
+            activeId: "conversation-1",
+            conversations: [{
+                id: "conversation-1", title: "整理分镜", messages: [{ id: "message-1", role: "user", text: "整理分镜" }],
+                run: null, permissionMode: "request_approval", createdAt: "2026-10-01", updatedAt: "2026-10-01",
+            }],
+        };
+
+        expect(migrateCloudAgentConversationDocument(legacy)).toMatchObject({
+            version: 2,
+            activeId: "conversation-1",
+            conversations: [{ id: "conversation-1", permissionMode: "auto", messages: [{ id: "message-1", text: "整理分镜" }] }],
+        });
+        expect(migrateCloudAgentConversationDocument({ version: 3, activeId: null, conversations: [] })).toBeNull();
     });
 });

@@ -70,7 +70,7 @@ if [[ -n "${BEEFTV_WAILS_PLATFORM:-}" ]]; then
   esac
 fi
 
-echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
+echo "Building Eggfans TV $VERSION_VALUE ($COMMIT_VALUE)"
 
 (
   cd "$DESKTOP_DIR"
@@ -90,7 +90,7 @@ echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
 
 # Official protocol packages are runtime dependencies. Finder launches use the
 # bundle Resources directory and must never depend on the caller's cwd.
-APP_BUNDLE="$DESKTOP_DIR/build/bin/BeefTV.app"
+APP_BUNDLE="$DESKTOP_DIR/build/bin/EggfansTV.app"
 PLUGIN_RESOURCE_DIR="$APP_BUNDLE/Contents/Resources/plugin-packages"
 mkdir -p "$PLUGIN_RESOURCE_DIR"
 cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$PLUGIN_RESOURCE_DIR/"

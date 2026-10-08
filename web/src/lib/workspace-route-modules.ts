@@ -3,6 +3,8 @@ const workspaceRouteLoaders = {
     assets: () => import("@/pages/assets"),
     canvas: () => import("@/pages/canvas"),
     create: () => import("@/pages/create"),
+    editor: () => import("@/pages/editor"),
+    skills: () => import("@/pages/skills"),
     projects: () => import("@/pages/projects"),
     projectDetail: () => import("@/pages/projects/detail"),
 };
@@ -12,6 +14,8 @@ export const loadHomePage = workspaceRouteLoaders.home;
 export const loadCanvasPage = workspaceRouteLoaders.canvas;
 export const loadCanvasProjectPage = () => import("@/pages/canvas/project");
 export const loadCreatePage = workspaceRouteLoaders.create;
+export const loadEditorPage = workspaceRouteLoaders.editor;
+export const loadSkillsPage = workspaceRouteLoaders.skills;
 export const loadProjectDetailPage = workspaceRouteLoaders.projectDetail;
 export const loadProjectsPage = workspaceRouteLoaders.projects;
 

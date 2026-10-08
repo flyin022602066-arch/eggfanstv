@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import * as workspaceBootstrap from "../src/components/workspace/workspace-bootstrap-hydrator";
 import { localWorkspaceConfig } from "../src/lib/user-session";
 import { mergeManagedBeefAPICatalog } from "../src/pages/settings/channel-settings-pane";
-import { createModelChannel, defaultConfig, type AiConfig } from "../src/stores/use-config-store";
+import { createModelChannel, defaultConfig, normalizeConfigSnapshot, type AiConfig } from "../src/stores/use-config-store";
 import { createModelConfigRepository } from "../src/services/model-config-repository";
 
 test("local-mode startup restores the local model config after the session", async () => {
@@ -68,6 +68,65 @@ test("migrated or recovered model config is durably written after hydration", ()
     expect(shouldPersist!("recovered")).toBe(true);
     expect(shouldPersist!("ready")).toBe(false);
     expect(shouldPersist!("default")).toBe(false);
+});
+
+test("legacy top-level model snapshots trigger a durable normalized writeback", () => {
+    const shouldPersist = (workspaceBootstrap as Record<string, unknown>).shouldPersistHydratedModelConfigSnapshot as undefined | ((health: string, mergedConfig: AiConfig, normalizedConfig: AiConfig) => boolean);
+    expect(typeof shouldPersist).toBe("function");
+    const mergedConfig = {
+        ...defaultConfig,
+        channels: [createModelChannel({ id: "beefapi", models: [] })],
+        models: ["beefapi::gemini-3.8-flash"],
+        textModel: "beefapi::gemini-3.8-flash",
+    };
+    const normalizedConfig = {
+        ...mergedConfig,
+        channels: [createModelChannel({ id: "beefapi", models: ["gemini-3.8-flash"] })],
+    };
+    expect(shouldPersist!("ready", mergedConfig, normalizedConfig)).toBe(true);
+    expect(shouldPersist!("ready", normalizedConfig, normalizedConfig)).toBe(false);
+});
+
+test("hydration keeps local direct-channel credentials while accepting the canonical catalog", () => {
+    const merge = (workspaceBootstrap as Record<string, unknown>).mergeHydratedModelConfig as undefined | ((localConfig: AiConfig, remoteConfig: AiConfig) => AiConfig);
+    expect(typeof merge).toBe("function");
+
+    const localConfig: AiConfig = {
+        ...defaultConfig,
+        apiKey: "legacy-local-key",
+        channels: [
+            createModelChannel({ id: "beefapi", name: "Eggfans TV", apiKey: "direct-local-key", models: ["old-model"], baseUrl: "https://old.example" }),
+            createModelChannel({ id: "managed", credentialRef: "beefapi-enterprise", apiKey: "stale-managed-key", models: ["old-managed"] }),
+        ],
+    };
+    const remoteConfig: AiConfig = {
+        ...defaultConfig,
+        apiKey: "",
+        channels: [
+            createModelChannel({ id: "beefapi", name: "Eggfans TV", apiKey: "", hasApiKey: true, models: ["new-model"], baseUrl: "https://api.eggfans.com" }),
+            createModelChannel({ id: "managed", credentialRef: "beefapi-enterprise", apiKey: "", hasApiKey: true, models: ["new-managed"] }),
+        ],
+    };
+
+    const merged = merge!(localConfig, remoteConfig);
+    expect(merged.apiKey).toBe("legacy-local-key");
+    expect(merged.channels[0]).toMatchObject({ apiKey: "direct-local-key", baseUrl: "https://api.eggfans.com", models: ["new-model"] });
+    expect(merged.channels[1]).toMatchObject({ apiKey: "", credentialRef: "beefapi-enterprise", models: ["new-managed"] });
+});
+
+test("normalization restores legacy top-level model options into their channel", () => {
+    const normalized = normalizeConfigSnapshot({
+        config: {
+            ...defaultConfig,
+            channels: [createModelChannel({ id: "beefapi", name: "Eggfans TV", models: [] })],
+            models: ["beefapi::gemini-3.8-flash", "beefapi::seedance-2.0"],
+            textModel: "beefapi::gemini-3.8-flash",
+            videoModel: "beefapi::seedance-2.0",
+        },
+    }).config;
+
+    expect(normalized.channels[0]?.models).toEqual(["gemini-3.8-flash", "seedance-2.0"]);
+    expect(normalized.models).toEqual(["beefapi::gemini-3.8-flash", "beefapi::seedance-2.0"]);
 });
 
 test("local config strips hosted system channels but keeps direct user channels", () => {

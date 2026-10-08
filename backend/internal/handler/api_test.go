@@ -64,10 +64,12 @@ func TestRegisterDesktopCanvasAPIExcludesHostedOnlyRoutes(t *testing.T) {
 		}
 	}
 
-	wanted := map[string]bool{
-		"GET /api/workspace/bootstrap":                  false,
-		"POST /api/resources":                           false,
-		"POST /api/tasks":                               false,
+        wanted := map[string]bool{
+                "GET /api/workspace/bootstrap":                  false,
+                "POST /api/resources":                           false,
+                "GET /api/resources/:id/direct-url":             false,
+                "GET /api/public/resources/:id/file/:filename":  false,
+                "POST /api/tasks":                               false,
 		"POST /api/ai/models":                           false,
 		"GET /api/beefapi/connection":                   false,
 		"POST /api/beefapi/connection/start":            false,
@@ -104,7 +106,7 @@ func TestRegisterDesktopCanvasAPIExcludesHostedOnlyRoutes(t *testing.T) {
 			"GET /api/admin/text-replay-stats",
 			"POST /api/canvas-projects/:id/import/libtv", "POST /api/canvas-projects/:id/import/tapnow",
 			"POST /api/runninghub/workflow-info", "POST /api/runninghub/app-info",
-			"GET /api/public/resources/:id/file", "GET /api/public/resources/:id/file/:filename":
+                        "GET /api/public/resources/:id/file":
 			t.Fatalf("desktop API must not expose hosted storage route %s", key)
 		}
 		if key == "POST /api/skills/install/github" || key == "POST /api/skills/:id/sync" {

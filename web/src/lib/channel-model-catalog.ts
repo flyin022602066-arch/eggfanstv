@@ -74,6 +74,9 @@ export function catalogModelMapping(
         .trim()
         .toLowerCase();
     const endpoints = (item.supportedEndpointTypes || []).map((value) => value.trim().toLowerCase()).filter(Boolean);
+    if (catalogIsGeminiTextName(id)) {
+        return { capability: "text", protocol: "chat-completion" };
+    }
     if (endpoints.some((endpoint) => endpoint === "audio.transcriptions" || endpoint === "audio-transcriptions" || endpoint === "transcriptions")) {
         return { skipGeneration: true };
     }
@@ -110,6 +113,12 @@ function catalogIsTranscriptionName(id: string) {
 function catalogIsSpeechOrMusic(id: string) {
     if (catalogIsTranscriptionName(id)) return false;
     return catalogHasNameToken(id, ["speech", "tts", "music"]);
+}
+
+function catalogIsGeminiTextName(id: string) {
+    const value = id.trim().toLowerCase();
+    if (!/^gemini(?:[-_]|$)/u.test(value)) return false;
+    return !["image", "vision", "veo", "video", "audio", "tts", "embedding", "live"].some((token) => value.includes(token));
 }
 
 function isBeefAPICatalogChannel(channel: ModelChannel) {

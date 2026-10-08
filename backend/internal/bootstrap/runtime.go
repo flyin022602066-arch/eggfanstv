@@ -209,6 +209,7 @@ func initializeService(svc *app.Service) error {
 		svc.EnsureBuiltinProjectWorkflowTemplate,
 		svc.EnsureBuiltinSkills,
 		svc.EnsureSkillPackages,
+		svc.EnsureLocalBuiltinSkills,
 	}
 	for _, initialize := range initializers {
 		if err := initialize(); err != nil {

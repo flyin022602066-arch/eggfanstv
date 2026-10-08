@@ -38,7 +38,7 @@ func main() {
 	_ = os.Remove(startupErrorPath)
 
 	err = wails.Run(&options.App{
-		Title:  "BeefTV",
+		Title:  "Eggfans TV",
 		Width:  1440,
 		Height: 960,
 		AssetServer: &assetserver.Options{

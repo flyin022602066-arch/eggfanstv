@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme/beeftv-wordmark.svg" width="640" alt="BeefTV — High-performance, lightweight, AI-native video workspace">
+  <img src="assets/readme/beeftv-wordmark.svg" width="640" alt="Eggfans TV — High-performance, lightweight, AI-native video workspace">
 </p>
 
 <p align="center"><strong>High-performance · Lightweight · AI Native</strong></p>
@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/94fe6a39-6933-44b3-a9a9-dbc28b2d284c
 
 [下载产品演示视频](https://github.com/glanderness/BeefTV/releases/download/v1.5.5/beeftv-demo.mp4)
 
-## Why BeefTV
+## Why Eggfans TV
 
 | High Performance | Lightweight | AI Native |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ https://github.com/user-attachments/assets/94fe6a39-6933-44b3-a9a9-dbc28b2d284c
 - **加工**：继续裁切、标注、局部重绘、拆分、引用和组合结果。
 - **迭代**：保留过程、复用素材，让一次生成变成可持续演进的工作流。
 
-BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道、创作工具与 Agent 工作区。完整范围见[功能清单](docs/content/docs/overview/features.mdx)。
+Eggfans TV 同时提供项目库、个人资产库、异步任务、模型渠道、创作工具与 Agent 工作区。完整范围见[功能清单](docs/content/docs/overview/features.mdx)。
 
 ## 工作方式
 
@@ -71,7 +71,7 @@ cd BeefTV
 
 ## 项目状态
 
-BeefTV 正在快速迭代，数据结构和外部接口仍可能变化。建议在个人设备或可信环境中使用，并避免将本地 workspace API 直接暴露到公网。
+Eggfans TV 正在快速迭代，数据结构和外部接口仍可能变化。建议在个人设备或可信环境中使用，并避免将本地 workspace API 直接暴露到公网。
 
 - [更新记录](CHANGELOG.md)
 - [安全策略](SECURITY.md)

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 const LaunchTokenHeader = "X-Desktop-Token"
@@ -22,7 +23,7 @@ func RequireLaunchToken(token string) func(http.Handler) http.Handler {
 	want := []byte(token)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodOptions || r.URL.Path == "/api/health/live" {
+			if r.Method == http.MethodOptions || r.URL.Path == "/api/health/live" || strings.HasPrefix(r.URL.Path, "/api/public/resources/") {
 				next.ServeHTTP(w, r)
 				return
 			}
