@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildImageGenerationNodeTitle } from "@/lib/canvas/canvas-generation-title";
-import { buildCanvasMediaDownloadFileName, canvasMediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { buildCanvasMediaDownloadFileName, canvasMediaFileExtension, mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 function mediaNode(overrides: Partial<CanvasNodeData> = {}): CanvasNodeData {
@@ -18,6 +18,15 @@ function mediaNode(overrides: Partial<CanvasNodeData> = {}): CanvasNodeData {
 }
 
 describe("canvas media download", () => {
+    test("素材库 MIME 别名经过文件名清理后仍保留真实格式后缀", () => {
+        for (const [mime, extension] of [["video/quicktime", "mov"], ["image/svg+xml", "svg"], ["audio/x-wav", "wav"], ["audio/mpeg", "mp3"], ["audio/mp4", "m4a"], ["image/jpeg; charset=utf-8", "jpg"]]) {
+            const name = sanitizeDownloadFileName(`中文素材.${mediaFileExtension(mime)}`);
+            expect(name).toBe(`中文素材.${extension}`);
+        }
+        expect(mediaFileExtension("application/octet-stream", "https://example.com/clip.webm?token=hidden")).toBe("webm");
+        expect(mediaFileExtension("application/octet-stream", "blob:unknown")).toBeUndefined();
+    });
+
     test("按画布名、节点名和本地日期生成文件名", () => {
         expect(buildCanvasMediaDownloadFileName("写给阿妈的情书", mediaNode(), new Date(2026, 7, 28, 12))).toBe("写给阿妈的情书_女明星角色三视图_20260828.png");
     });
@@ -35,6 +44,13 @@ describe("canvas media download", () => {
     test("优先按媒体 MIME 类型确定视频扩展名", () => {
         expect(canvasMediaFileExtension(mediaNode({ type: CanvasNodeType.Video, metadata: { content: "https://example.com/video", mimeType: "video/webm" } }))).toBe("webm");
         expect(canvasMediaFileExtension(mediaNode({ type: CanvasNodeType.Video, metadata: { content: "https://example.com/video", mimeType: "video/quicktime" } }))).toBe("mov");
+    });
+
+    test("佳速无后缀视频链接导出时自动使用 mp4 文件名", () => {
+        for (const mimeType of ["video/mp4", "binary/octet-stream"]) {
+            const node = mediaNode({ type: CanvasNodeType.Video, title: "镜头1", metadata: { content: "http://cdn.example/video/opaque-name/?mime_type=video_mp4&token=synthetic", mimeType } });
+            expect(buildCanvasMediaDownloadFileName("画布", node, new Date(2026, 9, 13, 12))).toBe("画布_镜头1_20261013.mp4");
+        }
     });
 
     test("MIME 类型不明确时从远程资源 URL 识别扩展名", () => {

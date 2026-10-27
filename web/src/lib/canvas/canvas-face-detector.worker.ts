@@ -51,7 +51,7 @@ function getDetector() {
                 minDetectionConfidence: 0.25,
                 minSuppressionThreshold: 0.3,
             },
-        );
+        ).catch((error) => { detectorPromise = null; throw error; });
     }
     return detectorPromise;
 }

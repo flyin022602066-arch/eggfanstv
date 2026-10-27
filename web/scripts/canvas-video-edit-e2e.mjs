@@ -1,0 +1,102 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import react from "@vitejs/plugin-react";
+import { chromium } from "playwright";
+import { createServer } from "vite";
+
+const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const outputDir = resolve(webDir, "../output/playwright/video-edit");
+mkdirSync(outputDir, { recursive: true });
+const media = readFileSync(process.argv[2]);
+const server = await createServer({ configFile: false, appType: "custom", root: webDir, plugins: [react()], resolve: { alias: { "@": resolve(webDir, "src") } }, define: { __APP_VERSION__: '"test"', __APP_CHANGELOG__: '""', __BEEFTV_HEAVY_MEDIA_ENABLED__: "true" }, server: { host: "127.0.0.1", port: 0 }, logLevel: "error" });
+server.middlewares.use("/video-edit-test", async (_request, response) => {
+    const html = await server.transformIndexHtml("/video-edit-test", '<!doctype html><html class="dark"><head><title>Video editing verification</title></head><body style="margin:0"><div id="root"></div><script type="module">import "/src/styles/globals.css";import {mountVideoEditHarness} from "/test/fixtures/canvas-video-edit-harness.tsx";mountVideoEditHarness(document.getElementById("root"));</script></body></html>');
+    response.setHeader("Content-Type", "text/html");
+    response.end(html);
+});
+let browser;
+let page;
+const errors = [];
+const submissions = [];
+const tasks = new Map();
+try {
+    await server.listen();
+    const baseURL = `http://127.0.0.1:${server.httpServer.address().port}`;
+    const chromePath = "C:/Program Files/Google/Chrome/Application/chrome.exe";
+    browser = await chromium.launch({ headless: true, ...(existsSync(chromePath) ? { executablePath: chromePath } : {}), args: ["--autoplay-policy=no-user-gesture-required"] });
+    page = await browser.newPage({ viewport: { width: 1320, height: 880 } });
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.route("**/*", async (route) => {
+        const request = route.request();
+        const url = new URL(request.url());
+        if (url.origin !== baseURL) return route.abort();
+        if (url.pathname === "/fixture.mp4") return route.fulfill({ contentType: "video/mp4", body: media });
+        if (!url.pathname.startsWith("/api/")) return route.continue();
+        if (url.pathname === "/api/tasks" && request.method() === "POST") {
+            const input = request.postDataJSON();
+            submissions.push(input);
+            const now = new Date().toISOString();
+            const task = { id: `mock-task-${submissions.length}`, status: "succeeded", type: "canvas_video", prompt: input.prompt, model: input.model, attempts: 1, createdAt: now, updatedAt: now, resultJson: JSON.stringify({ mode: "video", video: { url: "/fixture.mp4", dataUrl: "/fixture.mp4" } }) };
+            tasks.set(task.id, task);
+            return route.fulfill({ contentType: "application/json", body: JSON.stringify({ code: 0, data: task, msg: "ok" }) });
+        }
+        const task = tasks.get(url.pathname.replace("/api/tasks/", ""));
+        if (task && request.method() === "GET") return route.fulfill({ contentType: "application/json", body: JSON.stringify({ code: 0, data: task, msg: "ok" }) });
+        errors.push(`Unexpected API request: ${request.method()} ${url.pathname}`);
+        return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: 500, msg: "Unexpected mock request" }) });
+    });
+    await page.goto(baseURL + "/video-edit-test");
+    await page.waitForFunction(() => window.videoEditHarness);
+    const node = page.locator('[data-node-id="generated-video"]');
+    await node.click({ position: { x: 25, y: 30 } });
+    const editor = page.getByRole("textbox", { name: "视频提示词", exact: true });
+    await editor.waitFor();
+    assert.equal((await editor.evaluate((element) => "value" in element ? element.value : element.innerText)).trim(), "");
+    await editor.fill("新的镜头提示词，保留角色并调整动作");
+    assert.equal((await page.evaluate(() => window.videoEditHarness.nodes()[0])).metadata.prompt, "original generation prompt");
+    await page.getByRole("button", { name: /^高级设置：/ }).click();
+    const seconds = page.getByRole("spinbutton", { name: "视频时长（秒）", exact: true });
+    await seconds.fill("10");
+    await seconds.press("Tab");
+    await page.waitForFunction(() => window.videoEditHarness.nodes()[0].metadata.seconds === "10");
+    await editor.click();
+    await page.getByRole("button", { name: "生成", exact: true }).click();
+    await page.waitForFunction(() => window.videoEditHarness.nodes()[0].metadata.taskId === "mock-task-1" && window.videoEditHarness.nodes()[0].metadata.status === "success");
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].prompt, "新的镜头提示词，保留角色并调整动作");
+    assert.equal(submissions[0].input.config.videoSeconds, "10");
+    assert.equal(submissions[0].input.config.model, "dola-sd-2.5");
+    assert.equal((await page.evaluate(() => window.videoEditHarness.nodes())).length, 1);
+    await editor.fill("");
+    assert.equal(await editor.count(), 1);
+    assert.equal(await page.getByRole("button", { name: "生成", exact: true }).isDisabled(), true);
+    await page.mouse.click(1180, 740);
+    await node.click({ position: { x: 25, y: 30 } });
+    await editor.waitFor();
+    await editor.fill("第二次调整后的提示词");
+    await page.reload();
+    await node.click({ position: { x: 25, y: 30 } });
+    assert.equal(await editor.evaluate((element) => "value" in element ? element.value : element.innerText), "第二次调整后的提示词");
+    await page.getByRole("button", { name: "生成", exact: true }).click();
+    await page.waitForFunction(() => window.videoEditHarness.nodes()[0].metadata.taskId === "mock-task-2" && window.videoEditHarness.nodes()[0].metadata.status === "success");
+    assert.equal(submissions.length, 2);
+    assert.equal(submissions[1].prompt, "第二次调整后的提示词");
+    await page.getByRole("button", { name: /^播放 / }).click();
+    await page.waitForFunction(() => document.querySelector("video:not([data-canvas-hover-preview])")?.currentTime > 0.25);
+    await node.click({ position: { x: 25, y: 30 } });
+    assert.equal(await editor.count(), 1);
+    await page.screenshot({ path: resolve(outputDir, "generated-video-edit-dark.png") });
+    await page.evaluate(() => window.videoEditHarness.setTheme("light"));
+    await page.screenshot({ path: resolve(outputDir, "generated-video-edit-light.png") });
+    assert.deepEqual(errors, []);
+    console.log("PASS: Generated video click opens composer; empty draft remains editable; original prompt preserved; modified settings and two new prompts reach mocked tasks; reload and playback remain functional. No real generation.");
+} catch (error) {
+    if (page) await page.screenshot({ path: resolve(outputDir, "failure.png") });
+    console.error(JSON.stringify({ errors, submissions: submissions.length, snapshot: await page?.locator("body").ariaSnapshot() }));
+    throw error;
+} finally {
+    await browser?.close();
+    await server.close();
+}

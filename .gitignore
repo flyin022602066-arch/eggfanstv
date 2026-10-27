@@ -6,7 +6,6 @@ open-storyboard-canvas/
 !.env.example
 data/
 .local/
-/.local/docker-compose.postgres.yml
 coverage/
 dist/
 artifacts/
@@ -64,6 +63,10 @@ backend/tmp_*
 # local verification scripts and must not become part of an open-source patch.
 web/.libtv-*
 web/test/.agent-reliability-*/
+# Scratch trees built by tests that materialize a rewritten module graph; a run
+# killed mid-flight must not leave them inside a patch.
+web/test/.local-workspace-stale-*/
+web/test/.timeline-persist-http-*/
 web/package.json.md5
 web/.playwright/
 # Generated screenshot, probe, and browser-audit workspaces.
@@ -94,3 +97,24 @@ tools/depth-capture/**/__pycache__/
 # 本地排障材料与个人环境脚本留下的产物（不入库）
 豆包视频协议修复包/
 豆包视频协议修复包.zip
+/asset-library/
+
+# Windows release packages and files installed beside the source checkout.
+/release/
+/.backups/
+/prerequisites/
+/*.exe
+/cli/
+/agent-host/runtime/
+/agent-host/media-runtime/
+/manifest.json
+/使用说明.txt
+
+# Local input-method state and desktop verification screenshots.
+/*share.config
+/*user.config
+/*local.stat
+/inputstat.dat
+/sgim_punc.bin
+/assets/assets-*.png
+/assets/beeftv-loading-installed.png

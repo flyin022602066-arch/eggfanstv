@@ -26,15 +26,21 @@ type Resource struct {
 	Endpoint string         `json:"endpoint"`
 	Bucket   string         `json:"bucket" gorm:"size:160"`
 	// 用户 OSS 每次修改都会生成新版本，资源固定引用创建时的存储与密钥；只有同一存储位置才可复用当前 CDN。
-	StorageSettingID string `json:"-" gorm:"index;size:36"`
-	ObjectKey        string `json:"objectKey" gorm:"index"`
-	PublicURL        string `json:"publicUrl"`
-	MimeType         string `json:"mimeType" gorm:"size:120"`
-	Size             int64  `json:"size"`
-	Width            int    `json:"width"`
-	Height           int    `json:"height"`
-	DurationMs       int64  `json:"durationMs"`
-	ETag             string `json:"etag" gorm:"size:160"`
+	StorageSettingID         string     `json:"-" gorm:"index;size:36"`
+	ObjectKey                string     `json:"objectKey" gorm:"index"`
+	PublicURL                string     `json:"publicUrl"`
+	TemporaryImageURL        string     `json:"temporaryImageUrl,omitempty"`
+	TemporaryImageUploadedAt *time.Time `json:"temporaryImageUploadedAt,omitempty"`
+	TemporaryImageExpiresAt  *time.Time `json:"temporaryImageExpiresAt,omitempty"`
+	TemporaryMediaURL        string     `json:"temporaryMediaUrl,omitempty"`
+	TemporaryMediaUploadedAt *time.Time `json:"temporaryMediaUploadedAt,omitempty"`
+	TemporaryMediaExpiresAt  *time.Time `json:"temporaryMediaExpiresAt,omitempty"`
+	MimeType                 string     `json:"mimeType" gorm:"size:120"`
+	Size                     int64      `json:"size"`
+	Width                    int        `json:"width"`
+	Height                   int        `json:"height"`
+	DurationMs               int64      `json:"durationMs"`
+	ETag                     string     `json:"etag" gorm:"size:160"`
 	// 浏览器兼容播放副本（HEVC/H.265 原片在 Chrome 等无法解码，由 ffmpeg 转 H.264）：
 	// PlaybackStatus: none|processing|ready|failed；PlaybackObjectKey 为本地播放目录下的文件名。
 	PlaybackStatus    string `json:"playbackStatus" gorm:"index;size:24"`
@@ -183,23 +189,24 @@ type CharacterVoiceBinding struct {
 
 // Project 是短剧领域聚合根；CanvasProject 仍代表可独立创作的画布文档。
 type Project struct {
-	ID                string        `json:"id" gorm:"primaryKey;size:36"`
-	UserID            string        `json:"userId" gorm:"index;size:36;uniqueIndex:idx_projects_user_name,priority:1"`
-	Name              string        `json:"name" gorm:"size:240;uniqueIndex:idx_projects_user_name,priority:2"`
-	Type              string        `json:"type" gorm:"size:32;index"`
-	AspectRatio       string        `json:"aspectRatio" gorm:"size:16"`
-	SourceType        string        `json:"sourceType" gorm:"size:32"`
-	Description       string        `json:"description" gorm:"type:text"`
-	FolderID          string        `json:"folderId,omitempty" gorm:"index;size:36"`
-	CoverResourceID   string        `json:"coverResourceId,omitempty" gorm:"index;size:36"`
-	StylePresetID     string        `json:"stylePresetId" gorm:"size:64"`
-	StyleProfileJSON  string        `json:"styleProfileJson" gorm:"type:text"`
-	DefaultImageModel string        `json:"defaultImageModel,omitempty" gorm:"size:500"`
-	DefaultVideoModel string        `json:"defaultVideoModel,omitempty" gorm:"size:500"`
-	Status            ProjectStatus `json:"status" gorm:"index;size:24"`
-	Revision          int64         `json:"revision"`
-	CreatedAt         time.Time     `json:"createdAt"`
-	UpdatedAt         time.Time     `json:"updatedAt" gorm:"index"`
+	ID                       string        `json:"id" gorm:"primaryKey;size:36"`
+	UserID                   string        `json:"userId" gorm:"index;size:36;uniqueIndex:idx_projects_user_name,priority:1"`
+	Name                     string        `json:"name" gorm:"size:240;uniqueIndex:idx_projects_user_name,priority:2"`
+	Type                     string        `json:"type" gorm:"size:32;index"`
+	AspectRatio              string        `json:"aspectRatio" gorm:"size:16"`
+	SourceType               string        `json:"sourceType" gorm:"size:32"`
+	Description              string        `json:"description" gorm:"type:text"`
+	FolderID                 string        `json:"folderId,omitempty" gorm:"index;size:36"`
+	CoverResourceID          string        `json:"coverResourceId,omitempty" gorm:"index;size:36"`
+	StylePresetID            string        `json:"stylePresetId" gorm:"size:64"`
+	StyleProfileJSON         string        `json:"styleProfileJson" gorm:"type:text"`
+	CharacterFacePresetsJSON string        `json:"characterFacePresetsJson,omitempty" gorm:"type:text"`
+	DefaultImageModel        string        `json:"defaultImageModel,omitempty" gorm:"size:500"`
+	DefaultVideoModel        string        `json:"defaultVideoModel,omitempty" gorm:"size:500"`
+	Status                   ProjectStatus `json:"status" gorm:"index;size:24"`
+	Revision                 int64         `json:"revision"`
+	CreatedAt                time.Time     `json:"createdAt"`
+	UpdatedAt                time.Time     `json:"updatedAt" gorm:"index"`
 }
 
 // ProjectFolder 是用户项目列表级目录；与项目内部素材目录分开。
@@ -372,14 +379,15 @@ type ProductionTaskLink struct {
 }
 
 type CanvasProject struct {
-	ID          string    `json:"id" gorm:"primaryKey;size:80"`
-	UserID      string    `json:"userId" gorm:"index;size:36;index:idx_canvas_projects_user_updated,priority:1;index:idx_canvas_projects_user_project_updated,priority:1"`
-	ProjectID   string    `json:"projectId,omitempty" gorm:"index;size:36;index:idx_canvas_projects_user_project_updated,priority:2"`
-	Title       string    `json:"title" gorm:"size:240"`
-	PayloadJSON string    `json:"payloadJson" gorm:"type:text"`
-	Revision    int64     `json:"revision" gorm:"not null;default:1"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt" gorm:"index:idx_canvas_projects_user_updated,priority:2;index:idx_canvas_projects_user_project_updated,priority:3"`
+	ID              string    `json:"id" gorm:"primaryKey;size:80"`
+	UserID          string    `json:"userId" gorm:"index;size:36;index:idx_canvas_projects_user_updated,priority:1;index:idx_canvas_projects_user_project_updated,priority:1;index:idx_canvas_projects_library_folder,priority:1"`
+	ProjectID       string    `json:"projectId,omitempty" gorm:"index;size:36;index:idx_canvas_projects_user_project_updated,priority:2"`
+	LibraryFolderID string    `json:"libraryFolderId,omitempty" gorm:"index:idx_canvas_projects_library_folder,priority:2;size:80"`
+	Title           string    `json:"title" gorm:"size:240"`
+	PayloadJSON     string    `json:"payloadJson" gorm:"type:text"`
+	Revision        int64     `json:"revision" gorm:"not null;default:1"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt" gorm:"index:idx_canvas_projects_user_updated,priority:2;index:idx_canvas_projects_user_project_updated,priority:3"`
 }
 
 type PromptTemplate struct {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Select } from "antd";
 
-import { listAddedSkills, type Skill } from "@/services/api/skills";
+import { listAddedSkills, skillDisplayName, type Skill } from "@/services/api/skills";
 import { SKILL_RUNTIME_PROFILES, type SkillRuntimeProfile } from "@/services/skill-runtime";
 
 export function useSkillRuntimeCatalog() {
@@ -30,7 +30,11 @@ export function useSkillRuntimeCatalog() {
 
 export function SkillRuntimePicker({ skills, loading, value, onChange, placeholder = "选择本次生成使用的技能", profile = "canvas" }: { skills: Skill[]; loading?: boolean; value: string[]; onChange: (skillIds: string[]) => void; placeholder?: string; profile?: SkillRuntimeProfile }) {
     const options = useMemo(
-        () => skills.map((skill) => ({ value: skill.skillId, label: skill.skillName, title: skill.description })),
+        () => skills.map((skill) => ({
+            value: skill.skillId,
+            label: skillDisplayName(skill),
+            title: skill.has15SecondLimit ? `${skill.description}\n该技能包含15秒时长限制，请按短片段规则使用。` : skill.description,
+        })),
         [skills],
     );
     const maxSkills = SKILL_RUNTIME_PROFILES[profile].maxSkills;

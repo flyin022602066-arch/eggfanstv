@@ -50,6 +50,7 @@ export function CanvasAudioPlayer({ node, theme }: CanvasAudioPlayerProps) {
     const isPlaying = snapshot.phase === "playing";
     const isLoading = snapshot.phase === "loading";
     const isError = snapshot.phase === "error";
+    const invalidSource = /^data:(?:text\/|application\/json)/i.test(source.content);
 
     return (
         <div role="group" aria-label={`${label}播放控件`} className="flex h-full w-full min-w-0 flex-col justify-center gap-2.5 px-4" style={{ color: theme.node.text }}>
@@ -59,7 +60,7 @@ export function CanvasAudioPlayer({ node, theme }: CanvasAudioPlayerProps) {
                     aria-label={isPlaying ? `暂停${label}` : `播放${label}`}
                     className="grid size-10 shrink-0 place-items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-45"
                     style={{ borderColor: `${theme.node.activeStroke}80`, background: `${theme.node.activeStroke}18`, color: theme.node.activeStroke }}
-                    disabled={isLoading || (!source.content && !source.storageKey)}
+                    disabled={isLoading || invalidSource || (!source.content && !source.storageKey)}
                     onPointerDown={stopCanvasEvent}
                     onMouseDown={stopCanvasEvent}
                     onClick={(event) => {
@@ -102,12 +103,18 @@ export function CanvasAudioPlayer({ node, theme }: CanvasAudioPlayerProps) {
                 ))}
             </div>
 
-            {isError ? (
+            {isError || invalidSource ? (
                 <div role="status" className="flex min-w-0 items-center gap-1.5 truncate text-[var(--fs-tiny)]" style={{ color: theme.accent.danger || theme.node.muted }}>
                     <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{snapshot.error || "音频播放失败"}</span>
+                    <span className="truncate" title={invalidSource ? "此节点保存的是接口错误正文，没有音频。请到音乐导演台查询原任务或我的音乐列表，避免重复生成扣费。" : snapshot.error}>{invalidSource ? "原结果为接口错误正文，请到音乐导演台查询" : snapshot.error || "音频播放失败"}</span>
                 </div>
             ) : null}
+            {(node.metadata?.sunoClips?.length || 0) > 1 && <select aria-label="Suno 歌曲版本" className="w-full rounded border bg-transparent px-2 py-1 text-xs" style={{ borderColor: theme.node.stroke }} value={node.metadata?.sunoClips?.findIndex((clip) => clip.storageKey ? clip.storageKey === node.metadata?.storageKey : clip.url === node.metadata?.content) ?? 0} onPointerDown={stopCanvasEvent} onMouseDown={stopCanvasEvent} onClick={stopCanvasEvent} onChange={(event) => {
+                const clip = node.metadata?.sunoClips?.[Number(event.target.value)];
+                if (!clip) return;
+                stopCanvasAudio(node.id);
+                updateMetadata?.(node.id, { content: clip.url || "", storageKey: clip.storageKey, mimeType: clip.mimeType || "audio/mpeg", durationMs: undefined, bytes: undefined, assetId: undefined });
+            }}>{node.metadata?.sunoClips?.map((clip, index) => <option key={clip.clipId || index} value={index}>{index + 1}. {clip.title || "歌曲版本"}</option>)}</select>}
         </div>
     );
 }

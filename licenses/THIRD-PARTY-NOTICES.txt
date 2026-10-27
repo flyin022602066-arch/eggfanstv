@@ -1,0 +1,25 @@
+Eggfans TV portable media tools
+
+FFmpeg and FFprobe: 7.1 full_build by Gyan Doshi, GPL version 3 or later.
+Binary build and build information: https://www.gyan.dev/ffmpeg/builds/
+Build scripts and dependency sources: https://github.com/GyanD/codexffmpeg
+FFmpeg 7.1 source: https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz
+The FFmpeg executables run as separate processes. See FFmpeg-GPL-3.0.txt.
+
+whisper.cpp: v1.9.2, MIT license.
+Source and official binary: https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.2
+Binary archive SHA-256: 49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a
+See whisper.cpp-LICENSE.txt.
+
+OpenAI Whisper multilingual base model: MIT license.
+Model: https://huggingface.co/ggerganov/whisper.cpp/blob/main/ggml-base.bin
+Model SHA-256: 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+See Whisper-model-LICENSE.txt.
+
+Microsoft Visual C++ x64 Redistributable: official Microsoft installer, unmodified.
+Download: https://aka.ms/vc14/vc_redist.x64.exe
+Terms and installation requirements: https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files
+Run prerequisites/VC_redist.x64.exe only if the native speech engine needs it.
+
+Microsoft WebView2 Runtime is a system prerequisite. The desktop application's
+official Wails bootstrapper prompts for it when absent. It is not bundled here.

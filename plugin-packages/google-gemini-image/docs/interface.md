@@ -41,6 +41,7 @@
 | `create.body.contents[0].role` | `"user"` |
 | `create.body.contents[0].parts` | `{"$concatArrays":[[{"text":{"$ref":"request.prompt"}}],{"$map":{"from":{"$ref":"request.images"},"as":"media","in":{"$if":{"condition":{"$ref":"media.dataUrl"},"then":{"inlineData":{"mimeType":{"$dataMime":{"$ref":"media.dataUrl"}},"data":{"$dataPayload":{"$ref":"media.dataUrl"}}}},"else":{"fileData":{"mimeType":{"$omitEmpty":{"$ref":"media.mimeType"}},"fileUri":{"$ref":"media.url"}}}}}}}]}` |
 | `create.body.generationConfig.responseModalities` | `{"$coalesce":[{"$ref":"request.providerOptions.gemini-image.responseModalities"},["TEXT","IMAGE"]]}` |
+| `create.body.generationConfig.thinkingConfig` | `{"$omitEmpty":{"$ref":"request.providerOptions.gemini-image.thinkingConfig"}}` |
 | `create.body.generationConfig.imageConfig.aspectRatio` | `{"$omitEmpty":{"$ref":"request.aspectRatio"}}` |
 | `create.body.generationConfig.imageConfig.imageSize` | `{"$omitEmpty":{"$coalesce":[{"$switch":{"cases":[{"when":{"$in":[{"$lower":{"$ref":"request.quality"}},["1k","low"]]},"then":"1K"},{"when":{"$in":[{"$lower":{"$ref":"request.quality"}},["2k","medium"]]},"then":"2K"},{"when":{"$in":[{"$lower":{"$ref":"request.quality"}},["4k","high"]]},"then":"4K"}],"default":null}},{"$switch":{"cases":[{"when":{"$in":[{"$lower":{"$ref":"request.resolution"}},["1k","low"]]},"then":"1K"},{"when":{"$in":[{"$lower":{"$ref":"request.resolution"}},["2k","medium"]]},"then":"2K"},{"when":{"$in":[{"$lower":{"$ref":"request.resolution"}},["4k","high"]]},"then":"4K"}],"default":null}}]}}` |
 | `create.body.generationConfig.temperature` | `{"$omitEmpty":{"$ref":"request.providerOptions.gemini-image.temperature"}}` |
@@ -52,6 +53,7 @@
 
 ## Provider 扩展键
 
+- `providerOptions.gemini-image.thinkingConfig`：可选思考配置；Nano Banana 2.1 使用 `{ "thinkingLevel": "minimal" | "high" }`。
 - `providerOptions.gemini-image.responseModalities`
 - `providerOptions.gemini-image.safetySettings`
 - `providerOptions.gemini-image.seed`
@@ -81,6 +83,8 @@
 
 imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须省略。多图输出由宿主按次创建，不映射 candidateCount。
 
+Eggfans 的 `gemini-nano-banana-2.1`（含 `-thinking`、`-nothinking` 后缀）使用相同原生路径，Base URL 保持用户配置，默认 `https://api.eggfans.com`。参考图以同一个 `contents[0].parts` 中的 `inlineData` 传递，包含真实 MIME 和不带 data URL 前缀的 base64。图片节点提供 1K、2K、4K 与 14 种文档比例；尺寸在 `generationConfig.imageConfig`，思考强度在 `generationConfig.thinkingConfig.thinkingLevel`。选择“模型默认”时省略思考配置，尊重模型后缀。此模型不使用 `thinkingBudget`、负向提示词或蒙版参数。返回默认使用 inlineData，不启用平台 URL 扩展。
+
 <!-- BEEFTV_PLUGIN_MANIFEST_START -->
 ## Manifest 完整接口定义
 
@@ -91,7 +95,7 @@ imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须
   "apiVersion": "beeftv.plugin/v2",
   "id": "google-gemini-image",
   "name": "Google Gemini Image",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "BeefTV Contributors",
   "description": "Google Gemini Image 独立请求协议插件。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -251,6 +255,11 @@ imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须
               }
             ],
             "generationConfig": {
+              "thinkingConfig": {
+                "$omitEmpty": {
+                  "$ref": "request.providerOptions.gemini-image.thinkingConfig"
+                }
+              },
               "responseModalities": {
                 "$coalesce": [
                   {

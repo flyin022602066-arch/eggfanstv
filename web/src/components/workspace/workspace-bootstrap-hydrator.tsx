@@ -1,17 +1,23 @@
 import type { ReactNode } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader";
+import { WorkspaceErrorState } from "@/components/layout/workspace-state";
+import { appPathname } from "@/lib/app-routing";
 import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { applyUserSession, localWorkspaceConfig } from "@/lib/user-session";
 import { getWorkspaceBootstrap, type WorkspaceBootstrapPayload } from "@/services/api/workspace";
 import { commitModelConfig, flushModelConfig, hydrateModelConfig } from "@/services/model-config-repository";
+import { fetchChannelModels } from "@/services/api/image-models";
+import { refreshEggfansModelCatalog } from "@/services/model-config-catalog-refresh";
 import { normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { restoreVolcLibraryAssets } from "@/services/api/volc-asset-library";
 
 export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }) {
     const hydrated = useUserStore((state) => state.hydrated);
     const modelConfigReady = useRef(false);
+    const [restoreStatus, setRestoreStatus] = useState<"loading" | "ready" | "error">("loading");
 
     useEffect(() => {
         let cancelled = false;
@@ -25,15 +31,22 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
             createLocalWorkspace: createLocalWorkspacePayload,
             applySession: applyUserSession,
             restoreModelConfig: hydrateLocalModelConfig,
+            refreshModelCatalog: refreshEggfansCatalogOnLaunch,
         })
             .then(() => {
+                if (cancelled) return;
                 modelConfigReady.current = true;
-                if (!cancelled) preloadWorkspaceRoute(window.location.pathname);
+                setRestoreStatus("ready");
+                preloadWorkspaceRoute(appPathname());
             })
             .catch(() => {
                 if (cancelled) return;
-                modelConfigReady.current = true;
+                // The browser cache deliberately has no credentials. If the
+                // canonical file could not be read, never autosave that cache
+                // over the existing workspace when the backend comes back.
+                modelConfigReady.current = false;
                 useUserStore.getState().setHydrated(true);
+                setRestoreStatus("error");
             });
         return () => {
             cancelled = true;
@@ -58,7 +71,8 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
         };
     }, []);
 
-    return hydrated ? children : <FullScreenLoader label="正在准备本地工作区" detail="加载项目、画布与模型配置" />;
+    if (restoreStatus === "error") return <WorkspaceErrorState title="工作区暂时无法加载" description="项目或模型配置未能完成读取。原有配置不会被覆盖，请重新加载后再试。" onRetry={() => window.location.reload()} />;
+    return hydrated && restoreStatus === "ready" ? children : <FullScreenLoader label="正在准备本地工作区" detail="加载项目、画布与模型配置" />;
 }
 
 export async function initializeWorkspaceState<T>({
@@ -66,11 +80,13 @@ export async function initializeWorkspaceState<T>({
     createLocalWorkspace,
     applySession,
     restoreModelConfig,
+    refreshModelCatalog,
 }: {
     loadWorkspace: () => Promise<T>;
     createLocalWorkspace: () => T;
     applySession: (payload: T) => Promise<void>;
     restoreModelConfig: () => Promise<void>;
+    refreshModelCatalog?: () => Promise<unknown>;
 }) {
     try {
         try {
@@ -86,6 +102,7 @@ export async function initializeWorkspaceState<T>({
         // prevent configured channels and credentials from being restored.
         await restoreModelConfig();
     }
+    if (refreshModelCatalog) void refreshModelCatalog().catch(() => undefined);
 }
 
 export function shouldSaveLocalModelConfig({ subscriptionReady, modelConfigReady, channelCount }: { subscriptionReady: boolean; modelConfigReady: boolean; channelCount: number }) {
@@ -101,6 +118,16 @@ async function hydrateLocalModelConfig() {
     if (shouldPersistHydratedModelConfigSnapshot(result.health, mergedConfig, normalizedConfig)) {
         await commitModelConfig(normalizedConfig);
     }
+    await restoreVolcLibraryAssets();
+}
+
+async function refreshEggfansCatalogOnLaunch() {
+    await refreshEggfansModelCatalog({
+        getConfig: () => useConfigStore.getState().config,
+        replaceConfig: (config) => useConfigStore.getState().replaceConfig(config),
+        fetchModels: (channel) => fetchChannelModels(channel, true),
+        persist: (config) => commitModelConfig(config),
+    });
 }
 
 export function mergeHydratedModelConfig(localConfig: AiConfig, remoteConfig: AiConfig): AiConfig {

@@ -152,7 +152,7 @@ func selfUseRuntimePolicy() RuntimePolicySetting {
 	value.Task = RuntimeTaskPolicy{
 		WorkerConcurrency: maxRuntimeConcurrency, ChannelConcurrency: maxRuntimeConcurrency, ActiveTaskLimit: maxRuntimeConcurrency,
 		ImageTimeoutMinutes: maxRuntimeTimeoutMinutes, TextTimeoutMinutes: maxRuntimeTimeoutMinutes,
-		AudioTimeoutMinutes: maxRuntimeTimeoutMinutes, VideoTimeoutMinutes: maxRuntimeTimeoutMinutes,
+		AudioTimeoutMinutes: maxRuntimeTimeoutMinutes, VideoTimeoutMinutes: 60,
 		StoryboardTimeoutMinutes: maxRuntimeTimeoutMinutes, DefaultTimeoutMinutes: maxRuntimeTimeoutMinutes,
 	}
 	value.Request = RuntimeRequestPolicy{

@@ -1,7 +1,11 @@
 package app
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +109,56 @@ func TestEnsureFailedProviderAttemptLoggedFillsPreflightGapOnce(t *testing.T) {
 	serialized := logged.RequestBody + logged.ResponseBody + logged.UpstreamURL + logged.Error
 	if strings.Contains(serialized, "secret-key") || logged.RequestBody != "" || logged.ResponseBody != "" {
 		t.Fatalf("preflight log leaked task input: %#v", logged)
+	}
+}
+
+func TestEnsureFailedProviderAttemptLogsAvatarRouteWithoutChangingVideoState(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SystemSetting{}, &model.Asset{}, &model.CanvasProject{}, &model.Task{}, &model.TaskLog{}, &model.Result{}, &model.ApiCallLog{}, &model.TaskTextDelta{}); err != nil {
+		t.Fatal(err)
+	}
+	nextPollAt := time.Now().Add(time.Hour).Truncate(time.Second)
+	task := model.Task{ID: "avatar-failed-task", UserID: "user-1", Type: "canvas_video", Status: model.TaskStatusRunning, Model: "doubao-seedance-2-5-260628", ProviderRequestID: "existing-video-task", PollStage: "preparing", NextPollAt: &nextPollAt}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(writer, `{"error":{"message":"Invalid URL (POST /v1/private-avatar/groups/list)","type":"invalid_request_error","code":""},"apiKey":"must-not-log"}`)
+	}))
+	defer server.Close()
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	task.InputJSON = fmt.Sprintf(`{"mode":"video","config":{"baseUrl":%q,"apiKey":"test-key","model":"doubao-seedance-2-5-260628","interfaceType":"eggfans-seedance-video","videoSeconds":"27"}}`, server.URL)
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{repo: repository.New(db)}
+	_, failure := callEggfansAvatar(context.Background(), providerConfig{BaseURL: server.URL, APIKey: "test-key"}, "list-groups", "", nil)
+	if failure == nil {
+		t.Fatal("mock missing route did not fail")
+	}
+	service.ensureFailedProviderAttemptLogged(task, failure)
+	service.ensureFailedProviderAttemptLogged(task, failure)
+	var logs []model.ApiCallLog
+	if err := db.Find(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("got %d logs, want one real failed request", len(logs))
+	}
+	logged := logs[0]
+	if logged.Method != http.MethodPost || logged.Path != "/v1/private-avatar/groups/list" || logged.UpstreamURL != server.URL+logged.Path || logged.StatusCode != 404 || logged.Capability != "asset" || logged.ProviderRequestID != "" || logged.VideoSeconds != 0 || logged.Model != eggfansAvatarRoutingModel {
+		t.Fatalf("avatar request was logged as a video submission: %#v", logged)
+	}
+	if !strings.Contains(logged.ResponseBody, "Invalid URL") || !strings.Contains(logged.Error, "私域素材组") || strings.Contains(logged.ResponseBody+logged.Error, "must-not-log") {
+		t.Fatalf("missing or unsafe diagnostic: %#v", logged)
+	}
+	var stored model.Task
+	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProviderRequestID != task.ProviderRequestID || stored.PollStage != task.PollStage || stored.NextPollAt == nil || !stored.NextPollAt.Equal(nextPollAt) {
+		t.Fatalf("avatar failure corrupted video recovery state: %#v", stored)
 	}
 }
 

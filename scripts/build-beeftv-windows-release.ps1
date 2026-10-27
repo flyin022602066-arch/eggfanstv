@@ -48,6 +48,46 @@ $exePath = Join-Path $binDir "EggfansTV.exe"
 $pluginResourceDir = Join-Path $binDir "plugin-packages"
 $versionFile = Join-Path $repoRoot "VERSION"
 $wailsModule = "github.com/wailsapp/wails/v2/cmd/wails@v2.16.0"
+$wailsBinary = $env:BEEFTV_WAILS_BIN
+
+function Test-DesktopIconResources([string]$ExecutablePath) {
+    if (-not ("EggfansDesktopIconResources" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class EggfansDesktopIconResources {
+    private delegate bool ResourceNameCallback(IntPtr module, IntPtr type, IntPtr name, IntPtr parameter);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool EnumResourceNames(IntPtr module, IntPtr type, ResourceNameCallback callback, IntPtr parameter);
+    [DllImport("kernel32.dll")]
+    private static extern bool FreeLibrary(IntPtr module);
+
+    public static bool HasIcon(string path) {
+        IntPtr module = LoadLibraryEx(path, IntPtr.Zero, 2);
+        if (module == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            bool found = false;
+            ResourceNameCallback callback = delegate(IntPtr currentModule, IntPtr type, IntPtr name, IntPtr parameter) {
+                found = true;
+                return false;
+            };
+            EnumResourceNames(module, new IntPtr(14), callback, IntPtr.Zero);
+            return found;
+        } finally {
+            FreeLibrary(module);
+        }
+    }
+}
+'@
+    }
+    if (-not [EggfansDesktopIconResources]::HasIcon($ExecutablePath)) {
+        throw "Windows icon resources are missing from $ExecutablePath. Rebuild with Wails packaging; plain go build does not embed the app icon."
+    }
+}
 
 function Write-Step([string]$Message) {
     Write-Host $Message
@@ -402,6 +442,10 @@ Write-Step "Building Eggfans TV $versionValue ($commitValue) for windows/amd64"
 if (-not (Test-Path -LiteralPath $desktopIconSource -PathType Leaf)) {
     throw "Desktop icon source is missing: $desktopIconSource"
 }
+
+if ([string]::IsNullOrWhiteSpace($wailsBinary)) {
+    $wailsBinary = Get-CommandPath "wails"
+}
 Copy-Item -LiteralPath $desktopIconSource -Destination $desktopIconPath -Force
 if (Test-Path -LiteralPath $desktopWindowsIconPath -PathType Leaf) {
     Remove-Item -LiteralPath $desktopWindowsIconPath -Force
@@ -410,8 +454,6 @@ Write-Step "Using Eggfans chick logo for the Windows app icon"
 Push-Location $desktopDir
 try {
     $wailsArgs = @(
-        "run",
-        $wailsModule,
         "build",
         "-clean",
         "-trimpath",
@@ -421,7 +463,13 @@ try {
         "-m",
         "-ldflags", $ldflags
     )
-    [void](Invoke-NativeExecutable -FilePath "go" -ArgumentList $wailsArgs -FailureMessage "wails build failed")
+    if ($wailsBinary -and (Test-Path -LiteralPath $wailsBinary -PathType Leaf)) {
+        Write-Step "Using installed Wails CLI $wailsBinary"
+        [void](Invoke-NativeExecutable -FilePath $wailsBinary -ArgumentList $wailsArgs -FailureMessage "wails build failed")
+    }
+    else {
+        [void](Invoke-NativeExecutable -FilePath "go" -ArgumentList (@("run", $wailsModule) + $wailsArgs) -FailureMessage "wails build failed")
+    }
 }
 finally {
     Pop-Location
@@ -430,6 +478,7 @@ finally {
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Wails build finished but $exePath was not created. Native Windows output is required; this is not an accepted artifact."
 }
+Test-DesktopIconResources -ExecutablePath $exePath
 
 if (Test-Path -LiteralPath $pluginResourceDir) {
     Remove-Item -LiteralPath $pluginResourceDir -Recurse -Force
@@ -441,6 +490,31 @@ foreach ($package in Get-OfficialPluginPackages $pluginSourceDir) {
 $copied = @(Get-OfficialPluginPackages $pluginResourceDir)
 if ($copied.Count -eq 0) {
     throw "Failed to copy official plugin packages next to $exePath"
+}
+
+Invoke-NativeExecutable -FilePath "bun" -ArgumentList @((Join-Path $repoRoot "scripts\package-agent-host.mjs"), "windows/amd64", (Join-Path $binDir "agent-host")) -FailureMessage "Agent host packaging failed" | Out-Null
+
+# Keep media inside the sidecar tree accepted by already released updaters.
+& (Join-Path $repoRoot "scripts\package-media-runtime-windows.ps1") -Destination (Join-Path $binDir "agent-host\media-runtime")
+
+# The beeftv CLI ships with the app. External agents (Codex, Claude Code,
+# Cursor) connect through it with their own client credential, so the installed
+# app must carry it; it is not expected on the user PATH.
+#
+# It goes in a cli subdirectory, not directly next to BeefTV.exe: Windows file
+# names are case-insensitive, so beeftv.exe beside BeefTV.exe is the same name.
+$cliDir = Join-Path $binDir "cli"
+New-Item -ItemType Directory -Force -Path $cliDir | Out-Null
+$cliPath = Join-Path $cliDir "beeftv.exe"
+Push-Location (Join-Path $repoRoot "backend")
+try {
+    [void](Invoke-NativeExecutable -FilePath "go" -ArgumentList @("build", "-trimpath", "-ldflags", $ldflags, "-o", $cliPath, "./cmd/beeftv") -FailureMessage "beeftv CLI build failed")
+}
+finally {
+    Pop-Location
+}
+if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
+    throw "beeftv CLI was not built next to $exePath"
 }
 
 Write-Host "Release executable: $exePath"

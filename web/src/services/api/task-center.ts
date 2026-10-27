@@ -1,5 +1,6 @@
 import { generationErrorMessage } from "@/lib/generation-error";
-import { http, apiBaseURL, type BackendEnvelope } from "@/services/api/request";
+import { assertUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { http, apiBaseURL, type BackendEnvelope, type HttpRequestConfig } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 
@@ -17,6 +18,7 @@ export type GenerationTaskOutput = {
 };
 
 export type GenerationTask = {
+    failureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
     id: string;
     clientOperationId?: string;
     retryOf?: string;
@@ -54,6 +56,8 @@ export type GenerationTask = {
     createdAt: string;
     updatedAt: string;
     clientContext?: {
+        source?: string;
+        sceneId?: string;
         conversationId?: string;
         messageId?: string;
         nodeId?: string;
@@ -98,6 +102,7 @@ export type TaskTextReplay = {
 };
 
 export type TaskLog = {
+    summary?: string;
     id: string;
     taskId: string;
     level: "info" | "warn" | "error";
@@ -118,8 +123,8 @@ export type CreateTaskInput = {
 	logicalModelId?: string;
     input?: Record<string, unknown>;
 };
-export function createGenerationTask(input: CreateTaskInput) {
-    return http.post<GenerationTask>("/tasks", input).then((task) => {
+export function createGenerationTask(input: CreateTaskInput, config?: HttpRequestConfig) {
+    return http.post<GenerationTask>("/tasks", input, config).then((task) => {
         recordDiagnosticEvent({ level: "info", category: "task", message: "任务已创建", taskId: task.id, projectId: task.projectId });
         notifyCanvasTaskCreated(task);
         return task;
@@ -195,8 +200,8 @@ async function collectGenerationTaskPages<T>(readPage: (request: GenerationTaskP
     return items.slice(0, limit);
 }
 
-export function queryGenerationTask(id: string, options?: { signal?: AbortSignal }) {
-    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal });
+export function queryGenerationTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal, expectedScope: options?.expectedScope });
 }
 
 type GenerationTaskSubscriptionDependencies = {
@@ -210,8 +215,11 @@ export function createGenerationTaskSubscriptionService(dependencies: Generation
         listeners: Set<(task: GenerationTask) => void>;
         latest?: GenerationTask;
         observation?: Promise<void>;
+        retryTimer?: ReturnType<typeof setTimeout>;
+        failures?: number;
     };
     const entries = new Map<string, Entry>();
+    const isTerminal = (task?: GenerationTask) => task?.status === "succeeded" || task?.status === "failed" || task?.status === "cancelled";
     const publish = (entry: Entry, task: GenerationTask) => {
         entry.latest = task;
         for (const listener of entry.listeners) listener(task);
@@ -228,21 +236,28 @@ export function createGenerationTaskSubscriptionService(dependencies: Generation
     };
     const observe = (id: string, entry: Entry) => {
         if (entry.observation) return entry.observation;
+        if (entry.retryTimer || isTerminal(entry.latest)) return;
         const observation = (async () => {
             const initial = await dependencies.queryTask(id);
             publish(entry, initial);
-            if (initial.status === "succeeded" || initial.status === "failed" || initial.status === "cancelled") return;
+            if (isTerminal(initial)) return;
             const terminal = await dependencies.waitTask(id, {
                 initialTask: initial,
-                onTaskUpdate: (task) => publish(entry, task),
+                onTaskUpdate: (task) => {
+                    entry.failures = 0;
+                    publish(entry, task);
+                },
             });
             publish(entry, terminal);
         })().catch((error) => {
-            // 观察失败不能永久占住 entry，否则页面重新订阅时也不会再查询任务。
-            // Only clear this attempt: a newer subscriber may already have
-            // installed its replacement while this rejection was settling.
             if (entry.observation === observation) entry.observation = undefined;
-            console.warn("生成任务观察中断，后续订阅将重新建立连接", { taskId: id, error });
+            if (isTerminal(entry.latest) || entry.listeners.size === 0) return;
+            entry.failures = (entry.failures || 0) + 1;
+            entry.retryTimer = setTimeout(() => {
+                entry.retryTimer = undefined;
+                if (entry.listeners.size > 0) observe(id, entry);
+            }, Math.min(2000 * 2 ** Math.min(entry.failures - 1, 4), 30_000));
+            console.warn("生成任务观察中断，将自动重新同步后台状态", { taskId: id, error });
         });
         entry.observation = observation;
         return observation;
@@ -255,17 +270,18 @@ export function createGenerationTaskSubscriptionService(dependencies: Generation
                 entries.set(id, entry);
                 entry.listeners.add(listener);
                 if (entry.latest) listener(entry.latest);
-                const activeObservation = observe(id, entry);
-                // A subscriber can arrive after an observation has rejected but
-                // before its catch handler clears the shared promise. Hand off
-                // once that promise settles so this live subscriber cannot be
-                // stranded in that narrow cleanup window.
-                void activeObservation?.then(() => {
-                    if (entry.listeners.has(listener) && !entry.observation) observe(id, entry);
-                });
+                observe(id, entry);
             }
             return () => {
-                for (const id of uniqueIds) entries.get(id)?.listeners.delete(listener);
+                for (const id of uniqueIds) {
+                    const entry = entries.get(id);
+                    if (!entry) continue;
+                    entry.listeners.delete(listener);
+                    if (entry.listeners.size === 0 && entry.retryTimer) {
+                        clearTimeout(entry.retryTimer);
+                        entry.retryTimer = undefined;
+                    }
+                }
             };
         },
     };
@@ -303,8 +319,20 @@ export function cancelGenerationTask(id: string) {
     });
 }
 
+export function stopVideoTaskLocally(id: string) {
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/stop-local`).then((task) => {
+        window.dispatchEvent(new CustomEvent("canvas:task-cancelled", { detail: { task } }));
+        window.dispatchEvent(new CustomEvent("canvas:task-updated", { detail: { task } }));
+        return task;
+    });
+}
+
 export function queryFailedVideoProviderTask(id: string) {
     return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`);
+}
+
+export function canRetrieveVideoResult(task: GenerationTask) {
+    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
 }
 
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {
@@ -315,22 +343,24 @@ export function deleteGenerationTask(id: string) {
     return http.delete<void>(`/tasks/${encodeURIComponent(id)}`);
 }
 
-export async function listTaskLogs(id: string) {
-    const raw = await http.get<Array<{ level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }>>(`/tasks/${encodeURIComponent(id)}/logs`);
+export async function listTaskLogs(id: string, options?: { signal?: AbortSignal }) {
+    const raw = await http.get<Array<{ summary?: unknown; level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }>>(`/tasks/${encodeURIComponent(id)}/logs`, { signal: options?.signal });
     return raw.map((log, index) => projectBackendSafeTaskLog(id, log, index));
 }
 
 export function formatTaskLog(log: TaskLog) {
+    if (log.summary) return log.summary;
     return [`stage=${log.stage}`, ...(log.errorCode ? [`error=${log.errorCode}`] : []), `provenance=${log.provenance}`, ...(log.observedAt ? [`observedAt=${log.observedAt}`] : [])].join(" ");
 }
 
-export function projectBackendSafeTaskLog(taskId: string, raw: { level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }, index: number): TaskLog {
+export function projectBackendSafeTaskLog(taskId: string, raw: { summary?: unknown; level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }, index: number): TaskLog {
     const text = [raw.message, raw.payload].filter((value): value is string => typeof value === "string").join(" ");
     const stage = safeTaskLogStage(text) || "backend_event";
     const errorCode = safeTaskLogErrorCode(text);
     const createdAt = typeof raw.createdAt === "string" && Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : "1970-01-01T00:00:00.000Z";
     return {
         id: `safe:${taskId}:${index}`,
+        ...(typeof raw.summary === "string" ? { summary: raw.summary } : {}),
         taskId,
         level: raw.level === "error" ? "error" : raw.level === "warn" ? "warn" : "info",
         stage,
@@ -358,7 +388,6 @@ function safeTaskLogErrorCode(value: unknown) {
 }
 
 export type WaitForGenerationTaskOptions = {
-	textEventsSource?: "task" | "agent";
     signal?: AbortSignal;
     intervalMs?: number;
     timeoutMs?: number;
@@ -366,10 +395,25 @@ export type WaitForGenerationTaskOptions = {
     onTaskUpdate?: (task: GenerationTask) => void;
     onTextDelta?: (text: string) => void;
     useTextEvents?: boolean;
+    expectedScope?: CapturedUserScope;
 };
 
 export function shouldUseTaskTextEvents(options?: Pick<WaitForGenerationTaskOptions, "onTextDelta" | "useTextEvents">) {
     return Boolean(options?.onTextDelta || options?.useTextEvents);
+}
+
+export class GenerationTaskObservationError extends Error {
+    constructor(readonly taskId: string, readonly reason: "sync" | "timeout", readonly latestTask?: GenerationTask) {
+        super(reason === "timeout" ? "本地等待已超时，尚未确认后台任务失败，正在重新同步" : "任务状态同步中断，尚未确认后台任务失败，正在重新同步");
+        this.name = "GenerationTaskObservationError";
+    }
+}
+
+export class GenerationTaskResultSyncError extends Error {
+    constructor(readonly taskId: string, readonly cause: unknown) {
+        super("生成已成功，但结果同步到画布失败。请重新加载资源，无需再次生成。");
+        this.name = "GenerationTaskResultSyncError";
+    }
 }
 
 export async function waitForGenerationTask(id: string, options?: WaitForGenerationTaskOptions) {
@@ -384,18 +428,18 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             let task: GenerationTask;
             try {
-                task = await queryGenerationTask(id, { signal: options?.signal });
+                task = await queryGenerationTask(id, { signal: options?.signal, expectedScope: options?.expectedScope });
+                if (options?.expectedScope) assertUserScope(options.expectedScope);
                 lastTask = task;
                 lastQueryError = undefined;
                 consecutiveFailures = 0;
                 options?.onTaskUpdate?.(task);
             } catch (error) {
+                if (isUserScopeAbandonedError(error)) throw error;
                 lastQueryError = error;
                 consecutiveFailures += 1;
-                // 连续失败说明查询通道已不可用，继续轮询只会空转到整体超时；
-                // 保留少量容忍度（约 10 秒）以跳过瞬时抖动后直接报错，便于用户尽早处理。
                 if (consecutiveFailures >= 5) {
-                    throw error instanceof Error ? error : new Error(String(error));
+                    throw new GenerationTaskObservationError(id, "sync", lastTask);
                 }
                 await delay(intervalMs, options?.signal);
                 continue;
@@ -415,7 +459,7 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
         }
         throw error;
     }
-    throw new Error(lastQueryError instanceof Error ? `任务状态同步失败：${lastQueryError.message}` : "任务执行超时，请稍后重试");
+    throw new GenerationTaskObservationError(id, lastQueryError ? "sync" : "timeout", lastTask);
 }
 
 async function waitForGenerationTaskTextEvents(id: string, options: WaitForGenerationTaskOptions) {
@@ -423,22 +467,23 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
     const intervalMs = options.intervalMs || 1000;
     let lastTask = options.initialTask;
     let lastEventId = 0;
-    // Agent subscriptions replay from cursor 0; an existing draft must not be
-    // prepended to the same persisted deltas when reopening a conversation.
-    let fullText = options.textEventsSource === "agent" ? "" : lastTask?.textDraft || "";
+    // 已有草稿先落到文本里，重开对话时同一批增量不会被当成新内容重复拼接。
+    let fullText = lastTask?.textDraft || "";
     let lastStreamError: unknown;
     if (!lastTask) {
-        lastTask = await queryGenerationTask(id, { signal: options.signal });
+        lastTask = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
+        if (options.expectedScope) assertUserScope(options.expectedScope);
         options.onTaskUpdate?.(lastTask);
     }
     const timeoutMs = options.timeoutMs || taskWaitTimeoutMs(lastTask);
     while (Date.now() - startedAt < timeoutMs) {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        if (options.expectedScope) assertUserScope(options.expectedScope);
         let terminalReceived = false;
         try {
             const base = String(apiBaseURL).replace(/\/+$/, "");
             const cursor = lastEventId > 0 ? `?after=${encodeURIComponent(String(lastEventId))}` : "";
-            const path = options.textEventsSource === "agent" ? `/agent/runs/${encodeURIComponent(id)}/events` : `/tasks/${encodeURIComponent(id)}/text-events`;
+            const path = `/tasks/${encodeURIComponent(id)}/text-events`;
             const response = await fetch(`${base}${path}${cursor}`, {
                 headers: { Accept: "text/event-stream" },
                 credentials: "include",
@@ -453,6 +498,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             const decoder = new TextDecoder();
             const parser = createTaskTextStreamParser();
             const onEvent = (event: TaskTextStreamEvent) => {
+                if (options.expectedScope) assertUserScope(options.expectedScope);
                 const payload = asTaskTextStreamRecord(event.data);
                 if (event.event === "delta") {
                     const sequence = numberValue(payload.sequence) || event.id || 0;
@@ -489,14 +535,21 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
                 }
                 if (event.event === "error") throw new Error(typeof payload.message === "string" ? payload.message : "任务文本流不可用");
             };
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
+            try {
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (options.expectedScope) assertUserScope(options.expectedScope);
+                    if (done) break;
+                    consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
+                }
+                consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
+            } finally {
+                await reader.cancel().catch(() => undefined);
+                reader.releaseLock();
             }
-            consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
             if (terminalReceived) {
-                const completed = await queryGenerationTask(id, { signal: options.signal });
+                const completed = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
+                if (options.expectedScope) assertUserScope(options.expectedScope);
                 options.onTaskUpdate?.(completed);
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {
@@ -506,6 +559,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             lastStreamError = new Error("任务文本流连接提前结束");
         } catch (error) {
             if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            if (isUserScopeAbandonedError(error)) throw error;
             if (error instanceof TaskTextStreamFatalError) throw error;
             lastStreamError = error;
         }
@@ -543,10 +597,19 @@ async function taskTextStreamHTTPError(response: Response) {
     return `任务文本流请求失败（HTTP ${response.status}）`;
 }
 
-function taskWaitTimeoutMs(task?: GenerationTask) {
+export function taskWaitTimeoutMs(task?: GenerationTask) {
     const type = task?.type || "";
     if (type.includes("storyboard")) return 13 * 60 * 1000;
-    if (type.includes("video")) return 32 * 60 * 1000;
+    if (type.includes("video")) {
+        let interfaceType = task?.model?.startsWith("jiasu-video::") ? "jiasu-video" : task?.provider;
+        if (task?.inputJson) {
+            try {
+                const input = JSON.parse(task.inputJson) as { config?: { interfaceType?: string } } | null;
+                if (typeof input?.config?.interfaceType === "string" && input.config.interfaceType) interfaceType = input.config.interfaceType;
+            } catch {}
+        }
+        return (interfaceType === "jiasu-video" ? 120 : 60) * 60 * 1000;
+    }
     if (type.includes("image")) return 10 * 60 * 1000;
     if (type.includes("text") || type.includes("audio")) return 12 * 60 * 1000;
     return 10 * 60 * 1000;

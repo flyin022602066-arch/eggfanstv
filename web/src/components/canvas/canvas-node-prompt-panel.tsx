@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Keyboard
 import { ArrowLeftRight, ArrowUp, AtSign, Boxes, Camera, ChevronDown, FileText, GripVertical, ImageIcon, ImagePlus, Link2, LoaderCircle, Maximize2, Music2, Pencil, SlidersHorizontal, UserRound, Video, WandSparkles, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { resolveCanvasGenerationModel } from "@/lib/canvas/canvas-project-generation";
 import { clampPromptEditorModalSize, PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
@@ -19,6 +19,7 @@ import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
+import { seedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
@@ -29,6 +30,10 @@ import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins
 import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
+import { isEggfansSeedanceProtocol, normalizeEggfansReferenceMode } from "@/lib/eggfans-seedance";
+import { isJiasuSdModel } from "@/lib/jiasu-face-mask";
+import { isEggfansSd2DModel, normalizeSd2FaceMaskMode } from "@/lib/eggfans-sd2-face-mask";
+import { CanvasJiasuFaceMask } from "./canvas-jiasu-face-mask";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -69,9 +74,9 @@ const PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT = 420;
 
 export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
+    const updateConfig = useConfigStore((state) => state.updateConfig);
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
-    const localOnly = true;
     const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
     const promptOptimizerEnabled = usePluginStore((state) => state.pluginStates[PROMPT_OPTIMIZER_PLUGIN_ID]?.effectiveEnabled ?? Boolean(state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID)?.enabled));
     const simpleMode = workspaceMode === "simple";
@@ -124,6 +129,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         }, mode),
     };
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
+    const eggfansReferenceMode = normalizeEggfansReferenceMode(config.videoEggfansReferenceMode);
+    const isEggfansSeedance = mode === "video" && isEggfansSeedanceProtocol(resolveModelRequestConfig(config, config.model).interfaceType);
+    const availableModels = selectableModelsByCapability(config, mode);
     const resolvedRequirements: ModelRequirements = {
         ...requirements,
         options: modelRequestOptions(config, mode),
@@ -347,21 +355,30 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         ) : (
             <div className="canvas-node-composer-footer">
                 <div className={expanded ? "min-w-0 flex-1" : "canvas-node-composer-model"}>
-                    <ModelPicker
-                        className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
-                        fullWidth
-                        config={config}
-                        value={config.model}
-                        placeholder={localOnly ? localModelPlaceholder(mode) : undefined}
-                        onChange={(model) => onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
-                        capability={mode}
-                        requirements={resolvedRequirements}
-                        onMissingConfig={() => navigateToSettings({ continueCreation: true })}
-
-
-                        variant="creation"
-                        showConfiguredModelName
-                    />
+                    {availableModels.length ? (
+                        <ModelPicker
+                            className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
+                            fullWidth
+                            config={config}
+                            value={config.model}
+                            onChange={(model) => onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
+                            capability={mode}
+                            requirements={resolvedRequirements}
+                            onMissingConfig={() => navigateToSettings({ section: "channels", continueCreation: true })}
+                            variant="creation"
+                            showConfiguredModelName
+                        />
+                    ) : (
+                        <button
+                            type="button"
+                            className="canvas-composer-model-picker flex !h-7 w-full min-w-0 items-center px-2 text-left !text-[var(--fs-tiny)] !font-normal"
+                            aria-label="暂无模型可用，连接内置算力"
+                            title="暂无模型可用，连接内置算力"
+                            onClick={() => navigateToSettings({ section: "channels", continueCreation: true })}
+                        >
+                            <span className="truncate">暂无模型可用，连接内置算力</span>
+                        </button>
+                    )}
                 </div>
                 <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
                     <ReferenceToolsPopover
@@ -405,6 +422,22 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                         </>
                     ) : mode === "video" ? (
                         <>
+                            {isEggfansSeedance ? (
+                                <Tooltip title={eggfansReferenceMode === "uri" ? "Eggfans Seedance：使用资产 URI" : "Eggfans Seedance：使用公网 URL"}>
+                                    <button
+                                        type="button"
+                                        className="canvas-node-composer-settings-trigger inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[var(--fs-tiny)]"
+                                        aria-label="切换 Eggfans Seedance 参考资产提交方式"
+                                        aria-pressed={eggfansReferenceMode === "uri"}
+                                        title={eggfansReferenceMode === "uri" ? "当前使用 URI，点击切换为 URL" : "当前使用 URL，点击切换为 URI"}
+                                        onMouseDown={(event) => event.stopPropagation()}
+                                        onClick={() => onConfigChange(node.id, { eggfansReferenceMode: eggfansReferenceMode === "uri" ? "url" : "uri" })}
+                                    >
+                                        <ArrowLeftRight className="size-3" />
+                                        <span>{eggfansReferenceMode === "uri" ? "URI" : "URL"}</span>
+                                    </button>
+                                </Tooltip>
+                            ) : null}
                             <CanvasCameraControlPopover
                                 cameraControl={node.metadata?.cameraControl}
                                 onCameraControlChange={(cameraControl) => onConfigChange(node.id, { cameraControl })}
@@ -414,8 +447,15 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             />
                             <CanvasVideoSettingsPopover
                                 config={config}
+                                taskConstraints={seedanceSettingsConstraints(modelOptionName(config.model), requirements.input?.imageCount || 0, requirements.input?.videoCount || 0, requirements.input?.audioCount || 0, node.metadata?.videoEditOperation, Boolean(node.metadata?.videoStartFrameNodeId || node.metadata?.videoEndFrameNodeId))}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                                onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
+                                onConfigChange={(key, value) => {
+                                    if (key === "videoNativeFace") updateConfig("videoNativeFace", value === "true" ? "true" : "false");
+                                    if (key === "videoJiasuFaceMode") updateConfig("videoJiasuFaceMode", value);
+                                    if (key === "videoJiasuFaceMask") updateConfig("videoJiasuFaceMask", value);
+                                    if (key === "videoSd2FaceMask") updateConfig("videoSd2FaceMask", value);
+                                    onConfigChange(node.id, videoConfigPatch(key, value));
+                                }}
                             />
                         </>
                     ) : mode === "audio" ? (
@@ -491,6 +531,12 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             );
         }
         if (mode !== "video") return null;
+        if (isEggfansSd2DModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model)) return <div className="canvas-node-video-tool-strip">
+            <CanvasJiasuFaceMask key={`${node.id}:sd2`} channelLabel="Eggfans SD2 D" references={resolvedMentionReferences} mode={normalizeSd2FaceMaskMode(config.videoSd2FaceMask)} overrides={node.metadata?.sd2FaceMasks} theme={theme} disabled={isRunning} onModeChange={(value) => { updateConfig("videoSd2FaceMask", value); onConfigChange(node.id, { sd2FaceMask: value }); }} onSave={(sd2FaceMasks) => onConfigChange(node.id, { sd2FaceMasks })} />
+        </div>;
+        if (isJiasuSdModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model)) return <div className="canvas-node-video-tool-strip">
+            <CanvasJiasuFaceMask key={`${node.id}:jiasu`} references={resolvedMentionReferences} mode={config.videoJiasuFaceMask} overrides={node.metadata?.jiasuFaceMasks} theme={theme} disabled={isRunning} onModeChange={(value) => { updateConfig("videoJiasuFaceMask", value); onConfigChange(node.id, { jiasuFaceMask: value }); }} onSave={(jiasuFaceMasks) => onConfigChange(node.id, { jiasuFaceMasks })} />
+        </div>;
         return null;
     };
 
@@ -1035,13 +1081,6 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
     return type === CanvasNodeType.Text || type === CanvasNodeType.Skill ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";
 }
 
-function localModelPlaceholder(mode: CanvasNodeGenerationMode) {
-    if (mode === "image") return "Lib Image 2.5 Pro";
-    if (mode === "video") return "2.0";
-    if (mode === "audio") return "Seed Audio 1.0";
-    return "GVLM 3.1";
-}
-
 export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode, requirements: ModelRequirements): AiConfig {
     const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
@@ -1081,12 +1120,18 @@ export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mo
         ...globalConfig,
         model,
         quality: defaults.quality ?? globalConfig.quality ?? defaultConfig.quality,
+        imageThinkingLevel: node.metadata?.imageThinkingLevel ?? globalConfig.imageThinkingLevel,
         size: defaults.size ?? globalConfig.size ?? defaultConfig.size,
         transparentBackground: defaults.transparentBackground ?? "false",
         videoSeconds: defaults.videoSeconds || normalizeVideoDuration(globalConfig.videoSeconds || defaultConfig.videoSeconds),
         vquality: defaults.vquality ?? normalizeVideoResolution(globalConfig.vquality || defaultConfig.vquality),
         videoGenerateAudio: defaults.videoGenerateAudio ?? globalConfig.videoGenerateAudio ?? defaultConfig.videoGenerateAudio,
         videoWatermark: defaults.videoWatermark ?? globalConfig.videoWatermark ?? defaultConfig.videoWatermark,
+        videoEggfansReferenceMode: mode === "video" ? normalizeEggfansReferenceMode(node.metadata?.eggfansReferenceMode ?? globalConfig.videoEggfansReferenceMode) : globalConfig.videoEggfansReferenceMode,
+        videoNativeFace: mode === "video" ? (node.metadata?.nativeFace ?? globalConfig.videoNativeFace ?? defaultConfig.videoNativeFace) === "true" ? "true" : "false" : globalConfig.videoNativeFace,
+        videoJiasuFaceMode: mode === "video" ? node.metadata?.jiasuFaceMode ?? globalConfig.videoJiasuFaceMode ?? defaultConfig.videoJiasuFaceMode : globalConfig.videoJiasuFaceMode,
+        videoJiasuFaceMask: mode === "video" ? node.metadata?.jiasuFaceMask ?? globalConfig.videoJiasuFaceMask ?? defaultConfig.videoJiasuFaceMask : globalConfig.videoJiasuFaceMask,
+        videoSd2FaceMask: mode === "video" ? normalizeSd2FaceMaskMode(node.metadata?.sd2FaceMask ?? globalConfig.videoSd2FaceMask) : globalConfig.videoSd2FaceMask,
         ...resolveAudioSpeechSettings(model, {
             audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice,
             audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat,
@@ -1094,6 +1139,7 @@ export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mo
             audioPitch: node.metadata?.audioPitch || globalConfig.audioPitch,
             audioVolume: node.metadata?.audioVolume || globalConfig.audioVolume,
             audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions,
+            audioSunoParams: node.metadata?.audioSunoParams ?? globalConfig.audioSunoParams,
         }),
         count: defaults.count ?? String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
@@ -1111,10 +1157,16 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };
     if (key === "videoArkPrivateAssetUpload") return { arkPrivateAssetUpload: value };
+    if (key === "videoEggfansReferenceMode") return { eggfansReferenceMode: value === "url" ? ("url" as const) : ("uri" as const) };
+    if (key === "videoNativeFace") return { nativeFace: value === "true" ? "true" : "false" };
+    if (key === "videoJiasuFaceMode") return { jiasuFaceMode: value };
+    if (key === "videoJiasuFaceMask") return { jiasuFaceMask: value };
+    if (key === "videoSd2FaceMask") return { sd2FaceMask: value };
     return { [key]: value };
 }
 
 function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {
+    if (key === "audioSunoParams") return { audioSunoParams: value };
     if (key === "audioVoice") return { audioVoice: value };
     if (key === "audioFormat") return { audioFormat: value };
     if (key === "audioSpeed") return { audioSpeed: value };

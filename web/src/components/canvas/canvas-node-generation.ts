@@ -410,8 +410,8 @@ function buildAssetGenerationInputs(assets: Asset[]): NodeGenerationInput[] {
         const nodeId = `asset:${asset.id}`;
         if (asset.kind === "text") return [{ nodeId, type: "text", title: asset.title, text: asset.data.content }];
         if (asset.kind === "image") return [{ nodeId, type: "image", title: asset.title, image: { id: asset.id, name: asset.title, type: asset.data.mimeType, dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, bytes: asset.data.bytes, width: asset.data.width, height: asset.data.height, ...(asset.arkAssetId ? { arkAssetId: asset.arkAssetId } : {}) } }];
-        if (asset.kind === "video") return [{ nodeId, type: "video", title: asset.title, previewUrl: canvasVideoAssetPreviewUrl(asset.data.url, asset.coverUrl), video: { id: asset.id, name: asset.title, type: asset.data.mimeType, url: asset.data.url, storageKey: asset.data.storageKey, bytes: asset.data.bytes, width: asset.data.width, height: asset.data.height, durationMs: asset.data.durationMs } }];
-        if (asset.kind === "audio") return [{ nodeId, type: "audio", title: asset.title, audio: { id: asset.id, name: asset.title, type: asset.data.mimeType, url: asset.data.url, storageKey: asset.data.storageKey, bytes: asset.data.bytes, durationMs: asset.data.durationMs } }];
+        if (asset.kind === "video") return [{ nodeId, type: "video", title: asset.title, previewUrl: canvasVideoAssetPreviewUrl(asset.data.url, asset.coverUrl), video: { id: asset.id, name: asset.title, type: asset.data.mimeType, url: asset.data.url, storageKey: asset.data.storageKey, bytes: asset.data.bytes, width: asset.data.width, height: asset.data.height, durationMs: asset.data.durationMs, ...(asset.arkAssetId ? { arkAssetId: asset.arkAssetId } : {}) } }];
+        if (asset.kind === "audio") return [{ nodeId, type: "audio", title: asset.title, audio: { id: asset.id, name: asset.title, type: asset.data.mimeType, url: asset.data.url, storageKey: asset.data.storageKey, bytes: asset.data.bytes, durationMs: asset.data.durationMs, ...(asset.arkAssetId ? { arkAssetId: asset.arkAssetId } : {}) } }];
         if (asset.kind === "entity" && asset.category === "character") return [{ nodeId, type: "character", title: asset.title, character: { nodeId, assetId: asset.id, requestedVersionId: asset.primaryVersionId } }];
         return [];
     });
@@ -424,10 +424,13 @@ function withArkAssetReferenceInputs(inputs: NodeGenerationInput[], nodes: Canva
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const assetById = new Map(assets.map((asset) => [asset.id, asset]));
     return inputs.map((input) => {
-        if (input.type !== "image" || !input.image || input.image.arkAssetId) return input;
         const boundAssetId = nodeById.get(input.nodeId)?.metadata?.assetId;
         const arkAssetId = boundAssetId ? assetById.get(boundAssetId)?.arkAssetId : undefined;
-        return arkAssetId ? { ...input, image: { ...input.image, arkAssetId } } : input;
+        if (!arkAssetId) return input;
+        if (input.image && !input.image.arkAssetId) return { ...input, image: { ...input.image, arkAssetId } };
+        if (input.video && !input.video.arkAssetId) return { ...input, video: { ...input.video, arkAssetId } };
+        if (input.audio && !input.audio.arkAssetId) return { ...input, audio: { ...input.audio, arkAssetId } };
+        return input;
     });
 }
 

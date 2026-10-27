@@ -1,4 +1,5 @@
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
+import { seedanceOutputWarning } from "@/lib/seedance-output-warning";
 import { fitNodeSize, nodeSizeFromRatio, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage } from "@/lib/canvas/canvas-emotion";
 import { storeGeneratedAudio } from "@/services/api/audio";
@@ -61,6 +62,7 @@ export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
 
 export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
     return {
+        outputParameterWarning: undefined,
         content: video.url,
         storageKey: video.storageKey,
         status: "success",
@@ -219,7 +221,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
             ...node,
             type: CanvasNodeType.Video,
             ...geometry,
-            metadata: applyGeneratedMediaResultMetadata(node, videoMetadata(video), { prompt, ...completedTaskMetadata(task) }),
+            metadata: applyGeneratedMediaResultMetadata(node, { ...videoMetadata(video), outputParameterWarning: seedanceOutputWarning(task.inputJson, video.width, video.height, task.model) }, { prompt, ...completedTaskMetadata(task) }),
         };
     }
 
@@ -230,7 +232,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
         const audio = reuseAudioKey
             ? { url: await mediaIO.resolveMediaUrl(reuseAudioKey, audioSource), storageKey: reuseAudioKey, durationMs: result.audio?.durationMs, bytes: result.audio?.bytes || 0, mimeType: result.audio?.mimeType || "audio/mpeg" }
             : await mediaIO.storeGeneratedAudio(await mediaIO.fetchBlob(audioSource), result.audio?.format || "mp3");
-        return { ...node, type: CanvasNodeType.Audio, metadata: applyGeneratedMediaResultMetadata(node, audioMetadata(audio), { prompt, ...completedTaskMetadata(task) }) };
+        return { ...node, type: CanvasNodeType.Audio, metadata: applyGeneratedMediaResultMetadata(node, audioMetadata(audio), { prompt, ...completedTaskMetadata(task), ...(result.providerTaskId ? { sunoTaskId: result.providerTaskId, sunoClips: result.audios?.map((clip) => ({ clipId: clip.clipId, title: clip.title, url: clip.url || clip.dataUrl, storageKey: clip.storageKey, mimeType: clip.mimeType })) } : {}) }) };
     }
 
     if (!result.text) throw new Error("后端任务没有返回文本");
@@ -271,7 +273,7 @@ export async function applyRecoveredGenerationTaskResultToNodes(nodes: CanvasNod
 export async function applyMaterializedGenerationTaskResultToNodes(nodes: CanvasNodeData[], task: GenerationTask, output: GenerationTaskOutput, effectKey: string, targetNodeId?: string) {
     const node = findGenerationTaskNode(nodes, task, targetNodeId);
     if (!node) return { nodes, updated: false, nodeId: "", node: null };
-    if (generationEffectApplied(node.metadata || {}, effectKey)) {
+    if (generationEffectApplied(node.metadata || {}, effectKey) && node.metadata?.status === "success" && node.metadata.content && node.metadata.assetId === output.materializedAssetId) {
         return { nodes, updated: true, nodeId: node.id, node };
     }
     const asset = useAssetStore.getState().assets.find((candidate) => candidate.id === output.materializedAssetId);
@@ -344,6 +346,8 @@ function findGenerationTaskNode(nodes: CanvasNodeData[], task: GenerationTask, t
 
 function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
     return {
+        taskFailureDiagnostics: task.failureDiagnostics,
+        taskProviderRequestId: task.providerRequestId,
         taskId: task.id,
         taskStatus: task.status,
         taskProgress: typeof task.progress === "number" && Number.isFinite(task.progress) ? Math.max(0, Math.min(100, Math.round(task.progress))) : 100,
@@ -353,8 +357,11 @@ function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
         taskDurationMs: task.startedAt && task.completedAt ? Math.max(0, Date.parse(task.completedAt) - Date.parse(task.startedAt)) : undefined,
         taskCreatedAt: task.createdAt || task.created_at,
         taskUpdatedAt: task.updatedAt || task.updated_at,
+        taskSyncIssue: undefined,
         errorDetails: undefined,
         generationErrorCode: undefined,
+        resourceReloadAvailable: undefined,
         failedPromptFingerprint: undefined,
+        failedInputFingerprint: undefined,
     };
 }

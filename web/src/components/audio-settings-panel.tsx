@@ -4,8 +4,10 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { audioPitchLabel, audioSpeedLabel, audioSpeechProfile, audioVolumeLabel, normalizeAudioFormatValue, normalizeAudioPitchValue, normalizeAudioSpeedValue, normalizeAudioVolumeValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import type { AiConfig } from "@/stores/use-config-store";
+import { isSunoModel } from "@/lib/suno-generation";
+import { SunoMusicSettings } from "@/components/suno-music-settings";
 
-type AudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" | "audioPitch" | "audioVolume" | "audioInstructions";
+type AudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" | "audioPitch" | "audioVolume" | "audioInstructions" | "audioSunoParams";
 
 type AudioSettingsPanelProps = {
     config: AiConfig;
@@ -23,6 +25,8 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const speed = normalizeAudioSpeedValue(config.audioSpeed, model);
     const pitch = normalizeAudioPitchValue(config.audioPitch);
     const volume = normalizeAudioVolumeValue(config.audioVolume);
+
+    if (isSunoModel(model)) return <ImageSettingsTheme theme={theme}><div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>{showTitle && <div className="text-lg font-semibold">Suno 音乐设置</div>}<SunoMusicSettings value={config.audioSunoParams} model={model} onChange={(value) => onConfigChange("audioSunoParams", value)} /></div></ImageSettingsTheme>;
 
     return (
         <ImageSettingsTheme theme={theme}>

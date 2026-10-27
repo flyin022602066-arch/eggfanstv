@@ -1,12 +1,13 @@
 import type { StoryboardRow } from "@/types/canvas";
 import { formatShotOrdinal } from "@/lib/shot-label";
+import { matchProjectShotSequenceAssets } from "@/lib/project-shot-asset-matching";
 import type { ProjectDetail, ShotRevisionInput } from "@/services/api/projects";
 import { ensureShotAssetMentionPrompt } from "./workflow-shot-references";
 
 export type ChapterStoryboardAsset = {
     id: string;
     title: string;
-    type: "image" | "video" | "audio" | "character";
+    type: "image" | "video" | "audio" | "character" | "text";
     category?: string;
     tags: string[];
     prompt: string;
@@ -71,30 +72,44 @@ export function chapterStoryboardAssets(detail: ProjectDetail): ChapterStoryboar
             prompt: assetPrompt(asset.previewText, asset.character?.definition, asset.title),
             ...(type === "character" ? { characterAssetId: asset.id, characterVersionId } : {}),
         }];
-    }).slice(0, 60);
+    });
 }
 
 export function storyboardRowsToProjectShots(rows: StoryboardRow[], detail?: ProjectDetail): ProjectShotReplacementInput[] {
-    const versionByAssetId = new Map((detail?.assets || []).flatMap((asset) => asset.primaryVersionId ? [[asset.id, asset.primaryVersionId] as const] : []));
     const mentionReferenceByAssetId = new Map((detail?.assets || []).map((asset) => [asset.id, {
         assetId: asset.id,
         kind: asset.category === "character" ? "character" as const : "image" as const,
         label: asset.title,
         title: asset.title,
     }]));
+    const shotMatches = matchProjectShotSequenceAssets(detail?.assets || [], rows.map((row) => ({ script: {
+        ...row,
+        action: joinStoryboardAction(row),
+        imagePrompt: row.imageGenerationPrompt,
+        videoPrompt: row.videoMotionPrompt,
+    } })));
     return rows.map((row, index) => {
         const shotNumber = index + 1;
         const description = row.plotDescription.trim() || `镜头 ${shotNumber}`;
         const durationMs = Math.max(1000, Math.round((Number(row.durationSeconds) || 1) * 1000));
-        const mentionReferences = storyboardRowAssetIds(row).flatMap((assetId) => {
-            const reference = mentionReferenceByAssetId.get(assetId);
+        const matches = shotMatches[index]!;
+        const scene = matches.find(({ asset }) => asset.category === "environment")?.asset;
+        const assetContext = scene || row.sceneName || row.propNames ? [{
+            type: "asset_context",
+            sceneAssetId: scene?.id || "",
+            sceneName: scene?.title || row.sceneName || "",
+            sceneChange: Boolean(row.sceneChange),
+            ...(row.propNames ? { propNames: row.propNames } : {}),
+        }] : [];
+        const mentionReferences = matches.flatMap(({ asset }) => {
+            const reference = mentionReferenceByAssetId.get(asset.id);
             return reference ? [reference] : [];
         });
         return {
             title: formatShotOrdinal(index),
             description,
             durationMs,
-            assetVersionIds: storyboardRowAssetVersionIds(row, versionByAssetId),
+            assetVersionIds: matches.map((match) => match.assetVersionId),
             revision: {
                 plotDescription: description,
                 action: joinStoryboardAction(row),
@@ -107,7 +122,7 @@ export function storyboardRowsToProjectShots(rows: StoryboardRow[], detail?: Pro
                 videoPrompt: ensureShotAssetMentionPrompt(row.videoMotionPrompt, mentionReferences),
                 negativePrompt: row.negativePrompt.trim(),
                 continuityNotes: row.continuityOut.trim(),
-                actionBeats: row.timeBeats.trim() ? [{ description: row.timeBeats.trim() }] : [],
+                actionBeats: [...(row.timeBeats.trim() ? [{ description: row.timeBeats.trim() }] : []), ...assetContext],
             },
         };
     });
@@ -125,22 +140,9 @@ export function chapterStoryboardReplaceImpact(detail: ProjectDetail, unitId: st
     };
 }
 
-function storyboardRowAssetVersionIds(row: StoryboardRow, versionByAssetId: Map<string, string>) {
-    return storyboardRowAssetIds(row).flatMap((assetId) => {
-        const versionId = versionByAssetId.get(assetId);
-        return versionId ? [versionId] : [];
-    }).slice(0, 6);
-}
-
-function storyboardRowAssetIds(row: StoryboardRow) {
-    return Array.from(new Set([
-        ...row.assetBindings.map((binding) => binding.nodeId),
-        ...row.characters.flatMap((character) => character.characterAssetId ? [character.characterAssetId] : []),
-    ])).slice(0, 6);
-}
-
 function storyboardAssetType(mediaType: string, category: string): ChapterStoryboardAsset["type"] | null {
     if (category === "character") return "character";
+    if (["environment", "prop"].includes(category) && mediaType === "text") return "text";
     if (mediaType === "image" || mediaType === "video" || mediaType === "audio") return mediaType;
     return null;
 }
@@ -169,7 +171,7 @@ function joinStoryboardAction(row: StoryboardRow) {
     return [
         labeledText("叙事意图", row.narrativeIntent),
         labeledText("表演调度", row.performanceBlocking),
-        labeledText("时间节拍", row.timeBeats),
+        labeledText("镜头序列", row.timeBeats),
         labeledText("情绪", row.emotion),
         labeledText("光线与氛围", row.lightingAndAtmosphere),
         labeledText("声音", row.audioEffects),

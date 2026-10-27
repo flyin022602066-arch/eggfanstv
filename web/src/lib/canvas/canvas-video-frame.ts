@@ -70,7 +70,8 @@ function waitForAnimationFrames() {
     });
 }
 
-export async function captureVideoFrames(source: Blob | string, timesMs: number[]): Promise<VideoFrameCaptureResult> {
+export async function captureVideoFrames(source: Blob | string, timesMs: number[], options?: { signal?: AbortSignal; maxDimension?: number; jpeg?: boolean }): Promise<VideoFrameCaptureResult> {
+    options?.signal?.throwIfAborted();
     const blob = await readVideoBlob(source);
     const objectUrl = URL.createObjectURL(blob);
     const video = document.createElement("video");
@@ -79,7 +80,7 @@ export async function captureVideoFrames(source: Blob | string, timesMs: number[
     video.preload = "auto";
 
     try {
-        const loaded = waitForVideoEvent(video, "loadeddata", "视频读取超时或编码不受浏览器支持");
+        const loaded = waitForVideoEvent(video, "loadeddata", "视频读取超时或编码不受浏览器支持", VIDEO_FRAME_TIMEOUT_MS, options?.signal);
         video.src = objectUrl;
         video.load();
         await loaded;
@@ -89,24 +90,29 @@ export async function captureVideoFrames(source: Blob | string, timesMs: number[
         const normalizedTimes = normalizeVideoFrameTimes(timesMs, video.duration * 1000);
         if (!normalizedTimes.length) throw new Error("请至少选择一个有效时间点");
         const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        const scale = Math.min(1, (options?.maxDimension || Math.max(video.videoWidth, video.videoHeight)) / Math.max(video.videoWidth, video.videoHeight));
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
         const context = canvas.getContext("2d");
         if (!context) throw new Error("浏览器无法创建图片画布");
         const frames: CapturedVideoFrame[] = [];
         const failures: VideoFrameCaptureFailure[] = [];
         for (const timeMs of normalizedTimes) {
+            options?.signal?.throwIfAborted();
             try {
                 const targetSeconds = videoFrameSeekSeconds(timeMs, video.duration * 1000);
                 if (Math.abs(video.currentTime - targetSeconds) > 0.0005) {
-                    const seeked = waitForVideoEvent(video, "seeked", `无法定位到 ${formatVideoFrameTime(timeMs)}`);
+                    const seeked = waitForVideoEvent(video, "seeked", `无法定位到 ${formatVideoFrameTime(timeMs)}`, VIDEO_FRAME_TIMEOUT_MS, options?.signal);
                     video.currentTime = targetSeconds;
                     await seeked;
                 }
                 await waitForPresentedVideoFrame(video);
+                options?.signal?.throwIfAborted();
                 context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                frames.push({ timeMs, blob: await canvasToPngBlob(canvas), width: canvas.width, height: canvas.height });
+                const blob = options?.jpeg ? await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("画面编码失败")), "image/jpeg", 0.8)) : await canvasToPngBlob(canvas);
+                frames.push({ timeMs, blob, width: canvas.width, height: canvas.height });
             } catch (error) {
+                options?.signal?.throwIfAborted();
                 failures.push({ timeMs, error: error instanceof Error ? error.message : "画面提取失败" });
             }
         }
@@ -139,13 +145,14 @@ export function formatVideoFrameTime(timeMs: number) {
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
 
-function waitForVideoEvent(video: HTMLVideoElement, eventName: "loadeddata" | "seeked" | "ended", errorMessage: string, timeoutMs = VIDEO_FRAME_TIMEOUT_MS) {
+function waitForVideoEvent(video: HTMLVideoElement, eventName: "loadeddata" | "seeked" | "ended", errorMessage: string, timeoutMs = VIDEO_FRAME_TIMEOUT_MS, signal?: AbortSignal) {
     return new Promise<void>((resolve, reject) => {
         let timer: ReturnType<typeof globalThis.setTimeout>;
         const cleanup = () => {
             globalThis.clearTimeout(timer);
             video.removeEventListener(eventName, onSuccess);
             video.removeEventListener("error", onError);
+            signal?.removeEventListener("abort", onAbort);
         };
         const onSuccess = () => {
             cleanup();
@@ -155,9 +162,12 @@ function waitForVideoEvent(video: HTMLVideoElement, eventName: "loadeddata" | "s
             cleanup();
             reject(new Error(errorMessage));
         };
+        const onAbort = () => { cleanup(); reject(new DOMException("已取消", "AbortError")); };
         video.addEventListener(eventName, onSuccess, { once: true });
         video.addEventListener("error", onError, { once: true });
         timer = globalThis.setTimeout(onError, timeoutMs);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
     });
 }
 

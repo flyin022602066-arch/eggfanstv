@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,15 +15,16 @@ const (
 )
 
 type Config struct {
-	Profile          Profile
-	DataDir          string
-	DatabaseDriver   string
-	DatabaseURL      string
-	ListenAddr       string
-	LaunchToken      string
-	AutoMigrate      bool
-	ShutdownTimeout  time.Duration
-	RouterMiddleware []gin.HandlerFunc
+	Profile                 Profile
+	DataDir                 string
+	GeneratedVideoOutputDir string
+	DatabaseDriver          string
+	DatabaseURL             string
+	ListenAddr              string
+	LaunchToken             string
+	AutoMigrate             bool
+	ShutdownTimeout         time.Duration
+	RouterMiddleware        []gin.HandlerFunc
 }
 
 func (c Config) withDefaults() Config {
@@ -41,6 +43,13 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ShutdownTimeout <= 0 {
 		c.ShutdownTimeout = 10 * time.Minute
+	}
+	if c.GeneratedVideoOutputDir == "" && c.DataDir != "" {
+		root := filepath.Clean(c.DataDir)
+		if filepath.Base(filepath.Dir(root)) == ".local" {
+			root = filepath.Dir(filepath.Dir(root))
+		}
+		c.GeneratedVideoOutputDir = filepath.Join(root, "output", "videos")
 	}
 	return c
 }

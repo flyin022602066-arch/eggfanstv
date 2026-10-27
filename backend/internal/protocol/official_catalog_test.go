@@ -899,3 +899,54 @@ func TestOfficialEggfansSD2VideoUsesVideosLifecycle(t *testing.T) {
 		t.Fatalf("EggFans frame mode must not send image_refs: %#v", frameBody)
 	}
 }
+
+func TestOfficialEggfansSD2NativeFaceToggle(t *testing.T) {
+	adapter := officialPackageAdapter(t, "eggfans-sd2-video.beeftv-plugin", "eggfans-sd2-video")
+	for _, model := range []string{"sd-2.5-A", "sd-2.5-B", "sd-2.5-C", "sd-2.5-D", "sd-2.5-E"} {
+		for _, enabled := range []bool{true, false} {
+			spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+				Capability: CapabilityVideo, Model: model, Prompt: "scene", Duration: 6, NativeFace: enabled,
+				Images: []MediaReference{{URL: "https://cdn.example/reference.png", Role: "reference_image"}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := manifestTestBody(t, spec)
+			value, exists := body["native_face"]
+			want := enabled
+			if exists != want || (exists && value != true) {
+				t.Fatalf("%s native_face = %#v, exists = %v, want enabled = %v", model, value, exists, want)
+			}
+		}
+	}
+}
+
+func TestOfficialEggfansSD2NativeFaceReferenceConditions(t *testing.T) {
+	adapter := officialPackageAdapter(t, "eggfans-sd2-video.beeftv-plugin", "eggfans-sd2-video")
+	for _, test := range []struct {
+		name                   string
+		images, videos, audios []MediaReference
+		want                   bool
+	}{
+		{name: "image", images: []MediaReference{{URL: "https://cdn.example/ref.png", Role: "reference_image"}}, want: true},
+		{name: "first frame", images: []MediaReference{{URL: "https://cdn.example/first.png", Role: "first_frame"}}, want: true},
+		{name: "video", videos: []MediaReference{{URL: "https://cdn.example/ref.mp4", Role: "reference_video"}}, want: true},
+		{name: "last frame", images: []MediaReference{{URL: "https://cdn.example/last.png", Role: "last_frame"}}},
+		{name: "audio", audios: []MediaReference{{URL: "https://cdn.example/ref.mp3", Role: "reference_audio"}}},
+		{name: "text"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, enabled := range []bool{true, false} {
+				spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Capability: CapabilityVideo, Model: "sd-2.5-D", Prompt: "scene", Duration: 6, NativeFace: enabled, Images: test.images, Videos: test.videos, Audios: test.audios}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				body := manifestTestBody(t, spec)
+				value, exists := body["native_face"]
+				if exists != (enabled && test.want) || (exists && value != true) {
+					t.Fatalf("native_face = %#v, exists %v", value, exists)
+				}
+			}
+		})
+	}
+}

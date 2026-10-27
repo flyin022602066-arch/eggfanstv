@@ -12,6 +12,7 @@ export type ShotAssetReferenceContext = {
     referenceAudios: ReferenceAudio[];
     assetReferences: ShotPromptAssetReference[];
     resolvedCharacterVersions: Array<{ assetId: string; versionId: string }>;
+    missingImageTitles: string[];
 };
 
 export type ShotPromptAssetReference = {
@@ -27,12 +28,16 @@ export type ShotPromptAssetReference = {
 export function buildShotAssetReferenceContext(detail: ProjectDetail, shotId: string): ShotAssetReferenceContext {
     const assetByVersionId = new Map(detail.assets.filter((asset) => asset.primaryVersionId).map((asset) => [asset.primaryVersionId as string, asset]));
     const seenAssetIds = new Set<string>();
+    const missingImageTitles: string[] = [];
     const entries = (detail.shotReferences || []).flatMap((reference) => {
         if (reference.shotId !== shotId || reference.status !== "linked") return [];
         const asset = reference.asset || assetByVersionId.get(reference.assetVersionId);
         if (!asset || seenAssetIds.has(asset.id)) return [];
         const image = projectAssetReferenceImage(asset, reference);
-        if (!image) return [];
+        if (!image) {
+            if (["character", "environment", "prop"].includes(asset.category)) missingImageTitles.push(asset.title);
+            return [];
+        }
         seenAssetIds.add(asset.id);
         return [{ asset, image, reference }];
     });
@@ -81,13 +86,16 @@ export function buildShotAssetReferenceContext(detail: ProjectDetail, shotId: st
         })),
         referenceImages: entries.map(({ image }) => image),
         referenceAudios,
+        missingImageTitles,
         assetReferences,
         resolvedCharacterVersions: entries.flatMap(({ asset, reference }) => asset.character ? [{ assetId: asset.id, versionId: reference.referencedVersion?.id || reference.assetVersionId || asset.character.versionId }] : []),
     };
 }
 
-export function resolveShotAssetMentionPrompt(prompt: string, context: ShotAssetReferenceContext, options: { dialogue?: string } = {}) {
-    const imageLabelByAssetId = new Map(context.mentionReferences.map((reference, index) => [reference.assetId, `图片${index + 1}`]));
+export function resolveShotAssetMentionPrompt(prompt: string, context: ShotAssetReferenceContext, options: { dialogue?: string; interfaceType?: string } = {}) {
+    if (context.missingImageTitles.length) throw new Error(`已绑定资产 ${context.missingImageTitles.join("、")} 缺少参考图，请先在角色与资产中生成或上传图片`);
+    const useAtMentions = options.interfaceType === "jiasu-video";
+    const imageLabelByAssetId = new Map(context.mentionReferences.map((reference, index) => [reference.assetId, `${useAtMentions ? "@" : ""}图片${index + 1}`]));
     const unresolved = new Set<string>();
     const resolved = prompt.replace(/@\[asset:([^\]]+)\]/g, (token, assetId: string) => {
         const label = imageLabelByAssetId.get(assetId);
@@ -99,7 +107,7 @@ export function resolveShotAssetMentionPrompt(prompt: string, context: ShotAsset
     });
     if (unresolved.size) throw new Error(`提示词中的 ${Array.from(unresolved).join("、")} 未绑定到当前镜头，请重新选择资产或删除引用`);
     const dialogueContext = withShotDialogue(context.assetReferences, options.dialogue);
-    const assetBlock = compileShotAssetReferencePrompt(dialogueContext.references);
+    const assetBlock = compileShotAssetReferencePrompt(dialogueContext.references, useAtMentions);
     const dialogueBlock = dialogueContext.unassignedDialogue ? `【镜头台词】\n\n${dialogueContext.unassignedDialogue}` : "";
     return [resolved.trim(), assetBlock, dialogueBlock].filter(Boolean).join("\n\n");
 }
@@ -118,11 +126,12 @@ export function ensureShotAssetMentionPrompt(prompt: string, references: Array<P
     return [value, block("【角色参考】", characters), block("【场景与道具参考】", otherAssets)].filter(Boolean).join("\n\n");
 }
 
-export function compileShotAssetReferencePrompt(references: ShotPromptAssetReference[]) {
+export function compileShotAssetReferencePrompt(references: ShotPromptAssetReference[], useAtMentions = false) {
     if (!references.length) return "";
     const lines = references.flatMap((reference) => {
         const visualLabel = reference.category === "character" ? "人物参考" : `${projectAssetCategoryLabel(reference.category)}参考`;
-        const media = [`${visualLabel}：图片${reference.imageIndex}`, reference.audioIndex ? `声音参考：音频${reference.audioIndex}` : ""].filter(Boolean).join("；");
+        const prefix = useAtMentions ? "@" : "";
+        const media = [`${visualLabel}：${prefix}图片${reference.imageIndex}`, reference.audioIndex ? `声音参考：${prefix}音频${reference.audioIndex}` : ""].filter(Boolean).join("；");
         return [
             `- ${reference.title}：${media}`,
             reference.voiceDescription ? `  声音画像：${reference.voiceDescription}` : "",
@@ -169,7 +178,7 @@ function withShotDialogue(references: ShotPromptAssetReference[], dialogue?: str
     const value = stringValue(dialogue);
     if (!value) return { references, unassignedDialogue: "" };
     const characters = references.filter((reference) => reference.category === "character");
-    if (characters.length === 1) {
+    if (characters.length === 1 && !/[：:]/u.test(value)) {
         return {
             references: references.map((reference) => reference.assetId === characters[0]?.assetId ? { ...reference, dialogue: value } : reference),
             unassignedDialogue: "",
@@ -182,7 +191,7 @@ function withShotDialogue(references: ShotPromptAssetReference[], dialogue?: str
     });
     return {
         references: resolved,
-        unassignedDialogue: resolved.some((reference) => reference.dialogue) ? "" : value,
+        unassignedDialogue: value.split(/\r?\n/u).filter((line) => line.trim() && !characters.some((reference) => dialogueForCharacter(line, reference.title))).join("\n"),
     };
 }
 

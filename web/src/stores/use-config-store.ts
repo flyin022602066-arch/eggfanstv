@@ -4,11 +4,23 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
-import { defaultProtocolForCapability, defaultProtocolForModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
-import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
+import { isGeminiNanoBananaModel } from "@/lib/gemini-nano-banana";
+import { EGGFANS_SEEDANCE_PROTOCOL, isEggfansBaseUrl, isEggfansSeedanceProtocol, isSeedanceModelName, normalizeEggfansReferenceMode } from "@/lib/eggfans-seedance";
+import { defaultProtocolForCapability, defaultProtocolForModel, isNonConversationModelName, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
+import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
+import { normalizeJiasuFaceMaskMode } from "@/lib/jiasu-face-mask";
+import { normalizeSd2FaceMaskMode } from "@/lib/eggfans-sd2-face-mask";
+import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { defaultModelCapabilityConfig, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
+import { applyChannelAdaptation } from "@/lib/channel-adaptation";
+import { BUILTIN_CHANNEL_SEEDS, isChannelVisibleInPackagedSettings } from "@/lib/builtin-channels";
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
+import { normalizeProjectAssetImagePresets, type ProjectAssetImagePresets } from "@/lib/project-asset-image-preferences";
+import { normalizeProjectWorkflowModels, type ProjectWorkflowModels } from "@/lib/project-workflow-model-preferences";
+import { normalizeChapterStoryboardModes, normalizeChapterStoryboardSkills, type ChapterStoryboardModes, type ChapterStoryboardSkills } from "@/lib/chapter-storyboard-mode";
+import { seedancePortraitLabel, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
+import type { VideoBilling } from "@/lib/video-billing";
 
 export type ApiCallFormat = "openai" | "gemini" | "claude";
 export type ChannelInterfaceType = ModelProtocol;
@@ -350,6 +362,7 @@ export type ModelChannel = {
     sortOrder?: number;
     baseUrl: string;
     catalogUrl?: string;
+    referenceAssetOrigin?: string;
     apiKey: string;
     secretKey?: string;
     headers?: ChannelHeader[];
@@ -374,6 +387,9 @@ export type ModelChannel = {
         capability: ModelCapability;
         protocol?: ModelProtocol;
         capabilityConfig?: ModelCapabilityConfig;
+        videoCapabilitiesVersion?: string;
+        videoPricing?: VideoPriceQuote | null;
+        videoBilling?: VideoBilling | null;
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;
         logicalCapabilityProfiles?: CapabilitySpec[];
@@ -382,11 +398,17 @@ export type ModelChannel = {
 };
 
 export type AiConfig = {
+    projectChapterStoryboardModes?: ChapterStoryboardModes;
+    projectChapterStoryboardSkills?: ChapterStoryboardSkills;
+    projectWorkflowModels?: ProjectWorkflowModels;
+    projectAssetImagePresets?: ProjectAssetImagePresets;
+    imageThinkingLevel?: string;
     channelMode: "remote";
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
     channels: ModelChannel[];
+    volcAssetLibrary: { enabled: boolean; baseUrl: string; apiKey: string; groupName: string; projectName: string };
     runningHub: RunningHubConfig;
     /** 仅用于单次生成任务路由，不属于全局渠道启用状态。 */
     taskWorkflowProvider?: "model" | "runninghub";
@@ -395,17 +417,25 @@ export type AiConfig = {
     videoModel: string;
     textModel: string;
     audioModel: string;
+    /** 画布助手模型；为空表示跟随 `textModel`。取值与其他默认模型一致，形如 `channelId::modelId`。 */
+    assistantModel: string;
     audioVoice: string;
     audioFormat: string;
     audioSpeed: string;
     audioPitch: string;
     audioVolume: string;
     audioInstructions: string;
+    audioSunoParams?: string;
     videoSeconds: string;
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
     videoArkPrivateAssetUpload: string;
+    videoEggfansReferenceMode: "uri" | "url";
+    videoNativeFace: string;
+    videoJiasuFaceMode: string;
+    videoJiasuFaceMask: string;
+    videoSd2FaceMask: string;
     systemPrompt: string;
     models: string[];
     imageModels: string[];
@@ -424,6 +454,8 @@ export type ModelCapability = "image" | "video" | "text" | "audio";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const EGGFANS_BASE_URL = "https://api.eggfans.com";
 const EGGFANS_CATALOG_URL = `${EGGFANS_BASE_URL}/pricing`;
+const JIASU_BASE_URL = "https://www.gway.dev";
+const JIASU_CATALOG_URL = `${JIASU_BASE_URL}/pricing`;
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const LEGACY_DEFAULT_MODEL_NAMES = new Set(["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"]);
 
@@ -434,6 +466,7 @@ export const defaultConfig: AiConfig = {
     apiFormat: "openai",
     // 创作端模型目录只能来自后台公开逻辑模型和用户自定义渠道，不能内置供应商模型。
     channels: [],
+    volcAssetLibrary: { enabled: true, baseUrl: "https://20nbifxd.magine.work/v1", apiKey: "", groupName: "Eggfans TV 自动参考素材", projectName: "default" },
     runningHub: { enabled: false, baseUrl: "https://www.runninghub.cn", apiKey: "", walletApiKey: "", uploadApiKey: "", useWallet: false, capability: "image", selectedKind: "workflow", workflowId: "", workflows: [] },
     taskWorkflowProvider: "model",
     model: "",
@@ -441,17 +474,24 @@ export const defaultConfig: AiConfig = {
     videoModel: "",
     textModel: "",
     audioModel: "",
+    assistantModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
     audioPitch: "0",
     audioVolume: "1",
     audioInstructions: "",
+    audioSunoParams: "",
     videoSeconds: "6",
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
     videoArkPrivateAssetUpload: "true",
+    videoEggfansReferenceMode: "uri" as const,
+    videoNativeFace: "false",
+    videoJiasuFaceMode: "default",
+    videoJiasuFaceMask: "grid",
+    videoSd2FaceMask: "off",
     systemPrompt: "",
     models: [],
     imageModels: [],
@@ -481,6 +521,8 @@ function isVideoModelName(model: string) {
     const value = modelOptionName(model).toLowerCase();
     return (
         value.includes("seedance") ||
+        /^(?:dola-)?sd-2[.-]/u.test(value) ||
+        value === "minimax-h3" ||
         value.includes("video") ||
         value.includes("sora") ||
         value.includes("veo") ||
@@ -521,6 +563,7 @@ function isImageModelName(model: string) {
             value.includes("sdxl") ||
             value.includes("stable-diffusion") ||
             value.includes("midjourney") ||
+            /^mj[_-]/u.test(value) ||
             value.includes("nano-banana") ||
             value.includes("nanobanana") ||
             value.includes("ideogram") ||
@@ -543,17 +586,17 @@ function isTranscriptionModelName(model: string) {
 function isAudioModelName(model: string) {
     if (isTranscriptionModelName(model)) return false;
     const value = modelOptionName(model).toLowerCase();
-    return value.includes("audio") || value.includes("tts") || value.includes("speech") || value.includes("voice") || value.includes("music") || value.includes("sound");
+    return value.includes("audio") || value.includes("tts") || value.includes("speech") || value.includes("voice") || value.includes("music") || value.includes("sound") || /^(?:suno|chirp)(?:[-_]|$)/u.test(value);
 }
 
 function isTextModelName(model: string) {
-    return !isImageModelName(model) && !isVideoModelName(model) && !isAudioModelName(model) && !isTranscriptionModelName(model);
+    return !isImageModelName(model) && !isVideoModelName(model) && !isAudioModelName(model) && !isTranscriptionModelName(model) && !isNonConversationModelName(modelOptionName(model));
 }
 
 function isGeminiTextModelName(model: string) {
     const value = modelOptionName(model).trim().toLowerCase();
     if (!/^gemini(?:[-_]|$)/u.test(value)) return false;
-    return !["image", "vision", "veo", "video", "audio", "tts", "embedding", "live"].some((token) => value.includes(token));
+    return !["image", "vision", "banana", "veo", "video", "audio", "tts", "embedding", "live"].some((token) => value.includes(token));
 }
 
 export function modelMatchesCapability(model: string, capability?: ModelCapability) {
@@ -570,17 +613,16 @@ export function filterModelsByCapability(models: string[], capability?: ModelCap
         const decoded = decodeChannelModel(model);
         const channel = decoded ? channels?.find((item) => item.id === decoded.channelId) : undefined;
         const modelName = decoded?.model || modelOptionName(model);
+        if (isNonConversationModelName(modelName)) return false;
         const costEntry = channel?.modelProfiles?.find((item) => item.model === modelName);
         // 协议层优先级最高：协议决定 API 端点，明确属于其他能力时直接排除，
         // 防止用户将 video/image/audio 协议的模型误标为 text 后混入文本下拉。
         const protocolCapability = modelProtocolCapability(costEntry?.protocol);
         if (protocolCapability) return protocolCapability === capability;
-        // 渠道接口层：渠道级协议推断能力
-        const channelCapability = capabilityForChannelInterface(channel?.interfaceType);
-        if (channelCapability) return channelCapability === capability;
-        // 配置能力层：用户显式标记的 capability
         const configuredCapability = costEntry?.capability;
         if (configuredCapability) return configuredCapability === capability;
+        const channelCapability = capabilityForChannelInterface(channel?.interfaceType);
+        if (channelCapability) return channelCapability === capability;
         // 模型名启发式：最后回退
         return modelMatchesCapability(model, capability);
     });
@@ -655,7 +697,7 @@ export const useConfigStore = create<ConfigStore>()(
         {
             name: CONFIG_STORE_KEY,
             storage: createJSONStorage(() => scopedLocalStorage),
-            partialize: (state) => ({ config: state.config }),
+            partialize: (state) => ({ config: configWithoutCachedSecrets(state.config) }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 return {
@@ -666,6 +708,45 @@ export const useConfigStore = create<ConfigStore>()(
         },
     ),
 );
+
+// The canonical local workspace restores credentials at startup. Browser
+// storage only caches presentation/preferences, never an extra plaintext copy.
+export function configWithoutCachedSecrets(config: AiConfig): AiConfig {
+    return {
+        ...config,
+        apiKey: "",
+        channels: config.channels.map((channel) => ({ ...channel, apiKey: "", secretKey: "", headers: [] })),
+        runningHub: { ...config.runningHub, apiKey: "", walletApiKey: "", uploadApiKey: "" },
+    };
+}
+
+/**
+ * 把内置渠道种子并进渠道列表。
+ *
+ * 种子（`lib/builtin-channels.ts`）只声明「地址 + 模型名」，协议与能力画像交给紧随其后的
+ * `applyChannelAdaptation` 按 hostname 补齐（网关对应 `channel-adaptation.ts` 的 jetmobo-hub 预设）。
+ * 已存在的同 id 渠道保留使用者填写的密钥与自定义设置，只补缺失的模型。
+ */
+function mergeBuiltinChannelSeeds(channels: ModelChannel[]): ModelChannel[] {
+    if (!BUILTIN_CHANNEL_SEEDS.length) return channels;
+    const result = [...channels];
+    let changed = false;
+    for (const seed of BUILTIN_CHANNEL_SEEDS) {
+        const index = result.findIndex((channel) => channel.id === seed.id);
+        if (index < 0) {
+            result.push(createModelChannel({ ...seed, apiKey: "", enabled: true, pinned: true }));
+            changed = true;
+            continue;
+        }
+        const existing = result[index];
+        const missing = seed.models.filter((model) => !existing.models.includes(model));
+        if (!missing.length) continue;
+        result[index] = { ...existing, models: [...existing.models, ...missing] };
+        changed = true;
+    }
+    // 无变化时返回原引用，避免下游基于数组身份做无谓的重渲染。
+    return changed ? result : channels;
+}
 
 export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefined = {}) {
     // 坏存储/旧版本快照可能是 undefined 或缺 config，兜底为 defaultConfig，保证渲染不崩溃
@@ -691,11 +772,16 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
     const config = {
         ...defaultConfig,
         ...persistedConfig,
+        projectWorkflowModels: normalizeProjectWorkflowModels(persistedConfig.projectWorkflowModels),
+        projectChapterStoryboardModes: normalizeChapterStoryboardModes(persistedConfig.projectChapterStoryboardModes),
+        projectChapterStoryboardSkills: normalizeChapterStoryboardSkills(persistedConfig.projectChapterStoryboardSkills),
+        projectAssetImagePresets: normalizeProjectAssetImagePresets(persistedConfig.projectAssetImagePresets),
         taskWorkflowProvider: "model" as const,
         // Older desktop snapshots may contain explicitly stored `undefined`
         // values. Keep all fields consumed by `.trim()` callers as strings.
         baseUrl: typeof persistedConfig.baseUrl === "string" ? persistedConfig.baseUrl : defaultConfig.baseUrl,
         apiKey: typeof persistedConfig.apiKey === "string" ? persistedConfig.apiKey : "",
+        volcAssetLibrary: { ...defaultConfig.volcAssetLibrary, ...(persistedConfig.volcAssetLibrary || {}) },
         runningHub: {
             ...defaultConfig.runningHub,
             ...(persistedRunningHub || {}),
@@ -709,7 +795,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
     };
     const hasPersistedChannels = Array.isArray(persistedConfig.channels);
     if (!hasPersistedChannels) config.channels = [];
-    const channels = normalizeChannels(config, !hasPersistedChannels).map(enrichBeefApiMediaChannel);
+    const channels = mergeBuiltinChannelSeeds(normalizeChannels(config, !hasPersistedChannels)).map(enrichBeefApiMediaChannel).map(repairNanoBananaProfiles).map(applyChannelAdaptation);
     const models = modelOptionsFromChannels(channels);
     const imageModels = filterModelsByCapability(models, "image", channels);
     const videoModels = filterModelsByCapability(models, "video", channels);
@@ -728,19 +814,28 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             videoModel: normalizeSelectedModel(config.videoModel, channels, videoModels, "sd-2.5-c"),
             textModel: normalizeSelectedModel(config.textModel || model, channels, textModels),
             audioModel: normalizeSelectedModel(config.audioModel || defaultConfig.audioModel, channels, audioModels),
+            // 助手模型允许为空（跟随默认文本模型），因此这里只保证类型，
+            // 协议与渠道有效性由 `lib/assistant-model` 在读取时裁决。
+            assistantModel: typeof config.assistantModel === "string" ? config.assistantModel.trim() : "",
             audioVoice: config.audioVoice || defaultConfig.audioVoice,
             audioFormat: config.audioFormat || defaultConfig.audioFormat,
             audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
             audioPitch: config.audioPitch || defaultConfig.audioPitch,
             audioVolume: config.audioVolume || defaultConfig.audioVolume,
             audioInstructions: config.audioInstructions || "",
+            audioSunoParams: config.audioSunoParams || "",
             // 旧版全局 systemPrompt 会跨任务污染请求；提示词定制现已按 operation 由服务端编译。
             systemPrompt: "",
             videoSeconds: normalizeVideoDuration(config.videoSeconds),
             vquality: normalizeVideoResolution(config.vquality),
-            videoGenerateAudio: config.videoGenerateAudio || "true",
-            videoWatermark: config.videoWatermark || "false",
-            videoArkPrivateAssetUpload: config.videoArkPrivateAssetUpload || "true",
+            videoGenerateAudio: normalizeVideoBoolean(config.videoGenerateAudio) ?? "true",
+            videoWatermark: normalizeVideoBoolean(config.videoWatermark) ?? "false",
+            videoArkPrivateAssetUpload: normalizeVideoBoolean(config.videoArkPrivateAssetUpload) ?? "true",
+            videoEggfansReferenceMode: normalizeEggfansReferenceMode(config.videoEggfansReferenceMode),
+            videoNativeFace: config.videoNativeFace === "true" ? "true" : "false",
+            videoJiasuFaceMode: ["off", "light", "heavy"].includes(config.videoJiasuFaceMode) ? config.videoJiasuFaceMode : "default",
+            videoJiasuFaceMask: normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask),
+            videoSd2FaceMask: normalizeSd2FaceMaskMode(config.videoSd2FaceMask),
             transparentBackground: config.transparentBackground === "true" ? "true" : "false",
             canvasImageCount: config.canvasImageCount || defaultConfig.canvasImageCount,
             imageModels,
@@ -751,40 +846,79 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
     };
 }
 
-function beefApiVideoProtocol(model: string): ModelProtocol {
-    // BeefAPI's current media gateway exposes the working multimodal contract
-    // at /v1/video/generations. The legacy /v1/videos wrapper accepts text but
-    // rejects reference media with "unsupported video parameter media".
-    return "newapi-channel-2";
+function repairNanoBananaProfiles(channel: ModelChannel): ModelChannel {
+    const nanoModels = channel.models.filter(isGeminiNanoBananaModel);
+    const eggfans = isEggfansBaseUrl(channel.baseUrl);
+    if (!nanoModels.length && !eggfans) return channel;
+    const profiles = (channel.modelProfiles || []).filter((profile) => !eggfans || !isNonConversationModelName(profile.model)).map((profile) => {
+        if (nanoModels.includes(profile.model)) return { ...profile, capability: "image" as const, protocol: "gemini-image" as const, capabilityConfig: profile.capability === "image" && profile.protocol === "gemini-image" ? profile.capabilityConfig : defaultModelCapabilityConfig("gemini-image", profile.model) };
+        const knownText = isGeminiTextModelName(profile.model) || (/^(?:gpt-[345](?:[.\d-]|[a-z])|o[1-9](?:-|$)|claude(?:-|$)|deepseek(?:-|$)|qwen(?:[\d.-]|$))/iu.test(profile.model) && isTextModelName(profile.model));
+        if (eggfans && knownText && (profile.capability !== "text" || modelProtocolCapability(profile.protocol) && modelProtocolCapability(profile.protocol) !== "text")) return { ...profile, capability: "text" as const, protocol: "chat-completion" as const, capabilityConfig: undefined };
+        return profile;
+    });
+    for (const model of nanoModels) {
+        if (!profiles.some((profile) => profile.model === model)) profiles.push({ model, capability: "image", protocol: "gemini-image", capabilityConfig: defaultModelCapabilityConfig("gemini-image", model) });
+    }
+    return { ...channel, modelProfiles: profiles };
 }
 
-function beefApiSeedanceCapabilityConfig(model: string): ModelCapabilityConfig | undefined {
-    if (!model.startsWith("seedance-")) return undefined;
-    const profile = defaultModelCapabilityConfig("newapi-channel-2", model);
-    // BeefAPI currently accepts text/image references for Seedance, while
-    // video_urls are only supported by its Grok video profile. Do not expose
-    // reference_to_video for Seedance and let the UI reject that combination
-    // before it reaches the upstream API.
-    profile.video = {
-        ...profile.video!,
-        operations: ["text_to_video", "image_to_video"],
-        references: {
-            ...profile.video!.references,
-            maxImages: 9,
-            maxVideos: 0,
-            maxVideoBytes: 200 * 1024 * 1024,
-            maxVideoDurationSeconds: 0,
-            maxAudios: 0,
-            maxAudioBytes: 15 * 1024 * 1024,
-            maxAudioDurationSeconds: 0,
-        },
-        generateAudio: { supported: true, default: true },
-    };
-    return profile;
+function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProtocol {
+    return (beefAPIVideoContract(model)?.protocol as ModelProtocol | undefined) || current || "newapi-channel-2";
+}
+
+function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, current?: ModelCapabilityConfig, sourced = false): ModelCapabilityConfig | undefined {
+    const profile = beefApiSeedanceCapabilityConfig(model, current, sourced);
+    if (sourced) return profile;
+    const contract = beefAPIVideoContract(model);
+    const limits = contract?.maxReferences;
+    if (!limits) return profile;
+    const resolved = profile || defaultModelCapabilityConfig(protocol, model);
+    if (!resolved.video) return resolved;
+    return { ...resolved, video: { ...resolved.video,
+        references: { ...resolved.video.references, maxImages: Math.min(resolved.video.references.maxImages, limits.image ?? Infinity), maxVideos: Math.min(resolved.video.references.maxVideos, limits.video ?? Infinity), maxAudios: Math.min(resolved.video.references.maxAudios, limits.audio ?? Infinity) },
+        operations: contract.operations || resolved.video.operations,
+        defaultOperation: contract.operations?.includes(resolved.video.defaultOperation) ? resolved.video.defaultOperation : contract.operations?.[0] || resolved.video.defaultOperation,
+    } };
+}
+
+function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilityConfig, sourced = false): ModelCapabilityConfig | undefined {
+    if (sourced) return current;
+    if (!/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return current;
+    const video = current?.video;
+    const refs = video?.references;
+    // Older built-in profiles disabled all video/audio references on every
+    // hydration. Match that complete signature, not a user's individual limit.
+    const legacy = video?.operations?.length === 2 && video.operations.includes("text_to_video") && video.operations.includes("image_to_video") &&
+        refs?.maxImages === 9 && refs.maxVideos === 0 && refs.maxAudios === 0 &&
+        refs.maxVideoBytes === 200 * 1024 * 1024 && refs.maxAudioBytes === 15 * 1024 * 1024 &&
+        refs.maxVideoDurationSeconds === 0 && refs.maxAudioDurationSeconds === 0;
+    const defaults = defaultModelCapabilityConfig("newapi", model);
+    if (!current || !video) return defaults;
+    // The built-in BeefAPI Seedance contract supports the audio switch even
+    // when an older saved profile advertised no control. Keep its default.
+    const generateAudio = { ...video!.generateAudio, supported: true };
+    if (!legacy) return { ...current, video: { ...video!, generateAudio } };
+    const next = defaults.video!;
+    return { ...current, video: { ...video!, generateAudio, operations: next.operations, references: { ...refs!,
+        maxImages: next.references.maxImages,
+        maxVideos: next.references.maxVideos, maxAudios: next.references.maxAudios,
+        maxVideoDurationSeconds: next.references.maxVideoDurationSeconds,
+        maxAudioDurationSeconds: next.references.maxAudioDurationSeconds,
+    } } };
 }
 
 function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
-	if (channel.id !== "beefapi" && !channel.baseUrl.toLowerCase().includes("enterprise.beefapi.com")) return channel;
+	if (isEggfansBaseUrl(channel.baseUrl)) {
+		const profiles = new Map((channel.modelProfiles || []).map((profile) => [profile.model, profile]));
+		for (const model of channel.models.filter(isSeedanceModelName)) {
+			const current = profiles.get(model);
+			const protocol = isEggfansSeedanceProtocol(current?.protocol) ? current!.protocol! : EGGFANS_SEEDANCE_PROTOCOL;
+			const defaults = defaultModelCapabilityConfig(protocol, model);
+			profiles.set(model, { ...current, model, capability: "video", protocol, capabilityConfig: { ...defaults, ...current?.capabilityConfig, video: { ...defaults.video!, ...current?.capabilityConfig?.video, references: { ...defaults.video!.references, ...current?.capabilityConfig?.video?.references, maxImages: defaults.video!.references.maxImages, maxVideos: defaults.video!.references.maxVideos, maxAudios: defaults.video!.references.maxAudios }, operations: defaults.video!.operations, generateAudio: defaults.video!.generateAudio, watermark: defaults.video!.watermark } } });
+		}
+		return { ...channel, modelProfiles: Array.from(profiles.values()) };
+	}
+    if (!isBeefAPIEndpoint(channel.baseUrl)) return channel;
     const models = channel.models;
     const existing = new Map((channel.modelProfiles || []).map((item) => [item.model, item]));
     for (const model of models.filter(isImageModelName)) {
@@ -828,15 +962,15 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
     }
     for (const model of models.filter(isVideoModelName)) {
         const current = existing.get(model);
-        // Always normalize the built-in BeefAPI media models. This also
-        // repairs persisted profiles created by the previous channel-1
-        // mapping, which otherwise keep sending unsupported input/parameters.
+        // Repair known routes using the shared contract; preserve catalog and
+        // custom protocols for models whose wire contract is not declared here.
+        const protocol = beefApiVideoProtocol(model, current?.protocol);
         existing.set(model, {
             ...(current || {}),
             model,
             capability: "video",
-            protocol: beefApiVideoProtocol(model),
-            capabilityConfig: beefApiSeedanceCapabilityConfig(model) || current?.capabilityConfig,
+            protocol,
+            capabilityConfig: beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig, current?.videoCapabilitiesVersion !== undefined),
         });
     }
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };
@@ -845,8 +979,13 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
 function normalizeSelectedModel(value: string, channels: ModelChannel[], options: string[], preferredModel = "") {
     const model = normalizeModelOptionValue(value, channels);
     if (model && options.includes(model)) return model;
-    const preferred = options.find((option) => modelOptionName(option).toLowerCase() === preferredModel);
-    return preferred || options[0] || "";
+    // Keep an explicit paid-tier choice visible when the catalog removes it.
+    // An ordinary/default choice must never select the paid tier implicitly.
+    if (seedancePortraitModel(value)) return value;
+    const preferred = options.find((option) => !seedancePortraitModel(option) && modelOptionName(option).toLowerCase() === preferredModel);
+    const decoded = decodeChannelModel(value);
+    const sameChannel = decoded ? options.find((option) => decodeChannelModel(option)?.channelId === decoded.channelId && !seedancePortraitModel(option)) : undefined;
+    return preferred || sameChannel || options.find((option) => !seedancePortraitModel(option)) || "";
 }
 
 export function useEffectiveConfig() {
@@ -866,18 +1005,26 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
     const interfaceType = normalizeChannelInterfaceType(channel?.interfaceType);
     const providedBaseUrl = channel?.baseUrl?.trim();
     const defaultBaseUrl = interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat);
-    const defaultCatalogUrl = !providedBaseUrl && apiFormat === "openai" && defaultBaseUrl === EGGFANS_BASE_URL ? EGGFANS_CATALOG_URL : undefined;
+    const effectiveBaseUrl = normalizeJiasuVideoBaseUrl(channel?.id, interfaceType, providedBaseUrl || defaultBaseUrl);
+    const defaultCatalogUrl = !channel?.catalogUrl?.trim() && apiFormat === "openai"
+        ? (channel?.id === "jiasu-video" || interfaceType === "jiasu-video") && effectiveBaseUrl.replace(/\/+$/u, "") === JIASU_BASE_URL
+            ? JIASU_CATALOG_URL
+            : !providedBaseUrl && defaultBaseUrl === EGGFANS_BASE_URL
+              ? EGGFANS_CATALOG_URL
+              : undefined
+        : undefined;
     return {
         id: channel?.id?.trim() || nanoid(),
         name: channel?.name?.trim() || "新渠道",
         sortOrder: channel?.sortOrder ?? 0,
-        baseUrl: providedBaseUrl || defaultBaseUrl,
-        catalogUrl: channel?.catalogUrl?.trim() || defaultCatalogUrl,
+        baseUrl: effectiveBaseUrl,
+        catalogUrl: normalizeJiasuVideoCatalogUrl(channel?.id, interfaceType, channel?.catalogUrl?.trim() || defaultCatalogUrl),
+        referenceAssetOrigin: channel?.referenceAssetOrigin?.trim() || undefined,
         apiKey: channel?.apiKey || "",
         secretKey: channel?.secretKey || "",
         headers: Array.isArray(channel?.headers) ? channel.headers.map((header) => ({ name: String(header.name || ""), value: String(header.value || "") })) : [],
         apiFormat,
-        interfaceType,
+        interfaceType: interfaceType || (channel?.id === "jiasu-video" ? "jiasu-video" : undefined),
         models: uniqueRawModels(channel?.models || []),
         scope: channel?.scope === "system" ? "system" : "user",
         enabled: channel?.enabled !== false,
@@ -909,6 +1056,8 @@ export function modelOptionName(value: string) {
 }
 
 export function modelDisplayName(config: AiConfig, value: string) {
+	const portrait = seedancePortraitLabel(value);
+	if (portrait) return portrait;
     const model = modelOptionName(value);
     const channel = resolveModelChannel(config, value);
     const displayName = channel.modelProfiles?.find((item) => item.model === model)?.displayName?.trim();
@@ -931,9 +1080,9 @@ export function modelOptionLabel(config: AiConfig, value: string) {
     return `${displayName}（${channel.name}）`;
 }
 
-export function modelOptionsFromChannels(channels: ModelChannel[]) {
+export function modelOptionsFromChannels(channels: ModelChannel[], packagedWindows = typeof __BEEFTV_PACKAGED_WINDOWS__ !== "undefined" && __BEEFTV_PACKAGED_WINDOWS__) {
     return uniqueModelOptions(
-        channels.flatMap((channel) =>
+        channels.filter((channel) => isChannelVisibleInPackagedSettings(channel.id, packagedWindows)).flatMap((channel) =>
             channel.models
                 .map(normalizeRawModelName)
                 .filter(Boolean)
@@ -955,11 +1104,11 @@ export function normalizeModelOptionValue(value: unknown, channels: ModelChannel
     if (decoded) {
         const channel = channels.find((item) => item.id === decoded.channelId);
         const resolved = channel?.modelAliases?.[decoded.model] || decoded.model;
-        return channel && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
+        return channel && seedancePortraitModel(decoded.model) === seedancePortraitModel(resolved) && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
     }
     const channel = channels.find((item) => item.models.includes(model) || Boolean(item.modelAliases?.[model])) || channels[0];
     const resolved = channel?.modelAliases?.[model] || model;
-    return channel && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
+    return channel && seedancePortraitModel(model) === seedancePortraitModel(resolved) && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
 }
 
 export function resolveModelChannel(config: AiConfig, value: string) {
@@ -975,16 +1124,16 @@ export function logicalModelIDForConfig(config: AiConfig) {
 }
 
 export function channelConnectionSignature(channel: ModelChannel) {
-    return [channel.baseUrl.trim(), channel.catalogUrl?.trim() || "", channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", JSON.stringify(channel.headers || [])].join("\n");
+    return [channel.baseUrl.trim(), channel.catalogUrl?.trim() || "", channel.referenceAssetOrigin?.trim() || "", channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", JSON.stringify(channel.headers || [])].join("\n");
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const channel = resolveModelChannel(config, value);
     const model = modelOptionName(value || config.model);
     const modelProfile = channel.modelProfiles?.find((item) => item.model === model);
-    const modelProtocol = modelProfile?.protocol;
+    const modelProtocol = normalizeModelProtocol(modelProfile?.protocol);
     const interfaceType = modelProtocol
-        || channel.interfaceType
+        || normalizeModelProtocol(channel.interfaceType)
         || (channel.scope === "system" || !usesOpenAICompatibleProtocolDefault(channel.apiFormat)
             ? undefined
             : (modelProfile?.capability ? defaultProtocolForCapability(modelProfile.capability) : defaultProtocolForModel(model)));
@@ -994,10 +1143,11 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: interfaceType === "eggfans-sd2-video" && channel.baseUrl.trim().replace(/\/+$/, "") === defaultConfig.baseUrl.trim().replace(/\/+$/, "")
             ? "https://vip.eggfans.asia"
             : channel.baseUrl,
+        referenceAssetOrigin: channel.referenceAssetOrigin,
         apiKey: channel.credentialRef ? "" : channel.apiKey,
         secretKey: channel.credentialRef ? "" : channel.secretKey,
         headers: channel.headers,
-        apiFormat: interfaceType ? (interfaceType === "gemini-veo" || interfaceType === "gemini-image" ? ("gemini" as const) : interfaceType === "claude-api" ? ("claude" as const) : ("openai" as const)) : channel.apiFormat,
+        apiFormat: interfaceType ? (interfaceType === "gemini-veo" || interfaceType === "gemini-image" || interfaceType === "gemini-generate-content" ? ("gemini" as const) : interfaceType === "claude-api" ? ("claude" as const) : ("openai" as const)) : channel.apiFormat,
         interfaceType,
         channelId: channel.scope === "system" ? channel.id : "",
         credentialRef: channel.credentialRef || (isBuiltinBeefAPIChannel(channel) ? MANAGED_BEEFAPI_CREDENTIAL_REF : undefined),
@@ -1066,6 +1216,8 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
 export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfaceType) {
     if (interfaceType === "gemini-veo" || interfaceType === "gemini-image") return GEMINI_BASE_URL;
     if (interfaceType === "eggfans-sd2-video") return "https://vip.eggfans.asia";
+    if (interfaceType === "jiasu-video") return JIASU_BASE_URL;
+    if (interfaceType === "mints-seedance-video") return "http://open.mints-id.com";
     if (interfaceType === "novita-video") return "https://api.novita.ai/v3";
     if (interfaceType === "volcengine-ark-agent-plan-image" || interfaceType === "volcengine-ark-agent-plan-video") return "https://ark.cn-beijing.volces.com/api/plan/v3";
     if (interfaceType === "volcengine-ark-image" || interfaceType === "volcengine-ark-video") return "https://ark.cn-beijing.volces.com/api/v3";
@@ -1073,6 +1225,17 @@ export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfa
     if (interfaceType === "minimax-video") return "https://api.minimaxi.com";
     if (interfaceType === "grok-image" || interfaceType === "newapi" || interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || interfaceType === "xai-video") return "";
     return EGGFANS_BASE_URL;
+}
+
+function normalizeJiasuVideoBaseUrl(channelID: string | undefined, interfaceType: ChannelInterfaceType | undefined, value: string) {
+    if ((channelID !== "jiasu-video" && interfaceType !== "jiasu-video") || value.replace(/\/+$/u, "") !== "https://ai.jiasuapi.com") return value;
+    return JIASU_BASE_URL;
+}
+
+function normalizeJiasuVideoCatalogUrl(channelID: string | undefined, interfaceType: ChannelInterfaceType | undefined, value?: string) {
+    const normalized = value?.trim() || "";
+    if ((channelID !== "jiasu-video" && interfaceType !== "jiasu-video") || !/^https:\/\/ai\.jiasuapi\.com\/pricing\/?$/iu.test(normalized)) return normalized || undefined;
+    return JIASU_CATALOG_URL;
 }
 
 function capabilityForChannelInterface(interfaceType?: ChannelInterfaceType): ModelCapability | undefined {

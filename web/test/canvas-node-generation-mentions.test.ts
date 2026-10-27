@@ -32,6 +32,26 @@ function connection(fromNodeId: string): CanvasConnection {
 }
 
 describe("canvas node generation position mentions", () => {
+    test("bound image, video and audio nodes retain their private asset IDs", () => {
+        const target = targetNode();
+        const image = node("bound-image", CanvasNodeType.Image, "data:image/png;base64,a");
+        const video = node("bound-video", CanvasNodeType.Video, "https://example.com/video.mp4");
+        const audio = node("bound-audio", CanvasNodeType.Audio, "https://example.com/audio.mp3");
+        image.metadata.assetId = "image-asset";
+        video.metadata.assetId = "video-asset";
+        audio.metadata.assetId = "audio-asset";
+        const assets = [
+            { id: "image-asset", kind: "image", arkAssetId: "private-image", data: { dataUrl: "" } },
+            { id: "video-asset", kind: "video", arkAssetId: "private-video", data: { url: "" } },
+            { id: "audio-asset", kind: "audio", arkAssetId: "private-audio", data: { url: "" } },
+        ] as import("../src/stores/use-asset-store").Asset[];
+        const context = buildNodeGenerationContext(target.id, [image, video, audio, target], [connection(image.id), connection(video.id), connection(audio.id)], "@图片1 @视频1 @音频1", assets);
+        expect(context.referenceImages[0].arkAssetId).toBe("private-image");
+        expect(context.referenceVideos[0].arkAssetId).toBe("private-video");
+        expect(context.referenceAudios[0].arkAssetId).toBe("private-audio");
+        expect(context.prompt).toBe("@图片1 @视频1 @音频1");
+    });
+
     test("已有图片节点显式引用自身时作为图生图参考图提交", () => {
         const source = node("image-self", CanvasNodeType.Image, "data:image/png;base64,a");
         source.metadata.composerContent = "将 @图片1 图片变清晰";

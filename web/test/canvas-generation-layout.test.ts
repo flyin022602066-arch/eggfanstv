@@ -75,4 +75,14 @@ describe("canGenerateImageInPlace", () => {
         expect(canGenerateMediaInPlace(video, CanvasNodeType.Video)).toBe(true);
         expect(canGenerateMediaInPlace({ ...video, metadata: { ...video.metadata, generationResultPlacement: "new-version" } }, CanvasNodeType.Video)).toBe(false);
     });
+
+    test("清空生成结果草稿不会改变二次生成的落点", () => {
+        for (const type of [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio] as const) {
+            for (const composerContent of ["", "\n", " \n "]) {
+                const result = { ...node("generated-result", 0, 0), type, metadata: { nodeRole: "result" as const, resultOrigin: "generated" as const, content: "result-url", prompt: "original generation prompt", composerContent } };
+                expect(canGenerateMediaInPlace(result, type)).toBe(true);
+                expect(canGenerateMediaInPlace({ ...result, metadata: { ...result.metadata, generationResultPlacement: "new-version" } }, type)).toBe(false);
+            }
+        }
+    });
 });

@@ -80,20 +80,26 @@ describe("large canvas media rendering", () => {
 
     test("keeps inactive video nodes on a viewport-gated static first frame", () => {
         const inactivePreviewSource = canvasNodeContentSource.match(/function InactiveVideoPreview[\s\S]*?\n}\n\nfunction VideoPreviewPlayButton/)?.[0] || "";
-        expect(canvasNodeContentSource).toContain("if (!previewNeedsHydration || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current)");
+        expect(inactivePreviewSource).toContain("!previewNeedsHydration || !nearViewport");
+        expect(inactivePreviewSource).toContain("!node.metadata?.storageKey && !node.metadata?.content");
+        expect(inactivePreviewSource).not.toContain("updateMetadata");
+        expect(canvasVideoPreviewSource).not.toContain("uploadImage");
         expect(canvasNodeContentSource).toContain("canvasVideoPreviewNeedsHydration(node)");
         expect(canvasNodeContentSource).not.toContain("hydrateMediaPreview");
         expect(inactivePreviewSource).not.toContain("<video");
         expect(inactivePreviewSource).toContain("<VideoPreviewPlayButton");
         expect(canvasNodeContentSource).toContain("useVideoPlaybackUrl(node, mediaActive)");
         expect(canvasNodeContentSource).toContain("onMediaPlayRequest?.(node.id)");
-        expect(canvasNodeContentSource).toContain('autoPlay preload="metadata"');
+        expect(canvasNodeContentSource).toContain('autoPlay={false} preload="metadata"');
+        expect(canvasNodeContentSource).toContain("manualPlayback: true");
+        expect(canvasNodeContentSource).not.toContain('autoPlay preload="metadata"');
         expect(canvasNodeContentSource).toContain("scheduleResourceBlobCache(node.metadata?.storageKey || \"\")");
     });
 
     test("allows failed or empty first-frame requests to retry", () => {
-        expect(canvasVideoPreviewSource).toContain("if (!preview) previewRequests.delete(requestKey)");
-        expect(canvasVideoPreviewSource).toContain("previewRequests.delete(requestKey);");
+        expect(canvasVideoPreviewSource).toContain("if (!preview) { forgetFailedRequest(); return null; }");
+        expect(canvasVideoPreviewSource).toContain("if (previewRequests.get(requestKey) === created) previewRequests.delete(requestKey)");
+        expect(canvasVideoPreviewSource).toContain(".catch(() => { forgetFailedRequest(); return null; })");
     });
 });
 
@@ -194,8 +200,7 @@ describe("video canvas controls", () => {
         expect(videoPlayerSource).not.toContain("onPointerDownCapture={stopCanvasControlInteraction}");
         expect(videoPlayerSource).not.toContain("onMouseDownCapture={stopCanvasControlInteraction}");
         expect(videoPlayerSource).not.toContain("onClickCapture={stopCanvasControlClick}");
-        expect(canvasNodeContentSource).toContain('hasAudio={inferVideoHasAudio(node.metadata)} autoPlay preload="metadata"');
-        expect(canvasNodeContentSource).toContain('if (["false", "0", "off", "no", "disabled"].includes(value || "")) return false;');
+        expect(canvasNodeContentSource).toContain('hasAudio={inferVideoHasAudio(node.metadata)} autoPlay={false} preload="metadata"');
     });
 
     test("recognizes an explicitly empty audio track list", () => {

@@ -294,3 +294,25 @@ test("model config repository does not save browser state before canonical hydra
     await pending;
     expect(writes).toBe(1);
 });
+
+test("startup refreshes the Eggfans model catalog only after restoring the saved config", async () => {
+    const initialize = (workspaceBootstrap as Record<string, unknown>).initializeWorkspaceState as undefined | ((input: {
+        loadWorkspace: () => Promise<{ source: string }>;
+        createLocalWorkspace: () => { source: string };
+        applySession: (payload: { source: string }) => Promise<void>;
+        restoreModelConfig: () => Promise<void>;
+        refreshModelCatalog: () => Promise<void>;
+    }) => Promise<void>);
+    expect(typeof initialize).toBe("function");
+
+    const events: string[] = [];
+    await initialize!({
+        loadWorkspace: async () => ({ source: "backend" }),
+        createLocalWorkspace: () => ({ source: "local" }),
+        applySession: async () => { events.push("session"); },
+        restoreModelConfig: async () => { events.push("restore-model-config"); },
+        refreshModelCatalog: async () => { events.push("refresh-model-catalog"); },
+    });
+
+    expect(events).toEqual(["session", "restore-model-config", "refresh-model-catalog"]);
+});

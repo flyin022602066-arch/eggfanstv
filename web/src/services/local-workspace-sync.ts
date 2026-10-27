@@ -1,16 +1,18 @@
-import { applyAgentCanvasPatch, type AgentCanvasPatch } from "@/lib/canvas/agent-canvas-patch";
+import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
-import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend } from "@/services/local-workspace-repository";
+import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend, persistCanvasDocument, restoreLocalCanvasProjectFromHistory } from "@/services/local-workspace-repository";
 import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import {
+    loadWorkspaceAssetLibraryPage,
+    loadWorkspaceAssetsForUse,
+    type WorkspaceAssetLibraryPageOptions,
+} from "@/services/workspace-asset-read";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { http } from "@/services/api/request";
-
-type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt" | "updatedAt" | "revision">;
 
 export { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 let operationTail: Promise<void> = Promise.resolve();
-const agentCanvasListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined) => void>();
+const canvasRefreshListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined) => void>();
 
 /**
  * Backward-compatible local persistence facade.
@@ -33,108 +35,57 @@ export async function loadCanvasProjectForEditing(
     id: string,
     options: { latest?: boolean; historyRestore?: { snapshotId: string; revision: number }; onLoad?: (project: CanvasProject) => void } = {},
 ) {
-    const project = await openLocalCanvasProjectFromBackend(id);
+    const expected = captureUserScope();
+    assertUserScope(expected);
+    if (options.historyRestore) {
+        const restored = await restoreLocalCanvasProjectFromHistory(id, options.historyRestore, expected);
+        assertUserScope(expected);
+        options.onLoad?.(restored);
+        return restored;
+    }
+    const project = await openLocalCanvasProjectFromBackend(id, expected);
     if (project) options.onLoad?.(project);
     return project || undefined;
 }
 
-export function subscribeAgentCanvasRefresh(listener: (project: CanvasProject, previous: CanvasProject | undefined) => void) {
-    agentCanvasListeners.add(listener);
-    return () => { agentCanvasListeners.delete(listener); };
+// 画布内容被其他写入者（远端刷新、任务回写）替换后通知本地编辑器合并。
+export function subscribeCanvasRefresh(listener: (project: CanvasProject, previous: CanvasProject | undefined) => void) {
+    canvasRefreshListeners.add(listener);
+    return () => { canvasRefreshListeners.delete(listener); };
 }
 
-export async function refreshCanvasAfterAgent(id: string) {
-    const project = openLocalCanvasProject(id);
-    if (!project) throw new Error("本地画布不存在");
-    return project;
-}
-
-/** Ensure the local canvas snapshot is visible to the co-packaged Go Agent.
- * Local editing intentionally avoids the hosted sync queue, but Agent tools
- * execute against the Go repository and still need the current snapshot. */
-export async function syncLocalCanvasForAgent(id: string) {
-    const project = openLocalCanvasProject(id);
-    if (!project) throw new Error("本地画布不存在");
-    await http.put(`/canvas-projects/${encodeURIComponent(id)}`, { project });
-    return project;
+/** 外部写入已投影到本地存储后，把这次替换交给正在编辑的页面。 */
+export function notifyCanvasRefresh(project: CanvasProject, previous: CanvasProject | undefined) {
+    for (const listener of [...canvasRefreshListeners]) listener(project, previous);
 }
 
 /**
- * Persist an editor snapshot to the co-packaged Go repository.  Local edits
- * normally stay in IndexedDB for instant UI feedback, but the Go repository
- * is also read by MCP/SSE.  Callers that mutate the canvas outside the normal
- * save flow (for example node deletion) must use this bridge or the next
- * remote refresh can resurrect the stale server snapshot.
+ * Persist an editor snapshot to the co-packaged Go repository. Callers that
+ * mutate the canvas outside the autosave flow (for example node deletion) must
+ * use this bridge so the next remote refresh cannot resurrect a stale snapshot.
  */
-export async function syncLocalCanvasSnapshotForAgent(id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "appearance" | "backgroundMode" | "showImageInfo" | "viewport">>) {
+export async function syncLocalCanvasSnapshot(id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "appearance" | "backgroundMode" | "showImageInfo" | "viewport">>, expectedScope?: CapturedUserScope) {
+    const expected = expectedScope ?? captureUserScope();
+    assertUserScope(expected);
     const current = openLocalCanvasProject(id);
     if (!current) throw new Error("本地画布不存在");
-    const project = { ...current, ...patch };
-    const response = await http.put<{ project: CanvasSaveSummary }>(`/canvas-projects/${encodeURIComponent(id)}`, { project });
-    const saved = { ...project, revision: response.project?.revision ?? project.revision, updatedAt: response.project?.updatedAt ?? project.updatedAt };
-    useCanvasStore.setState((state) => ({ projects: state.projects.map((item) => item.id === id ? saved : item) }));
+    const { viewport, ...documentPatch } = patch;
+    if (viewport) useCanvasStore.getState().updateProject(id, { viewport });
+    if (Object.keys(documentPatch).length > 0) await persistCanvasDocument(id, documentPatch, expected);
+    assertUserScope(expected);
+    const saved = openLocalCanvasProject(id);
+    if (!saved) throw new Error("本地画布不存在");
     return saved;
 }
 
-export async function applyAgentCanvasPatches(id: string, patches: AgentCanvasPatch[]) {
-    return withRemoteUserDataSyncExclusive(async () => {
-        const current = openLocalCanvasProject(id);
-        if (!current) throw new Error("本地画布不存在");
-        let projected = current;
-        for (const patch of patches) projected = applyAgentCanvasPatch(projected, patch);
-        if (projected === current) return current;
-        for (const listener of agentCanvasListeners) listener(projected, current);
-        useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => project.id === id ? projected : project) }));
-        await flushCanvasStorePersistence();
-        return projected;
-    });
+export type LocalAssetPageOptions = WorkspaceAssetLibraryPageOptions;
+
+export function loadAssetLibraryPage(options: LocalAssetPageOptions) {
+    return loadWorkspaceAssetLibraryPage(options);
 }
 
-type LocalAssetPageOptions = {
-    page: number;
-    pageSize: number;
-    kind?: string;
-    category?: string;
-    folderId?: string;
-    uncategorized?: boolean;
-    status?: string;
-    query?: string;
-    signal?: AbortSignal;
-};
-
-export async function loadAssetLibraryPage(options: LocalAssetPageOptions) {
-    if (options.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-    const query = options.query?.trim().toLowerCase() || "";
-    const filtered = useAssetStore.getState().assets.filter((asset) => {
-        if (options.kind && asset.kind !== options.kind) return false;
-        if (options.category && asset.category !== options.category) return false;
-        if (options.status && asset.status !== options.status) return false;
-        if (options.folderId && asset.folderId !== options.folderId) return false;
-        if (options.uncategorized && asset.folderId) return false;
-        if (!query) return true;
-        return [asset.title, asset.source, ...(asset.tags || [])].join(" ").toLowerCase().includes(query);
-    });
-    const start = Math.max(0, options.page - 1) * options.pageSize;
-    const countBy = (key: (asset: Asset) => string | undefined) => filtered.reduce<Record<string, number>>((counts, asset) => {
-        const value = key(asset) || "";
-        counts[value] = (counts[value] || 0) + 1;
-        return counts;
-    }, {});
-    return {
-        assets: filtered.slice(start, start + options.pageSize),
-        kindCounts: countBy((asset) => asset.kind),
-        categoryCounts: countBy((asset) => asset.category),
-        folderCounts: countBy((asset) => asset.folderId),
-        page: options.page,
-        pageSize: options.pageSize,
-        total: filtered.length,
-        hasMore: start + options.pageSize < filtered.length,
-    };
-}
-
-export async function loadAssetsForUse(ids: Iterable<string>) {
-    const available = new Set(useAssetStore.getState().assets.map((asset) => asset.id));
-    if ([...new Set(ids)].some((id) => !available.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
+export function loadAssetsForUse(ids: Iterable<string>, expectedScope?: WorkspaceAssetLibraryPageOptions["expectedScope"]) {
+    return loadWorkspaceAssetsForUse(ids, expectedScope);
 }
 
 export function localSavedRemotePendingMessage(localAction: string, error: unknown) {

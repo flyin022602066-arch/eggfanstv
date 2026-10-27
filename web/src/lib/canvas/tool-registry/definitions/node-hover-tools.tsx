@@ -142,7 +142,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
         icon: <WandSparkles className="size-3.5" />,
         defaultVisible: true,
         defaultOrder: 47,
-        nodeToolbar: { group: "more", order: 40, section: "视频处理", description: "生成时间连续的深度动作参考视频" },
+        nodeToolbar: { group: "more", order: 40, section: "视频处理", description: "本地生成深度参考视频；首次需下载组件，CPU 处理可能较慢" },
         applicable: (ctx) => hasVideo(ctx) && !simpleMode(ctx),
         disabled: (ctx) => ctx.trimmingVideo,
         run: (ctx) => ctx.handlers.onNodeDepthCapture(ctx.node!),
@@ -151,13 +151,13 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
         id: "saveAsset",
         toolbar: "node-hover",
         category: "node-state",
-        label: "加入我的素材",
-        displayLabel: "保存到素材库",
+        label: (ctx) => isEditableText(ctx) ? "确认保存文本到个人资产库" : "加入我的素材",
+        displayLabel: (ctx) => isEditableText(ctx) ? "保存文本" : "保存到素材库",
         icon: <FolderPlus className="size-3.5" />,
         defaultVisible: true,
         defaultOrder: 50,
-        nodeToolbar: { group: "more", order: 40, section: "素材" },
-        applicable: (ctx) => hasImage(ctx) || hasVideo(ctx) || isEditableText(ctx),
+        nodeToolbar: { group: (ctx) => isEditableText(ctx) ? "utility" : "more", order: 40, section: "素材" },
+        applicable: (ctx) => hasImage(ctx) || hasVideo(ctx) || hasAudio(ctx) || isEditableText(ctx),
         run: (ctx) => ctx.handlers.onNodeSaveAsset(ctx.node!),
     },
     {
@@ -268,17 +268,13 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
         id: "uploadVideo",
         toolbar: "node-hover",
         category: "node-state",
-        label: (ctx) => hasVideo(ctx) ? "替换视频" : "上传视频",
-        displayLabel: (ctx) => hasVideo(ctx) ? "替换视频" : "上传视频",
+        label: (ctx) => hasVideo(ctx) ? "替换视频" : "上传本地视频",
+        displayLabel: (ctx) => hasVideo(ctx) ? "替换视频" : "上传本地视频",
         icon: <Video className="size-3.5" />,
         defaultVisible: true,
         defaultOrder: 140,
         nodeToolbar: { group: (ctx) => hasVideo(ctx) ? "more" : "primary", order: 45, section: "素材" },
-        // Empty video nodes are generation composers, not upload targets. Keep
-        // the upload affordance only for an existing video where it is a
-        // deliberate "replace" action; the empty node should expose its
-        // prompt composer below the node instead of an upload action above it.
-        applicable: hasVideo,
+        applicable: isVideo,
         run: (ctx) => ctx.handlers.onNodeUpload(ctx.node!),
     },
     {
@@ -291,7 +287,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
         defaultVisible: true,
         defaultOrder: 145,
         nodeToolbar: { group: "primary", order: 20 },
-        applicable: (ctx) => hasVideo(ctx),
+        applicable: (ctx) => hasVideo(ctx) || hasAudio(ctx),
         run: (ctx) => ctx.handlers.onNodeSubtitles(ctx.node!),
     },
     {

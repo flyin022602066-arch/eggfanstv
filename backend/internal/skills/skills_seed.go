@@ -13,6 +13,11 @@ import (
 //go:embed seed/skills.json
 var builtinSkillsJSON []byte
 
+const NovelScreenplaySkillID = "eggfans-novel-screenplay"
+
+//go:embed seed/novel-to-screenplay.md
+var novelScreenplayInstruction string
+
 type seedShowcaseMedia struct {
 	Type        string `json:"type"`
 	ShowcaseURI string `json:"showcase_uri"`
@@ -48,9 +53,9 @@ type builtinSkillDefinition struct {
 
 // EnsureBuiltinSkills 校验并同步内置技能正文；用户关系独立保存，因此重复启动不会清空加入或收藏状态。
 func (s *Service) EnsureBuiltinSkills() error {
-	var definitions []builtinSkillDefinition
-	if err := json.Unmarshal(builtinSkillsJSON, &definitions); err != nil {
-		return fmt.Errorf("解析内置技能失败: %w", err)
+	definitions, err := builtinSkillDefinitions()
+	if err != nil {
+		return err
 	}
 	if len(definitions) == 0 {
 		return fmt.Errorf("内置技能不能为空")
@@ -104,6 +109,20 @@ func (s *Service) EnsureBuiltinSkills() error {
 		return fmt.Errorf("同步内置技能失败: %w", err)
 	}
 	return nil
+}
+
+func builtinSkillDefinitions() ([]builtinSkillDefinition, error) {
+	var definitions []builtinSkillDefinition
+	if err := json.Unmarshal(builtinSkillsJSON, &definitions); err != nil {
+		return nil, fmt.Errorf("解析内置技能失败: %w", err)
+	}
+	return append(definitions, builtinSkillDefinition{
+		SkillID: NovelScreenplaySkillID, SkillName: "小说拆解剧本",
+		Description: "将小说改编为短剧文学剧本，支持原著诊断、人物与结构、分集大纲、正式剧本和连续性检查；正式剧本按集以固定格式保存到画布文本节点。",
+		Instruction: novelScreenplayInstruction, Status: skillStatusEnabled, Source: 3, Tag: "drama", SortWeight: 1100,
+		CreateTime: 1792368000000, UpdateTime: 1792368000000,
+		OwnerUID: "eggfans-builtin", EffectiveUser: seedEffectiveUser{Name: "Eggfans TV", UID: "eggfans-builtin"},
+	}), nil
 }
 
 func (s *Service) EnsureBuiltinSkillsAdded(userID string) error {

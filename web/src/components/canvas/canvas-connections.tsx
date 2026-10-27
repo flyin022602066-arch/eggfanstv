@@ -38,12 +38,12 @@ export const ConnectionPath = React.memo(function ConnectionPath({
     // wires at 10% zoom. Keep the fixture's wires visually faithful without
     // changing the normal interactive connection treatment.
     const denseReadonlyWire = connection.id.startsWith("libtv-dense-");
-    const showVisual = !hideVisual && (visualMode === "full" || hovered) && !denseReadonlyWire;
+    const showVisual = shouldShowConnectionVisual({ visualMode, hovered, hideVisual });
     const showEmphasis = !hideVisual && emphasized && !denseReadonlyWire;
     const gradientId = `canvas-flow-${connection.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
     return (
-        <g>
+        <g data-canvas-connection-id={connection.id}>
             {showEmphasis ? <defs>
                 <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1={startX} y1={startY} x2={endX} y2={endY}>
                     <stop offset="0%" stopColor={theme.node.muted} stopOpacity={0.18} />
@@ -94,23 +94,25 @@ export const ConnectionPath = React.memo(function ConnectionPath({
             {showVisual ? <path
                 d={pathD}
                 stroke={theme.node.muted}
-                strokeWidth={denseReadonlyWire ? 0.35 : emphasized ? 5 : 2.5}
+                strokeWidth={denseReadonlyWire ? 0.75 : emphasized ? 5 : 2.5}
                 vectorEffect="non-scaling-stroke"
-                strokeOpacity={denseReadonlyWire ? 0.08 : emphasized ? 0.18 : 0.1}
+                strokeOpacity={denseReadonlyWire ? 0.12 : emphasized ? 0.18 : 0.1}
                 fill="none"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                strokeDasharray={denseReadonlyWire ? "2 12" : undefined}
                 style={{ pointerEvents: "none" }}
             /> : null}
             {showVisual ? <path
                 d={pathD}
                 stroke={emphasized ? theme.accent.primary : theme.node.muted}
-                strokeWidth={denseReadonlyWire ? 0.35 : emphasized ? 2.8 : 1.5}
+                strokeWidth={denseReadonlyWire ? 0.75 : emphasized ? 2.8 : 1.5}
                 vectorEffect="non-scaling-stroke"
-                strokeOpacity={denseReadonlyWire ? 0.12 : emphasized ? 0.95 : 0.62}
+                strokeOpacity={denseReadonlyWire ? 0.16 : emphasized ? 0.95 : 0.62}
                 fill="none"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                strokeDasharray={denseReadonlyWire ? "2 12" : undefined}
                 style={{ pointerEvents: "none" }}
             /> : null}
             {showVisual ? <>
@@ -158,16 +160,20 @@ export function canvasConnectionPath(connection: CanvasConnection, from: CanvasN
     return { pathD: `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`, startX, startY, endX, endY };
 }
 
-export function activeConnectionPath(node: CanvasNodeData | undefined, handle: ConnectionHandle, mouseWorld: Position, target?: CanvasNodeData, nodeScrollTop = 0) {
+export function shouldShowConnectionVisual({ visualMode, hovered, hideVisual }: { visualMode: "full" | "hover-only"; hovered: boolean; hideVisual: boolean }) {
+    return !hideVisual && (visualMode === "full" || hovered);
+}
+
+export function activeConnectionPath(node: CanvasNodeData | undefined, handle: ConnectionHandle, mouseWorld: Position, target?: CanvasNodeData, nodeScrollTop = 0, targetHandleId?: string, targetScrollTop = 0) {
     if (!node) return "";
     const startX = handle.handleType === "source" ? node.position.x + node.width : mouseWorld.x;
     const startY = handle.handleType === "source" ? connectionHandleY(node, handle.handleId, nodeScrollTop) : mouseWorld.y;
     const endX = handle.handleType === "source" ? mouseWorld.x : node.position.x;
     const endY = handle.handleType === "source" ? mouseWorld.y : connectionHandleY(node, handle.handleId, nodeScrollTop);
     const snappedStartX = handle.handleType === "target" && target ? target.position.x + target.width : startX;
-    const snappedStartY = handle.handleType === "target" && target ? connectionHandleY(target) : startY;
+    const snappedStartY = handle.handleType === "target" && target ? connectionHandleY(target, targetHandleId, targetScrollTop) : startY;
     const snappedEndX = handle.handleType === "source" && target ? target.position.x : endX;
-    const snappedEndY = handle.handleType === "source" && target ? connectionHandleY(target) : endY;
+    const snappedEndY = handle.handleType === "source" && target ? connectionHandleY(target, targetHandleId, targetScrollTop) : endY;
     const distance = Math.abs(snappedEndX - snappedStartX);
     return `M ${snappedStartX} ${snappedStartY} C ${snappedStartX + distance * 0.5} ${snappedStartY}, ${snappedEndX - distance * 0.5} ${snappedEndY}, ${snappedEndX} ${snappedEndY}`;
 }

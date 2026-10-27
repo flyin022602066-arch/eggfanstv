@@ -52,9 +52,14 @@ export type Skill = {
     addedCount: number;
     isTest: boolean;
     extraInfo: string;
+    has15SecondLimit?: boolean;
     isAdded: boolean;
     isOwner: boolean;
 };
+
+export function skillDisplayName(skill: Pick<Skill, "skillName" | "has15SecondLimit">) {
+    return skill.has15SecondLimit ? `${skill.skillName}（含15秒限制）` : skill.skillName;
+}
 
 export type SkillCategory = { value: string; label: string };
 

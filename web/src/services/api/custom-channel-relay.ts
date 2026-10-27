@@ -1,4 +1,5 @@
-import { apiBaseURL } from "@/services/api/request";
+import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
+import { apiBaseURL, apiClient } from "@/services/api/request";
 import { isSystemProxyBaseUrl, MANAGED_BEEFAPI_CREDENTIAL_REF, type AiConfig, type ChannelHeader } from "@/stores/use-config-store";
 
 type RelayConfig = Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat"> & { headers?: ChannelHeader[]; credentialRef?: string };
@@ -12,7 +13,7 @@ export type ChannelRequest = {
 function isManagedEnterpriseRelay(config: Pick<RelayConfig, "baseUrl" | "credentialRef">) {
     if (config.credentialRef === MANAGED_BEEFAPI_CREDENTIAL_REF) return true;
     try {
-        return new URL((config.baseUrl || "").trim()).hostname.toLowerCase() === "enterprise.beefapi.com";
+        return isBeefAPIEndpoint(config.baseUrl || "");
     } catch {
         return false;
     }
@@ -45,6 +46,8 @@ export function channelRequest(config: RelayConfig, upstreamUrl: string, headers
     normalizedHeaders.set("X-Canvas-Upstream-Format", config.apiFormat === "gemini" ? "gemini" : config.apiFormat === "claude" ? "claude" : "openai");
     normalizedHeaders.set("X-Canvas-Upstream-Base-URL", normalizedBaseUrl);
     if (config.headers?.length) normalizedHeaders.set("X-Canvas-Upstream-Headers", encodeChannelHeaders(config.headers));
+    const desktopToken = apiClient.defaults.headers.common["X-Desktop-Token"];
+    if (typeof desktopToken === "string" && desktopToken) normalizedHeaders.set("X-Desktop-Token", desktopToken);
     return {
         url: `${apiBaseURL.replace(/\/+$/u, "")}/ai/custom`,
         headers: Object.fromEntries(normalizedHeaders.entries()),

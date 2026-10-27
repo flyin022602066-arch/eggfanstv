@@ -14,8 +14,8 @@ export const CANVAS_BUILTIN_PRESETS: CanvasPromptPreset[] = [
     {
         id: "character-sheet",
         name: "角色设定图",
-        description: "正面、侧面、背面与表情参考，锁定角色一致性",
-        prompt: "生成角色设定图：保持同一角色身份、五官、发型、服装和体态一致，包含正面、侧面、背面和关键表情参考，背景简洁，便于后续镜头复用。",
+        description: "独立头部特写与不含头部的身体三视图，锁定角色一致性",
+        prompt: "生成同一角色的设定图：左侧为独立头部特写，完整展示头顶、发型、脸型和五官；右侧依次为正面、右侧面、背面身体三视图，仅展示颈部以下至脚底，采用自然画框裁切，三视图区不得出现头部、脸部或头发。保持同一身份、服装、体型、道具、站姿和比例一致，背景简洁；必须同时包含头部特写和三个身体视图，便于后续镜头复用。",
         modes: ["image"],
         source: "builtin",
     },
@@ -70,7 +70,7 @@ export const IMAGE_PROMPT_REVERSE = `请根据参考图片反推一段适合用�
 
 export function workflowStarterPrompt(kind: "character_cards" | "character_three_view" | "storyboard_video", title: string, workflowTitle: string) {
     if (kind === "character_cards") return `请基于「${workflowTitle}」拆分主要角色，并为每个角色生成可用于后续创作的角色图片卡片：外观、服饰、身份、性格和视觉辨识点。`;
-    if (kind === "character_three_view") return `请基于上游角色卡片生成「${title}」：同一角色的正面、侧面、背面三视图，保持服饰、发型、道具和比例一致。`;
+    if (kind === "character_three_view") return `请基于上游角色卡片生成「${title}」的同一张设定图：左侧为独立头部特写，完整展示头顶、发型、脸型和五官；右侧依次为正面、右侧面、背面身体三视图，仅展示颈部以下至脚底，采用自然画框裁切，三视图区不得出现头部、脸部或头发。头部特写和身体三视图必须同时存在，保持同一角色的服装、体型、道具、站姿和比例一致，并遵循项目画风。`;
     return `请基于上游角色三视图，为「${workflowTitle}」制作分镜剧情视频方案：包含镜头顺序、景别、动作、节奏和画面连续性。`;
 }
 

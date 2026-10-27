@@ -3,6 +3,7 @@ import { configureApiRuntime } from "@/services/api/request";
 export type DesktopRuntimeConfig = {
     baseURL: string;
     launchToken: string;
+    uiBootstrapToken?: string;
 };
 
 export const DESKTOP_UPDATE_STATUSES = ["disabled", "idle", "checking", "available", "downloading", "ready", "installing", "error"] as const;
@@ -16,18 +17,37 @@ export type DesktopUpdateState = {
     releaseNotes: string;
     downloadedBytes: number;
     totalBytes: number;
+    bytesPerSecond: number;
+    reconnecting: boolean;
     error: string;
 };
 
 export type DesktopRuntimeBinding = {
+	ReferenceStorageSettings?: () => Promise<ReferenceStorageConfig>;
+	SaveReferenceStorage?: (config: ReferenceStorageConfig & { secretAccessKey: string }) => Promise<ReferenceStorageConfig>;
+	UploadReferenceMedia?: (ids: string[]) => Promise<Record<string,string>>;
+	StorageSettings?: () => Promise<DesktopStorageUsage>;
+	ChooseStorageDirectory?: () => Promise<string>;
+	MigrateStorage?: (target: string) => Promise<DesktopStorageUsage>;
+	CleanupPreviousStorage?: () => Promise<DesktopStorageUsage>;
     RuntimeConfig: () => Promise<DesktopRuntimeConfig>;
     SaveOwnedMedia?: (fileName: string, resourceID: string) => Promise<boolean>;
     SaveOwnedArtifact?: (fileName: string, data: string) => Promise<boolean>;
+    BeginOwnedArtifact?: (fileName: string, size: number) => Promise<string>;
+    AppendOwnedArtifact?: (id: string, offset: number, data: string) => Promise<boolean>;
+    AbortOwnedArtifact?: (id: string) => Promise<void>;
     UpdateStatus?: () => Promise<DesktopUpdateState>;
     CheckForUpdate?: () => Promise<DesktopUpdateState>;
     DownloadUpdate?: () => Promise<DesktopUpdateState>;
     InstallUpdate?: () => Promise<void>;
+    ConfirmUpdateStartup?: () => Promise<void>;
+    OpenBeefTVX?: () => Promise<void>;
+    OpenBeefTVWebsite?: () => Promise<void>;
+    OpenBeefTVGitHub?: () => Promise<void>;
 };
+
+export type DesktopStorageUsage = { dataDir: string; usedBytes: number; freeBytes: number; previousDir?: string; previousBytes?: number };
+export type ReferenceStorageConfig = { enabled: boolean; endpoint: string; bucket: string; region: string; accessKeyId: string; publicBaseURL: string; hasSecret: boolean };
 
 declare global {
     interface Window {
@@ -53,7 +73,7 @@ function isDesktopRuntimeConfig(value: unknown): value is DesktopRuntimeConfig {
 
 export function configureDesktopRuntime(config: DesktopRuntimeConfig) {
     const baseURL = config.baseURL.replace(/\/+$/u, "");
-    configureApiRuntime(baseURL, config.launchToken);
+    configureApiRuntime(baseURL, config.launchToken, config.uiBootstrapToken);
     if (!nativeFetch) nativeFetch = globalThis.fetch.bind(globalThis);
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input, init);

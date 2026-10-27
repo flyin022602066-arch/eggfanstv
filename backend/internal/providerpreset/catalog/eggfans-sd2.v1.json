@@ -1,0 +1,290 @@
+{
+  "id": "eggfans-sd2",
+  "displayName": "EggFans SD2 视频",
+  "baseUrl": "https://vip.eggfans.asia",
+  "catalogProtocol": "openai",
+  "presetVersion": 1,
+  "pinned": false,
+  "models": [
+    {
+      "model": "sd-2.5-A",
+      "capability": "video",
+      "protocol": "eggfans-sd2-video",
+      "capabilityConfig": {
+        "version": 1,
+        "video": {
+          "references": {
+            "promptMaxChars": 15000,
+            "minImages": 0,
+            "maxImages": 30,
+            "maxImageBytes": 31457280,
+            "maxVideos": 10,
+            "maxVideoBytes": 0,
+            "maxVideoDurationSeconds": 0,
+            "maxAudios": 10,
+            "maxAudioBytes": 0,
+            "maxAudioDurationSeconds": 0
+          },
+          "duration": {
+            "selection": "range",
+            "min": 4,
+            "max": 30,
+            "step": 1,
+            "default": 6
+          },
+          "ratios": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ],
+          "defaultRatio": "16:9",
+          "resolutions": [
+            "720p"
+          ],
+          "defaultResolution": "720p",
+          "generateAudio": {
+            "supported": true,
+            "default": true
+          },
+          "watermark": {
+            "supported": false,
+            "default": false
+          },
+          "operations": [
+            "text_to_video",
+            "image_to_video",
+            "reference_to_video"
+          ],
+          "defaultOperation": "text_to_video"
+        }
+      }
+    },
+    {
+      "model": "sd-2.5-B",
+      "capability": "video",
+      "protocol": "eggfans-sd2-video",
+      "capabilityConfig": {
+        "version": 1,
+        "video": {
+          "references": {
+            "promptMaxChars": 15000,
+            "minImages": 0,
+            "maxImages": 30,
+            "maxImageBytes": 31457280,
+            "maxVideos": 10,
+            "maxVideoBytes": 0,
+            "maxVideoDurationSeconds": 0,
+            "maxAudios": 10,
+            "maxAudioBytes": 0,
+            "maxAudioDurationSeconds": 0
+          },
+          "duration": {
+            "selection": "range",
+            "min": 4,
+            "max": 30,
+            "step": 1,
+            "default": 6
+          },
+          "ratios": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ],
+          "defaultRatio": "16:9",
+          "resolutions": [
+            "720p"
+          ],
+          "defaultResolution": "720p",
+          "generateAudio": {
+            "supported": true,
+            "default": true
+          },
+          "watermark": {
+            "supported": false,
+            "default": false
+          },
+          "operations": [
+            "text_to_video",
+            "image_to_video",
+            "reference_to_video"
+          ],
+          "defaultOperation": "text_to_video"
+        }
+      }
+    },
+    {
+      "model": "sd-2.5-C",
+      "capability": "video",
+      "protocol": "eggfans-sd2-video",
+      "capabilityConfig": {
+        "version": 1,
+        "video": {
+          "references": {
+            "promptMaxChars": 15000,
+            "minImages": 0,
+            "maxImages": 30,
+            "maxImageBytes": 31457280,
+            "maxVideos": 10,
+            "maxVideoBytes": 0,
+            "maxVideoDurationSeconds": 0,
+            "maxAudios": 10,
+            "maxAudioBytes": 0,
+            "maxAudioDurationSeconds": 0
+          },
+          "duration": {
+            "selection": "range",
+            "min": 4,
+            "max": 30,
+            "step": 1,
+            "default": 6
+          },
+          "ratios": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ],
+          "defaultRatio": "16:9",
+          "resolutions": [
+            "720p"
+          ],
+          "defaultResolution": "720p",
+          "generateAudio": {
+            "supported": true,
+            "default": true
+          },
+          "watermark": {
+            "supported": false,
+            "default": false
+          },
+          "operations": [
+            "text_to_video",
+            "image_to_video",
+            "reference_to_video"
+          ],
+          "defaultOperation": "text_to_video"
+        }
+      }
+    },
+    {
+      "model": "sd-2.5-D",
+      "capability": "video",
+      "protocol": "eggfans-sd2-video",
+      "capabilityConfig": {
+        "version": 1,
+        "video": {
+          "references": {
+            "promptMaxChars": 15000,
+            "minImages": 0,
+            "maxImages": 30,
+            "maxImageBytes": 31457280,
+            "maxVideos": 10,
+            "maxVideoBytes": 0,
+            "maxVideoDurationSeconds": 0,
+            "maxAudios": 10,
+            "maxAudioBytes": 0,
+            "maxAudioDurationSeconds": 0
+          },
+          "duration": {
+            "selection": "range",
+            "min": 4,
+            "max": 30,
+            "step": 1,
+            "default": 6
+          },
+          "ratios": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ],
+          "defaultRatio": "16:9",
+          "resolutions": [
+            "720p"
+          ],
+          "defaultResolution": "720p",
+          "generateAudio": {
+            "supported": true,
+            "default": true
+          },
+          "watermark": {
+            "supported": false,
+            "default": false
+          },
+          "operations": [
+            "text_to_video",
+            "image_to_video",
+            "reference_to_video"
+          ],
+          "defaultOperation": "text_to_video"
+        }
+      }
+    },
+    {
+      "model": "sd-2.5-E",
+      "capability": "video",
+      "protocol": "eggfans-sd2-video",
+      "capabilityConfig": {
+        "version": 1,
+        "video": {
+          "references": {
+            "promptMaxChars": 15000,
+            "minImages": 0,
+            "maxImages": 30,
+            "maxImageBytes": 31457280,
+            "maxVideos": 10,
+            "maxVideoBytes": 0,
+            "maxVideoDurationSeconds": 0,
+            "maxAudios": 10,
+            "maxAudioBytes": 0,
+            "maxAudioDurationSeconds": 0
+          },
+          "duration": {
+            "selection": "range",
+            "min": 4,
+            "max": 30,
+            "step": 1,
+            "default": 6
+          },
+          "ratios": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ],
+          "defaultRatio": "16:9",
+          "resolutions": [
+            "720p"
+          ],
+          "defaultResolution": "720p",
+          "generateAudio": {
+            "supported": true,
+            "default": true
+          },
+          "watermark": {
+            "supported": false,
+            "default": false
+          },
+          "operations": [
+            "text_to_video",
+            "image_to_video",
+            "reference_to_video"
+          ],
+          "defaultOperation": "text_to_video"
+        }
+      }
+    }
+  ]
+}

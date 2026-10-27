@@ -1,4 +1,5 @@
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { isEggfansSeedanceProtocol } from "@/lib/eggfans-seedance";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -18,6 +19,8 @@ import { createOpenAIVideoTask, pollOpenAIVideoTask } from "./video-provider-ope
 import { createEggfansSd2VideoTask, pollEggfansSd2VideoTask } from "./video-provider-eggfans-sd2";
 import { createSeedanceTask, isSeedanceConfig, pollSeedanceTask } from "./video-provider-seedance";
 import { createVideoTransport } from "./video-transport";
+import { parseBackendGenerationResult, submitBackendGenerationTask } from "./generation-task";
+import { queryGenerationTask } from "./task-center";
 
 export type { VideoGenerationResult, VideoGenerationTask, VideoGenerationTaskState } from "./video-contracts";
 
@@ -39,6 +42,10 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, selectedModel);
+    if (isEggfansSeedanceProtocol(requestConfig.interfaceType) || requestConfig.interfaceType === "jiasu-video" || requestConfig.interfaceType === "mints-seedance-video") {
+        const task = await submitBackendGenerationTask({ mode: "video", config: { ...config, model: selectedModel }, prompt, referenceImages: references, referenceVideos: videoReferences, referenceAudios: audioReferences, signal: options?.signal, metadata: { videoEditOperation: options?.videoEditOperation, videoStartFrameNodeId: options?.videoStartFrameNodeId, videoEndFrameNodeId: options?.videoEndFrameNodeId } });
+        return { id: task.id, provider: "backend", model: selectedModel };
+    }
     [videoReferences, audioReferences] = await Promise.all([Promise.all(videoReferences.map(resolveReferenceMediaDuration)), Promise.all(audioReferences.map(resolveReferenceMediaDuration))]);
     assertVideoCapability(modelCapabilityConfigFor(config, selectedModel).video!, references, videoReferences, audioReferences, config.videoSeconds);
     const deps: VideoProviderDeps = { transport: createVideoTransport(requestConfig), response: videoResponseTools };
@@ -54,6 +61,15 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    if (task.provider === "backend") {
+        const current = await queryGenerationTask(task.id, options);
+        if (current.status === "failed" || current.status === "cancelled") return { status: "failed", error: current.error || "视频生成已取消或失败" };
+        if (current.status !== "succeeded") return { status: "pending" };
+        const video = parseBackendGenerationResult(current).video;
+        const url = video?.url || video?.dataUrl;
+        if (!url) throw new Error("后端任务没有返回可播放的视频");
+        return { status: "completed", result: { url, mimeType: video?.mimeType || "video/mp4" } };
+    }
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, task.model);
     const deps: VideoProviderDeps = { transport: createVideoTransport(requestConfig), response: videoResponseTools };

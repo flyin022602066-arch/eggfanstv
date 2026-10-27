@@ -28,6 +28,7 @@ const (
 	CategoryModerationReference FailureCategory = "moderation_reference"
 	CategoryModerationOutput    FailureCategory = "moderation_output"
 	CategoryInvalidParams       FailureCategory = "invalid_params"
+	CategoryLocalStorage        FailureCategory = "local_storage"
 	CategoryContextTooLong      FailureCategory = "context_too_long"
 	CategoryInputInaccessible   FailureCategory = "input_inaccessible"
 	CategoryInputTooLarge       FailureCategory = "input_too_large"
@@ -42,6 +43,7 @@ const (
 	CategoryCancelled           FailureCategory = "cancelled"
 	CategoryPartialSuccess      FailureCategory = "partial_success"
 	CategoryDownloadFailed      FailureCategory = "download_failed"
+	CategoryDeliveryFailed      FailureCategory = "delivery_failed"
 	CategoryResultsMissing      FailureCategory = "results_missing"
 	CategoryMalformedResponse   FailureCategory = "malformed_response"
 	CategoryUnknown             FailureCategory = "unknown"
@@ -80,7 +82,7 @@ type categoryCopy struct {
 var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryAuth:                {Reason: "模型服务鉴权失败", Action: "请检查 API Key 后重试"},
 	CategoryPermission:          {Reason: "当前渠道没有使用该模型的权限", Action: "请更换模型或检查渠道权限"},
-	CategoryQuotaUser:           {Reason: "当前账号额度不足", Action: "请检查账号余额，或联系管理员调整额度后重试"},
+	CategoryQuotaUser:           {Reason: "当前账号可用额度不足", Action: "请检查账号余额，补充额度或调整令牌、套餐额度后重试"},
 	CategoryQuotaUpstream:       {Reason: "模型供应商拒绝了计费或额度相关请求", Action: "请到供应商核对账单与额度后，再决定是否重试"},
 	CategoryQuotaUnknown:        {Reason: "模型服务拒绝了计费或额度相关请求", Action: "请到当前渠道或模型供应商核对账单与额度后，再决定是否重试"},
 	CategoryQuotaLimit:          {Reason: "模型调用已达到设置的用量上限", Action: "请检查当前渠道的用量或预算限制，调整后再试"},
@@ -88,6 +90,7 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryModerationReference: {Reason: "参考素材未通过内容安全审核", Action: "请检查并更换参考素材后重新生成"},
 	CategoryModerationOutput:    {Reason: "生成结果未通过内容安全审核", Action: "请调整提示词或参考素材后重新生成"},
 	CategoryInvalidParams:       {Reason: "模型不接受当前参数", Action: "请检查模型、尺寸、时长、格式或数量后重试"},
+	CategoryLocalStorage:        {Reason: "本地数据库无法读写", Action: "请重启应用；若仍失败，请保留排查信息并联系支持，不要重复生成"},
 	CategoryContextTooLong:      {Reason: "输入内容超出模型长度限制", Action: "请缩短提示词或减少参考内容后重试"},
 	CategoryInputInaccessible:   {Reason: "参考素材无法读取", Action: "请检查素材后重试"},
 	CategoryInputTooLarge:       {Reason: "参考素材过大", Action: "请压缩或更换素材后重试"},
@@ -102,12 +105,14 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryCancelled:           {Reason: "任务已取消", Action: "可按原输入重新提交"},
 	CategoryPartialSuccess:      {Reason: "部分结果已生成，其余失败", Action: "请查看已有结果后再决定是否补做"},
 	CategoryDownloadFailed:      {Reason: "生成结果下载失败", Action: "请稍后重新加载，不要立即重新提交"},
+	CategoryDeliveryFailed:      {Reason: "视频已生成，但暂时无法取回", Action: "请联系支持恢复成片，恢复后点击「取回结果」；无需重新付费生成"},
 	CategoryResultsMissing:      {Reason: "任务结束但没有可用结果", Action: "请查看详情后再决定是否重试"},
 	CategoryMalformedResponse:   {Reason: "模型服务返回了无法解析的内容", Action: "请查看详情并核对原任务状态后，再决定是否重新生成"},
 	CategoryUnknown:             {Reason: "生成失败", Action: "请查看详情后再决定是否重试"},
 }
 
 var (
+	localDatabaseErrorPattern = regexp.MustCompile(`(?i)(?:^|:\s*)(?:table\s+[a-z0-9_]+\s+has no column named\s+[a-z0-9_]+|no such (?:column|table):\s*[a-z0-9_.]+|(?:UNIQUE|NOT NULL|CHECK) constraint failed:\s*\S+|FOREIGN KEY constraint failed|database (?:is locked|is malformed)|database disk image is malformed|attempt to write a readonly database|disk I/O error)(?:\b|$)`)
 	htmlBodyPattern           = regexp.MustCompile(`(?is)^\s*(?:<!doctype|<html|<head|<body)`)
 	httpStatusPattern         = regexp.MustCompile(`(?i)(?:HTTP\s+|status(?:\s+code)?\s*[:：]?\s*)(\d{3})\b`)
 	wrappedHTTPStatusPattern  = regexp.MustCompile(`(?i)Request failed with status code\s+(\d{3})`)
@@ -126,15 +131,27 @@ var (
 	pixelRangePattern         = regexp.MustCompile(`(?i)(?:pixel(?:s)?(?:\s+count)?|total\s+pixels)\s+(?:must\s+be|should\s+be)\s+between\s+(\d+)\s+and\s+(\d+)`)
 	requestTooLargePattern    = regexp.MustCompile(`(?i)(?:request\s+(?:body|entity|payload)|payload)\s+(?:is\s+)?too\s+large|(?:request|payload).{0,24}(?:exceeds?|larger than)`)
 	singleFileTooLargePattern = regexp.MustCompile(`(?i)(?:file|image|video|audio)\s+too\s+large|(?:file|image|video|audio).{0,24}(?:exceeds?|larger than)\s+\d+`)
+	assetURIUnsupportedPattern = regexp.MustCompile(`(?i)^(?:(?:content\[\d+\]\s+)?暂?不支持\s+asset://\s+素材引用|当前视频接口不支持\s+asset://\s+图片 URI)(?:[，。,;；\s]|$)`)
 )
 
+var missingPrivateRoutePattern = regexp.MustCompile(`^((?:(?:创建|查询|读取|更新|删除)私域素材组?|上传私域素材|创建真人认证会话|获取真人素材组|私域素材同步)失败（HTTP 404，(?:POST|GET|PATCH|DELETE) /v1/(?:private-avatar/(?:groups|assets)(?:/list)?|real-avatar/(?:auth/session|groups/from-token))）：当前渠道不支持请求的接口)。请联系 Eggfans 网关维护者确认并开通私域素材接口后重试(?:。|$)`)
+
+var connectionFailurePattern = regexp.MustCompile(`^((?:视频|图片|模型)接口连接(?:超时|失败)（(?:域名解析|TCP 连接|TLS 握手|发送请求|等待响应|连接接口)），请求尚未发送)。请检查渠道地址、网络或代理后重试(?:。|$)`)
+var submissionFailurePattern = regexp.MustCompile(`^((?:视频|图片|模型)提交未确认（(?:发送请求|等待响应)(?:超时|失败)），尚未取得上游任务 ID)。请先核对渠道后台记录，再决定是否重新提交(?:。|$)`)
+var referencePreparationFailurePattern = regexp.MustCompile(`^((?:参考图片|参考视频|参考音频) [0-9]+/[0-9]+ 准备(?:超时|失败)，视频请求尚未发送)。请检查 Uguu 图床连接或本地素材后重试(?:。|$)`)
+
 var providerCodeCategories = map[string]FailureCategory{
-	"contentsecuritydetectionerror":    CategoryProviderUnavailable,
-	"accountoverdueerror":              CategoryQuotaUpstream,
-	"operationdenied.serviceoverdue":   CategoryQuotaUpstream,
-	"setlimitexceeded":                 CategoryQuotaLimit,
-	"inflightbatchsizeexceeded":        CategoryConcurrency,
-	"modelnotopen":                     CategoryPermission,
+	"local_storage_failed":           CategoryLocalStorage,
+	"contentsecuritydetectionerror":  CategoryProviderUnavailable,
+	"accountoverdueerror":            CategoryQuotaUpstream,
+	"operationdenied.serviceoverdue": CategoryQuotaUpstream,
+	"setlimitexceeded":               CategoryQuotaLimit,
+	"inflightbatchsizeexceeded":      CategoryConcurrency,
+	"modelnotopen":                   CategoryPermission,
+	// 中转网关（ai-claude-code-hub）实测码：403 model_not_allowed =「当前账号未开通模型 X」，
+	// 与 modelnotopen 同义。必须显式登记：通用启发式按 "model_not" 前缀会把它归成
+	// model_missing，进而提示「请检查模型名称和渠道配置」—— 而模型名是对的，缺的是账号开通。
+	"model_not_allowed":                CategoryPermission,
 	"operationdenied.servicenotopen":   CategoryPermission,
 	"invalid_api_key":                  CategoryAuth,
 	"invalid_authentication":           CategoryAuth,
@@ -164,6 +181,7 @@ var providerCodeCategories = map[string]FailureCategory{
 	"safety":                           CategoryModerationInput,
 	"blocked_reason_safety":            CategoryModerationInput,
 	"invalid_request":                  CategoryInvalidParams,
+	"invalid_reference_video":          CategoryInvalidParams,
 	"invalid_request_error":            CategoryInvalidParams,
 	"invalid_parameter":                CategoryInvalidParams,
 	"invalidparameter":                 CategoryInvalidParams,
@@ -188,6 +206,7 @@ var providerCodeCategories = map[string]FailureCategory{
 	"invalid_model":                    CategoryModelMissing,
 	"not_found":                        CategoryModelMissing,
 	"model_catalog_mismatch":           CategoryModelMissing,
+	"model_temporarily_unavailable":    CategoryProviderUnavailable,
 	"model_route_unavailable":          CategoryProviderUnavailable,
 	"rate_limit_exceeded":              CategoryThrottled,
 	"rate_limit_error":                 CategoryThrottled,
@@ -210,6 +229,12 @@ var providerCodeCategories = map[string]FailureCategory{
 	"provider_query_failed":            CategoryAsyncFailed,
 	"provider_submission_unknown":      CategorySubmissionUncertain,
 	"video_submission_unknown":         CategorySubmissionUncertain,
+	"video_delivery_failed":            CategoryDeliveryFailed,
+	"image_result_unknown":             CategorySubmissionUncertain,
+	"image_submission_pending":         CategorySubmissionUncertain,
+	"image_result_expired":             CategorySubmissionUncertain,
+	"image_result_unavailable":         CategorySubmissionUncertain,
+	"idempotency_conflict":             CategorySubmissionUncertain,
 	"provider_reference_invalid":       CategoryInputInaccessible,
 	"rate_limited":                     CategoryThrottled,
 	"bad_gateway":                      CategoryProviderUnavailable,
@@ -358,6 +383,17 @@ func (e PayloadError) Error() string {
 func ClassifyHTTP(status int, statusText string, body string) Failure {
 	failure := ClassifyText(body)
 	failure.HTTPStatus = status
+	if status == http.StatusNotFound && genericProviderCode(failure.ProviderCode) && (failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams) && strings.HasPrefix(strings.ToLower(strings.TrimSpace(failure.ProviderMessage)), "invalid url") {
+		failure.Category = CategoryModelMissing
+		failure.Reason = "当前渠道不支持请求的接口"
+		failure.Action = "请检查接口地址或联系渠道维护者确认接口支持"
+	}
+	// Reservation failures also use HTTP 503; only explicit funding rejection identifies caller quota.
+	if status == 402 && failure.ProviderCode == "video_reservation_failed" && strings.HasPrefix(failure.ProviderMessage, "insufficient balance for this video request") {
+		failure.Category = CategoryQuotaUser
+		failure.FromCode = true
+		failure.Reason, failure.Action = "", ""
+	}
 	if failure.Category != CategoryUnknown && !failure.FromCode && ((status != 0 && !trustProviderMessageStatus(status)) || (htmlBodyPattern.MatchString(strings.TrimSpace(body)) && status >= 400)) {
 		failure.Category = CategoryUnknown
 		failure.Reason = ""
@@ -379,6 +415,15 @@ func ClassifyHTTP(status int, statusText string, body string) Failure {
 		failure.Uncertain = true
 		failure.Reason = "模型服务响应超时，请求可能仍在服务端执行"
 		failure.Action = "请先查询原任务或到供应商核对状态，不要立即重新提交"
+	}
+	// 网关把**上游**的 404 透传过来（实测「请求路径或资源不存在：上游未找到对应端点」）：
+	// 模型名与请求路径都正确，只是这一跳被路由到了没有该端点的上游 —— 换个上游就能过。
+	// 必须显式覆盖：404 不在 trustProviderMessageStatus 白名单里，消息级判定会被丢弃，
+	// 最终落到 404 → model_missing，提示用户去「检查模型名称和渠道配置」，属于误导。
+	if status == http.StatusNotFound && mentionsMissingUpstreamEndpoint(body) {
+		failure.Category = CategoryProviderUnavailable
+		failure.Reason = ""
+		failure.Action = ""
 	}
 	_ = statusText
 	return normalizeFailure(failure)
@@ -404,6 +449,27 @@ func ClassifyError(err error) Failure {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return normalizeFailure(Failure{Category: CategoryTimeout, Uncertain: true, Reason: "模型服务响应超时，请求可能仍在执行", Action: "请先查询原任务，不要立即重新提交"})
+	}
+	var circuit CircuitOpenError
+	if errors.As(err, &circuit) {
+		return CircuitOpenFailure()
+	}
+	var decode ResponseDecodeError
+	if errors.As(err, &decode) {
+		failure := ClassifyError(decode.Err)
+		if failure.Category == CategoryUnknown {
+			failure = ClassifyText(decode.Error())
+		}
+		if failure.Category == CategoryUnknown {
+			failure.Category = CategoryMalformedResponse
+			failure.Reason = ""
+			failure.Action = ""
+		}
+		return normalizeFailure(failure)
+	}
+	var unknown SubmissionUnknownError
+	if errors.As(err, &unknown) {
+		return normalizeFailure(Failure{Category: CategorySubmissionUncertain, Uncertain: true, Retryable: false})
 	}
 	var pending StatePendingError
 	if errors.As(err, &pending) {
@@ -431,11 +497,40 @@ func ClassifyError(err error) Failure {
 	return ClassifyText(err.Error())
 }
 
+func persistedMissingPrivateRoute(text string) (Failure, bool) {
+	match := missingPrivateRoutePattern.FindStringSubmatch(text)
+	if len(match) != 2 {
+		return Failure{}, false
+	}
+	requestID, taskID := persistedReferenceIDs(text)
+	return normalizeFailure(Failure{
+		Category: CategoryModelMissing, Reason: match[1], HTTPStatus: http.StatusNotFound,
+		Action:    "请联系 Eggfans 网关维护者确认并开通私域素材接口后重试",
+		RequestID: requestID, TaskID: taskID,
+	}), true
+}
+
 func ClassifyText(raw string) Failure {
+	if copy, ok := persistedTaskConstraintCopy(raw); ok {
+		requestID, taskID := persistedReferenceIDs(raw)
+		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID})
+	}
 	failure := Failure{Category: CategoryUnknown}
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		return normalizeFailure(failure)
+	}
+	if persisted, ok := persistedMissingPrivateRoute(text); ok {
+		return persisted
+	}
+	if match := connectionFailurePattern.FindStringSubmatch(text); len(match) == 2 {
+		return normalizeFailure(Failure{Category: CategoryNetwork, Reason: match[1], Action: "请检查渠道地址、网络或代理后重试"})
+	}
+	if match := referencePreparationFailurePattern.FindStringSubmatch(text); len(match) == 2 {
+		return normalizeFailure(Failure{Category: CategoryInputInaccessible, Reason: match[1], Action: "请检查 Uguu 图床连接或本地素材后重试"})
+	}
+	if match := submissionFailurePattern.FindStringSubmatch(text); len(match) == 2 {
+		return normalizeFailure(Failure{Category: CategorySubmissionUncertain, Uncertain: true, Reason: match[1], Action: "请先核对渠道后台记录，再决定是否重新提交"})
 	}
 	if f, ok := persistedModerationCopy(text); ok {
 		f.RequestID, f.TaskID = persistedReferenceIDs(text)
@@ -460,7 +555,22 @@ func ClassifyText(raw string) Failure {
 		return normalizeFailure(Failure{Category: CategoryMalformedResponse})
 	}
 	fields := extractProviderFields(text)
+	// Inspect only the error message, never JSON request echoes or debug fields.
+	databaseMessage := text
+	if fields.hasStructured() || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+		databaseMessage = fields.Message
+	}
+	if localDatabaseErrorPattern.MatchString(databaseMessage) {
+		return normalizeFailure(Failure{Category: CategoryLocalStorage, FromCode: true, RequestID: sanitizeDebugID(fields.RequestID), TaskID: sanitizeDebugID(fields.TaskID)})
+	}
 	if fields.hasStructured() {
+		if genericProviderCode(fields.Code) || fields.Code == string(CategoryModelMissing) {
+			if persisted, ok := persistedMissingPrivateRoute(fields.Message); ok {
+				persisted.RequestID = firstNonEmpty(persisted.RequestID, sanitizeDebugID(fields.RequestID))
+				persisted.TaskID = firstNonEmpty(persisted.TaskID, sanitizeDebugID(fields.TaskID))
+				return persisted
+			}
+		}
 		if strings.EqualFold(fields.Code, "invalid_reference_audio") {
 			copy, _ := referenceAudioCopy(fields.Message, true)
 			return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: fields.RequestID, TaskID: fields.TaskID, ProviderCode: fields.Code, Structured: true, FromCode: true})
@@ -482,6 +592,7 @@ func ClassifyText(raw string) Failure {
 			specializeThinkingToolChoice(&failure, fields)
 			specializeDurationRange(&failure, fields)
 			specializeMediaConstraints(&failure, fields)
+			specializeAssetURI(&failure, fields)
 			return normalizeFailure(failure)
 		}
 		if category, ok := categoryFromProviderMessage(fields.Message + " " + fields.Type + " " + fields.Status); ok {
@@ -490,6 +601,7 @@ func ClassifyText(raw string) Failure {
 			specializeThinkingToolChoice(&failure, fields)
 			specializeDurationRange(&failure, fields)
 			specializeMediaConstraints(&failure, fields)
+			specializeAssetURI(&failure, fields)
 			return normalizeFailure(failure)
 		}
 		// JSON request echoes and debug fields are never classification input.
@@ -498,6 +610,15 @@ func ClassifyText(raw string) Failure {
 	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
 		failure.Structured = true
 		return normalizeFailure(failure)
+	}
+	if copy, ok := assetURIUnsupportedCopy(text); ok {
+		requestID, taskID := persistedReferenceIDs(text)
+		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID})
+	}
+	if copy, ok := outboundPolicyCopy(text); ok {
+		requestID, taskID := persistedReferenceIDs(text)
+		return normalizeFailure(Failure{Category: CategoryNetwork, Reason: copy.Reason, Action: copy.Action,
+			Structured: true, RequestID: requestID, TaskID: taskID, HTTPStatus: extractExplicitHTTPStatus(text)})
 	}
 	if matched := matchPersistedCategory(text); matched != CategoryUnknown {
 		failure.Category = matched
@@ -570,7 +691,7 @@ func ClassifyAppError(status int, code int, reason string, message string) Failu
 }
 
 func WithDownloadFailure(failure Failure, taskID string) Failure {
-	if failure.Category == CategoryAuth || failure.Category == CategoryPermission || failure.IsModeration() || failure.Category == CategoryInvalidParams {
+	if failure.Category == CategoryAuth || failure.Category == CategoryPermission || failure.IsModeration() || failure.Category == CategoryInvalidParams || failure.Category == CategoryDeliveryFailed {
 		failure.TaskID = firstNonEmpty(failure.TaskID, taskID)
 		return normalizeFailure(failure)
 	}
@@ -695,6 +816,30 @@ func walkProviderFields(payload map[string]any, depth int) extractedFields {
 			fields.Message = firstNonEmpty(fields.Message, "blocked by content safety policy")
 		}
 	}
+	// Gateways may wrap original error JSON inside message. Stay within the
+	// allowlisted error fields and depth bound; keep authoritative outer codes.
+	outerCategory, outerKnown := categoryFromProviderCode(fields.Code, fields.Type, fields.Status)
+	if !outerKnown {
+		for _, value := range []string{fields.Code, fields.Status} {
+			if status, err := strconv.Atoi(value); err == nil {
+				if category, ok := categoryFromHTTPStatus(status); ok {
+					outerCategory, outerKnown = category, true
+					break
+				}
+			}
+		}
+	}
+	if genericProviderCode(fields.Code) && (!outerKnown || outerCategory == CategoryInvalidParams || outerCategory == CategoryUnknown) && strings.HasPrefix(strings.TrimSpace(fields.Message), "{") {
+		var nested map[string]any
+		if json.Unmarshal([]byte(fields.Message), &nested) == nil {
+			child := walkProviderFields(nested, depth+1)
+			if child.Code != "" || child.Message != "" {
+				child.RequestID = firstNonEmpty(fields.RequestID, child.RequestID)
+				child.TaskID = firstNonEmpty(fields.TaskID, child.TaskID)
+				fields = mergeExtracted(child, fields)
+			}
+		}
+	}
 	return fields
 }
 
@@ -795,8 +940,21 @@ func categoryFromProviderCode(values ...string) (FailureCategory, bool) {
 	return "", false
 }
 
+// missingUpstreamEndpointPattern 匹配网关透传的「上游没有对应端点」文案
+// （实测：「请求路径或资源不存在：上游未找到对应端点」）。
+var missingUpstreamEndpointPattern = regexp.MustCompile(`未找到对应端点|请求路径或资源不存在|endpoint not found`)
+
+// mentionsMissingUpstreamEndpoint 判断这段响应是不是「这一跳的上游没有该端点」。
+// 这类 404 与「模型名写错」必须分开：前者换一跳就通，应可重试。
+func mentionsMissingUpstreamEndpoint(body string) bool {
+	return missingUpstreamEndpointPattern.MatchString(strings.ToLower(body))
+}
+
 func categoryFromProviderMessage(raw string) (FailureCategory, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(promptEchoPattern.ReplaceAllString(raw, "")))
+	if _, ok := taskConstraintCopy(normalized); ok {
+		return CategoryInvalidParams, true
+	}
 	if normalized == "" {
 		return "", false
 	}
@@ -809,6 +967,8 @@ func categoryFromProviderMessage(raw string) (FailureCategory, bool) {
 		heightRangePattern.MatchString(normalized),
 		aspectRangePattern.MatchString(normalized),
 		pixelRangePattern.MatchString(normalized):
+		return CategoryInvalidParams, true
+	case assetURIUnsupportedMessage(normalized):
 		return CategoryInvalidParams, true
 	case requestTooLargePattern.MatchString(normalized) || singleFileTooLargePattern.MatchString(normalized) || strings.HasPrefix(normalized, "整次请求的数据量超过接口上限"):
 		return CategoryInputTooLarge, true
@@ -827,6 +987,12 @@ func categoryFromProviderMessage(raw string) (FailureCategory, bool) {
 		return CategoryThrottled, true
 	case strings.Contains(normalized, "context length") || strings.Contains(normalized, "maximum context") || strings.Contains(normalized, "too many tokens") || strings.Contains(normalized, "max_tokens") || strings.Contains(normalized, "长度") && (strings.Contains(normalized, "最大") || strings.Contains(normalized, "超出")):
 		return CategoryContextTooLong, true
+	case strings.Contains(normalized, "未找到对应端点") || strings.Contains(normalized, "请求路径或资源不存在") || strings.Contains(normalized, "endpoint not found"):
+		// 中转网关把**上游**的 404 透传过来（实测文案：「请求路径或资源不存在：上游未找到对应端点」）。
+		// 此时模型名与请求路径都正确，只是这一跳被路由到了没有该端点的上游 —— 换个上游就能过。
+		// 必须判定为「供应商不可用（可重试）」；否则会落到 404 → model_missing 的兜底，
+		// 把用户引向「检查模型名称和渠道配置」，而那是误导。
+		return CategoryProviderUnavailable, true
 	case strings.Contains(normalized, "model_not_found") || strings.Contains(normalized, "model not found") || strings.Contains(normalized, "does not exist") && strings.Contains(normalized, "model") || strings.Contains(normalized, "模型不存在") || strings.Contains(normalized, "模型或模型接口不存在"):
 		return CategoryModelMissing, true
 	case strings.Contains(normalized, "invalid api key") || strings.Contains(normalized, "incorrect api key") || strings.Contains(normalized, "authentication") || strings.Contains(normalized, "unauthorized") || strings.Contains(normalized, "鉴权失败"):
@@ -957,7 +1123,27 @@ func referenceDurationCopy(text string) (categoryCopy, bool) {
 }
 
 func specializeMediaConstraints(failure *Failure, fields extractedFields) {
+	if failure.Category != CategoryUnknown && failure.Category != CategoryInvalidParams && failure.Category != CategoryInputTooLarge && failure.Category != CategoryInputInaccessible {
+		return
+	}
 	message := promptEchoPattern.ReplaceAllString(fields.Message, "")
+	if failure.Category == CategoryInvalidParams || failure.Category == CategoryUnknown {
+		if copy, ok := persistedTaskConstraintCopy(message); ok {
+			failure.Category, failure.Reason, failure.Action = CategoryInvalidParams, copy.Reason, copy.Action
+			requestID, taskID := persistedReferenceIDs(message)
+			if failure.RequestID == "" {
+				failure.RequestID = requestID
+			}
+			if failure.TaskID == "" {
+				failure.TaskID = taskID
+			}
+			return
+		}
+		if copy, ok := taskConstraintCopy(fields.Code + " " + message); ok {
+			failure.Category, failure.Reason, failure.Action = CategoryInvalidParams, copy.Reason, copy.Action
+			return
+		}
+	}
 	if copy, ok := referenceMediaConstraintCopy(message); ok {
 		if strings.Contains(copy.Reason, "过大") {
 			failure.Category = CategoryInputTooLarge
@@ -989,7 +1175,7 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 	if match := pixelRangePattern.FindStringSubmatch(message); len(match) == 3 {
 		failure.Category = CategoryInvalidParams
 		failure.Reason = "参考素材像素总量不符合模型要求"
-		failure.Action = "请调整尺寸或更换后再提交"
+		failure.Action = fmt.Sprintf("请将参考素材的宽×高调整到 %s–%s 像素；修改生成分辨率不会改变参考素材", match[1], match[2])
 		return
 	}
 	if requestTooLargePattern.MatchString(message) || strings.EqualFold(fields.Code, "video_request_body_too_large") || strings.HasPrefix(message, "整次请求的数据量超过接口上限") {
@@ -1005,9 +1191,95 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 	}
 }
 
+func specializeAssetURI(failure *Failure, fields extractedFields) {
+	if failure.Category != CategoryInvalidParams {
+		return
+	}
+	if copy, ok := assetURIUnsupportedCopy(fields.Message); ok {
+		failure.Reason = copy.Reason
+		failure.Action = copy.Action
+		requestID, taskID := persistedReferenceIDs(fields.Message)
+		failure.RequestID = firstNonEmpty(failure.RequestID, requestID)
+		failure.TaskID = firstNonEmpty(failure.TaskID, taskID)
+	}
+}
+
+func assetURIUnsupportedMessage(text string) bool {
+	return assetURIUnsupportedPattern.MatchString(text)
+}
+
+func assetURIUnsupportedCopy(text string) (categoryCopy, bool) {
+	if !assetURIUnsupportedMessage(sanitizeProviderText(text)) {
+		return categoryCopy{}, false
+	}
+	return categoryCopy{
+		Reason: "当前视频接口不支持 asset:// 图片 URI",
+		Action: "请联系 Eggfans 网关维护者开通私域资产引用，或配置支持该 URI 的视频接口后再生成",
+	}, true
+}
+
 func referenceMediaConstraintCopy(text string) (categoryCopy, bool) {
+	if strings.HasPrefix(text, "当前渠道需要在线素材链接：") {
+		reason, action, _ := strings.Cut(text, "。")
+		return categoryCopy{Reason: reason, Action: action}, true
+	}
+	if strings.Contains(text, "当前模型协议要求公网素材地址") || strings.Contains(text, "当前 JSON 视频协议的参考素材不能使用内嵌数据") {
+		return categoryCopy{Reason: "当前渠道暂不支持直接使用本地素材", Action: "请使用可访问的 HTTPS 素材链接，或选择支持本地素材的渠道"}, true
+	}
+	if strings.HasPrefix(text, "当前渠道暂不支持直接使用本地素材") {
+		return categoryCopy{Reason: "当前渠道暂不支持直接使用本地素材", Action: "请使用可访问的 HTTPS 素材链接，或选择支持本地素材的渠道"}, true
+	}
+	if m := regexp.MustCompile(`^(当前模型(?:暂不支持参考(?:图片|视频|音频)|最多支持 \d+ 个参考(?:图片|视频|音频)))[，。](请[^\n]+)`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: m[1], Action: m[2]}, true
+	}
+	text = strings.SplitN(text, "。排查编号：", 2)[0]
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频帧率无法读取)`).FindStringSubmatch(text); len(m) == 2 {
+		return categoryCopy{Reason: m[1], Action: "请重新导出 MP4/MOV 视频后上传，确保文件完整且包含有效的视频轨"}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频平均帧率为 \d+(?:\.\d+)? FPS)[，。](?:需要 |请将参考视频重新导出为 )(\d+)–(\d+) FPS`).FindStringSubmatch(text); len(m) == 4 {
+		return categoryCopy{Reason: m[1], Action: "请将参考视频重新导出为 " + m[2] + "–" + m[3] + " FPS 后再提交"}, true
+	}
+	if m := regexp.MustCompile(`(?i)^(?:素材转换失败:\s*)?(?:frame rate|framerate|fps) must be between (\d+(?:\.\d+)?)\s*(?:fps)? and (\d+(?:\.\d+)?)[.\s]*$`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: "参考视频帧率不符合要求", Action: "请将参考视频重新导出为 " + m[1] + "–" + m[2] + " FPS 后再提交"}, true
+	}
+	if strings.HasPrefix(text, "参考视频帧率不符合要求。请将参考视频重新导出为 ") {
+		parts := strings.SplitN(text, "。", 2)
+		return categoryCopy{Reason: parts[0], Action: parts[1]}, true
+	}
+	if regexp.MustCompile(`(?i)^(?:(?:素材转换失败:\s*)?(?:unsupported (?:video |audio )?codec|(?:video |audio )?codec (?:is )?not supported)[.\s]*$|参考素材编码不受当前模型支持。)`).MatchString(text) {
+		return categoryCopy{Reason: "参考素材编码不受当前模型支持", Action: "请将视频重新导出为常见的 H.264 MP4，音频重新导出为 MP3 或 WAV 后替换素材；只修改文件后缀无效"}, true
+	}
+	if regexp.MustCompile(`(?i)^(?:asset (?:is )?(?:not ready|still processing)[.\s]*$|参考素材仍在处理中。)`).MatchString(text) {
+		return categoryCopy{Reason: "参考素材仍在处理中", Action: "请在素材库确认处理完成后再生成，不要重复上传或反复提交"}, true
+	}
+	if regexp.MustCompile(`(?i)^(?:asset (?:access denied|permission denied|forbidden)[.\s]*$|无权访问参考素材。)`).MatchString(text) {
+		return categoryCopy{Reason: "无权访问参考素材", Action: "请使用上传该素材的账号与渠道，或重新上传原文件；检查素材权限，无需修改提示词"}, true
+	}
+	if m := regexp.MustCompile(`^(参考素材像素总量不符合模型要求)。((?:请将参考素材的宽×高调整到) \d+–\d+ 像素[^{}]*)$`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: m[1], Action: m[2]}, true
+	}
+
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频(?:无法读取|格式或地址不支持|文件过大|尺寸为 \d+×\d+|时长为 \d+(?:\.\d+)? 秒|像素总量为 \d+（\d+×\d+）))[。]([^{}]+)$`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: m[1], Action: m[2]}, true
+	}
+
 	if m := regexp.MustCompile(`^参考素材(宽度|高度|宽高比)不符合模型要求。请将(?:宽度|高度|宽高比)调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)( 像素| )后重新提交`).FindStringSubmatch(text); len(m) == 5 {
 		return categoryCopy{Reason: "参考素材" + m[1] + "不符合模型要求", Action: "请将" + m[1] + "调整为 " + m[2] + "–" + m[3] + m[4] + "后重新提交"}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频时长为 \d+(?:\.\d+)? 秒)，需要 (\d+)–(\d+) 秒`).FindStringSubmatch(text); len(m) == 4 {
+		return categoryCopy{Reason: m[1], Action: "请将这段参考视频裁剪或更换为 " + m[2] + "–" + m[3] + " 秒"}, true
+	}
+	if m := regexp.MustCompile(`^第 (\d+) 个参考视频[：:]?(?:参考视频)?(?:尺寸|时长)?(?:下载失败|无法读取|无法完整读取|数据无法读取|分段读取失败|在读取期间发生变化|时长无法读取|尺寸无法读取)`).FindStringSubmatch(text); len(m) == 2 {
+		return categoryCopy{Reason: "第 " + m[1] + " 个参考视频无法读取", Action: "请检查素材链接，或重新导出 MP4/MOV 文件后导入"}, true
+	}
+	if m := regexp.MustCompile(`^第 (\d+) 个参考视频[：:]?(?:参考视频)?需使用`).FindStringSubmatch(text); len(m) == 2 {
+		return categoryCopy{Reason: "第 " + m[1] + " 个参考视频格式或地址不支持", Action: "请导入 MP4/MOV 文件，或使用可公开访问的 HTTP/HTTPS 视频链接"}, true
+	}
+	if m := regexp.MustCompile(`^第 (\d+) 个参考视频[：:]?(?:参考视频)?文件不能超过 (\d+)MB`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: "第 " + m[1] + " 个参考视频文件过大", Action: "请压缩至 " + m[2] + "MB 以内或更换素材"}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频尺寸为 \d+×\d+)，需要宽高均在 (\d+)–(\d+) 像素之间`).FindStringSubmatch(text); len(m) == 4 {
+		return categoryCopy{Reason: m[1], Action: "请将这段参考视频的宽和高均调整到 " + m[2] + "–" + m[3] + " 像素"}, true
 	}
 	if m := regexp.MustCompile(`^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)(?:宽度|高度|宽高比|时长)为 \d+(?:\.\d+)?(?: 像素| 秒)?)[，。]需要 ((?:至少|不超过) \d+(?:\.\d+)?(?: 像素| 秒)?)`).FindStringSubmatch(text); len(m) == 3 {
 		action := "请调整尺寸或更换后再提交"
@@ -1021,6 +1293,12 @@ func referenceMediaConstraintCopy(text string) (categoryCopy, bool) {
 	}
 	if m := regexp.MustCompile(`^第 (\d+) (张|个|段)参考(图|视频|音频)宽高比为 (\d+(?:\.\d+)?)[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)`).FindStringSubmatch(text); len(m) == 7 {
 		return categoryCopy{Reason: fmt.Sprintf("第 %s %s参考%s宽高比为 %s", m[1], m[2], m[3], m[4]), Action: fmt.Sprintf("需要 %s–%s；请调整尺寸或更换后再提交", m[5], m[6])}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)像素总量为 \d+（\d+×\d+）)，需要 ([^；]+) 像素`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: m[1], Action: fmt.Sprintf("需要 %s 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材", m[2])}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频尺寸无法读取)`).FindStringSubmatch(text); len(m) == 2 {
+		return categoryCopy{Reason: m[1], Action: "请重新导出 MP4/MOV 后导入"}, true
 	}
 	if m := regexp.MustCompile(`^第 (\d+) (张|个|段)参考(图|视频|音频)像素总量`).FindStringSubmatch(text); len(m) == 4 {
 		return categoryCopy{Reason: fmt.Sprintf("第 %s %s参考%s像素总量不符合当前模型要求", m[1], m[2], m[3]), Action: "请调整尺寸或更换后再提交"}, true
@@ -1117,7 +1395,26 @@ func extractExplicitHTTPStatus(raw string) int {
 }
 
 func isNetworkText(value string) bool {
-	return regexp.MustCompile(`(?i)\b(?:dial tcp|connection refused|connection reset|no such host|i/o timeout|network error|failed to fetch|fetch failed|socket hang up|econnrefused|econnreset|etimedout|连接模型服务失败)\b`).MatchString(value)
+	return regexp.MustCompile(`(?i)\b(?:dial tcp|connection refused|connection reset|forcibly closed by the remote host|software caused connection abort|connection was aborted by the software in your host machine|wsaeconnreset|wsaeconnaborted|no such host|i/o timeout|network error|failed to fetch|fetch failed|socket hang up|econnrefused|econnreset|etimedout|连接模型服务失败)\b`).MatchString(value)
+}
+
+// Only canonical local error sentences qualify, after structured upstream errors
+// have been classified. Request echoes must never become local policy failures.
+func outboundPolicyCopy(message string) (categoryCopy, bool) {
+	message, _, _ = strings.Cut(strings.TrimSpace(message), "。")
+	switch message {
+	case "不允许访问本机或内网地址", "不允许访问本机、内网或链路本地地址", "不允许访问保留地址或特殊用途地址":
+		return categoryCopy{
+			Reason: "模型服务地址被出站安全策略拦截",
+			Action: "请检查渠道的服务地址；如需连接可信的本地或内网服务，请联系管理员仅将该主机加入允许列表后重启服务",
+		}, true
+	case "外部服务域名解析失败":
+		return categoryCopy{
+			Reason: "模型服务域名解析失败",
+			Action: "请检查渠道服务地址中的域名是否正确，并确认运行 BeefTV 的设备能够正常联网和解析该域名",
+		}, true
+	}
+	return categoryCopy{}, false
 }
 
 func isMalformedText(value string) bool {
@@ -1137,6 +1434,9 @@ func isResultsMissingText(value string) bool {
 }
 
 func matchPersistedCategory(text string) FailureCategory {
+	if strings.HasPrefix(text, "当前账号额度不足") {
+		return CategoryQuotaUser
+	}
 	if strings.HasPrefix(text, "提示词或参考素材未通过内容安全审核") {
 		return CategoryModerationInput
 	}

@@ -26,6 +26,55 @@ func TestArchiveFromMarkdownInfersMetadata(t *testing.T) {
 	}
 }
 
+func TestBuiltinVideoGenerationGuidancePreservesOriginalEntry(t *testing.T) {
+	definitions, err := builtinSkillDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range definitions {
+		if definition.SkillID != "14811816982540" && definition.SkillID != "14889899551756" && definition.SkillID != "14889899552012" {
+			continue
+		}
+		t.Run(definition.SkillName, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open("file:"+kernel.NewID()+"?mode=memory&cache=shared"), &gorm.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}); err != nil {
+				t.Fatal(err)
+			}
+			skill := model.Skill{ID: definition.SkillID, Name: definition.SkillName, Description: definition.Description, Instruction: definition.Instruction, Status: skillStatusEnabled, Source: 3}
+			if err := db.Create(&skill).Error; err != nil {
+				t.Fatal(err)
+			}
+			svc := New(repository.New(db), t.TempDir(), nil)
+			if err := svc.EnsureSkillPackages(); err != nil {
+				t.Fatal(err)
+			}
+			var refreshed model.Skill
+			if err := db.First(&refreshed, "id = ?", skill.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			var version model.SkillVersion
+			if err := db.First(&version, "id = ?", refreshed.CurrentVersionID).Error; err != nil {
+				t.Fatal(err)
+			}
+			guide, err := svc.readSkillArchiveEntry(&version, "references/video-generation.md")
+			if err != nil || len(guide) == 0 || len(guide) > 2500 {
+				t.Fatalf("missing or oversized video guidance: bytes=%d err=%v", len(guide), err)
+			}
+			entry, err := svc.readSkillArchiveEntry(&version, "SKILL.md")
+			if err != nil || string(entry) != definition.Instruction {
+				t.Fatal("original Agent skill was changed")
+			}
+			if err := svc.EnsureSkillPackages(); err != nil {
+				t.Fatal(err)
+			}
+			assertSkillVersionCount(t, db, skill.ID, 1)
+		})
+	}
+}
+
 func TestArchiveFromZipNormalizesWrapperAndNestedFiles(t *testing.T) {
 	data := skillZip(t, map[string]string{
 		"director-main/SKILL.md":             "---\nname: AI 导演\ndescription: 导演工作流\nmetadata:\n  version: 2.1\n---\n",

@@ -1,5 +1,13 @@
 import { buildLibTVVideoPreviewUrl } from "@/lib/canvas/libtv-import";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { parseVideoBoolean } from "@/lib/video-generation-options";
+import { isSilentDirectorClayVideo } from "@/lib/canvas/director/director-clay-output";
+
+export function inferVideoHasAudio(metadata: CanvasNodeData["metadata"]): boolean | undefined {
+    if (isSilentDirectorClayVideo(metadata)) return false;
+    if (typeof metadata?.hasAudio === "boolean") return metadata.hasAudio;
+    return parseVideoBoolean(metadata?.generateAudio);
+}
 
 /**
  * Returns an image source that is safe to mount for a passive video preview.
@@ -14,6 +22,16 @@ export function canvasNodeVideoPreviewUrl(node: CanvasNodeData) {
     const explicitPreview = node.metadata?.previewContent || "";
     if (explicitPreview && explicitPreview !== content) return explicitPreview;
     return buildLibTVVideoPreviewUrl(content);
+}
+
+/**
+ * 是否存在首帧记录 —— 即便 `content` 已被清空、只剩本地 storageKey 也算：
+ * 本地工作区模式不再把 `blob:` 会话地址持久化进元数据（刷新/换端口必然失效），
+ * 渲染时要靠 storageKey 现算可用地址，所以这里不能只看 content。
+ */
+export function canvasNodeHasVideoPreview(node: CanvasNodeData) {
+    if (node.type !== CanvasNodeType.Video) return false;
+    return Boolean(node.metadata?.videoPreview?.storageKey || node.metadata?.previewContent?.trim());
 }
 
 export function canvasVideoAssetPreviewUrl(videoUrl: string, coverUrl?: string) {

@@ -32,7 +32,17 @@ export async function detectCanvasFaces(dataUrl: string, signal?: AbortSignal): 
     const response = await fetch(dataUrl, { signal });
     if (!response.ok) throw new Error("无法读取源图片，请重新上传后再试");
     const image = await createImageBitmap(await response.blob());
-    const worker = getDetectorWorker();
+    if (signal?.aborted) {
+        image.close();
+        throw new DOMException("人脸识别已取消", "AbortError");
+    }
+    let worker: Worker;
+    try {
+        worker = getDetectorWorker();
+    } catch (error) {
+        image.close();
+        throw error;
+    }
     const id = ++requestSequence;
     return new Promise((resolve, reject) => {
         const abort = () => {
@@ -42,10 +52,24 @@ export async function detectCanvasFaces(dataUrl: string, signal?: AbortSignal): 
             request.cleanup();
             reject(new DOMException("人脸识别已取消", "AbortError"));
         };
-        const cleanup = () => signal?.removeEventListener("abort", abort);
+        const timer = setTimeout(() => {
+            const request = pendingRequests.get(id);
+            if (!request) return;
+            pendingRequests.delete(id);
+            request.cleanup();
+            reject(new Error("人脸识别超时，请手动框选后再试"));
+        }, 60_000);
+        const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
         pendingRequests.set(id, { resolve, reject, cleanup });
         signal?.addEventListener("abort", abort, { once: true });
-        worker.postMessage({ id, image }, [image]);
+        try {
+            worker.postMessage({ id, image }, [image]);
+        } catch (error) {
+            pendingRequests.delete(id);
+            cleanup();
+            image.close();
+            reject(error);
+        }
     });
 }
 

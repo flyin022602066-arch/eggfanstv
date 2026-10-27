@@ -1,7 +1,8 @@
-import { defaultImageCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, type ImageCapabilityConfig } from "@/lib/model-capabilities";
-import { videoResolutionComparisonKey } from "@/lib/video-generation-options";
+import { defaultImageCapabilityConfig, hasAutomaticVideoAudio, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { normalizeVideoBoolean, normalizeVideoResolutionValue, videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
-import { modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { sanitizeVideoPriceQuote, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
+import { configuredModelMatchesCapability, modelOptionName, normalizeModelOptionValue, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
     textCount: number;
@@ -42,13 +43,68 @@ export function groupModelsByDisplayName(config: AiConfig, models: string[]): Di
         if (current) current.models.push(model);
         else groups.set(key, { key, label, models: [model] });
     });
-    return Array.from(groups.values());
+    return Array.from(groups.values()).map((group) => ({ ...group, models: [...group.models].sort((a, b) => Number(Boolean(seedancePortraitModel(a))) - Number(Boolean(seedancePortraitModel(b)))) }));
+}
+
+export function groupModelsIndividually(config: AiConfig, models: string[]): DisplayModelGroup[] {
+    return models.map((model) => {
+        const channel = resolveModelChannel(config, model);
+        return {
+            key: `${channel.id}\u0000${model}`,
+            label: configuredModelDisplayName(config, model),
+            models: [model],
+        };
+    });
+}
+
+export function resolveWorkflowModelPreference(input: {
+    rememberedModel?: string;
+    projectDefaultModel?: string;
+    globalDefaultModel?: string;
+    selectableModels: string[];
+    allModels: string[];
+}) {
+    const selectable = new Set(input.selectableModels);
+    const all = new Set(input.allModels);
+    const remembered = input.rememberedModel?.trim();
+    if (remembered && (!all.has(remembered) || selectable.has(remembered))) return remembered;
+
+    const defaults = [input.projectDefaultModel, input.globalDefaultModel];
+    return defaults.find((model) => model && selectable.has(model)) || input.selectableModels[0] || "";
+}
+
+export function resolveActiveWorkflowModel(input: {
+    config: AiConfig;
+    capability: ModelCapability;
+    selectedModel?: string;
+    initialModel?: string;
+}) {
+    const candidates = [input.selectedModel, input.initialModel, ...selectableModelsByCapability(input.config, input.capability)];
+    return candidates.find((model) => model && configuredModelMatchesCapability(input.config, model, input.capability)) || "";
 }
 
 export function configuredModelDisplayName(config: AiConfig, value: string) {
+    const portrait = seedancePortraitLabel(value);
+    if (portrait) return portrait;
     const model = modelOptionName(value);
     const channel = resolveModelChannel(config, value);
     return channel.modelProfiles?.find((item) => item.model === model)?.displayName?.trim() || model;
+}
+
+// Shared by selection and paid submission, including retries and batch jobs.
+export function portraitGenerationError(config: AiConfig, model: string, resolution?: string) {
+    if (!seedancePortraitModel(model)) return "";
+    if (!normalizeModelOptionValue(model, config.channels)) return "真人素材版当前不可用，请刷新模型列表或重新选择模型";
+    const channel = resolveModelChannel(config, model);
+    const profile = channel.modelProfiles?.find((item) => item.model === modelOptionName(model));
+    const quote = sanitizeVideoPriceQuote(profile?.videoPricing);
+    if (!quote) return "真人素材版价格暂不可用，请刷新模型列表";
+    if (resolution !== undefined) {
+        const normalized = normalizeVideoResolutionValue(resolution);
+        const key = normalized === "2160" ? "4k" : `${normalized}p`;
+        if (!quote.rates[key]) return "当前分辨率价格暂不可用，请选择其他分辨率或刷新模型列表";
+    }
+    return "";
 }
 
 export function modelCompatibilityError(config: AiConfig, model: string, requirements?: ModelRequirements) {
@@ -58,6 +114,8 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
     const visualInputCount = input ? input.imageCount + input.characterCount : 0;
     const channel = resolveModelChannel(config, model);
     const logicalCost = channel.modelProfiles?.find((item) => item.model === modelOptionName(model));
+    const portraitError = capability === "video" ? portraitGenerationError(config, model) : "";
+    if (portraitError) return portraitError;
     const logicalSpecs = logicalCost?.logicalCapabilityProfiles?.length ? logicalCost.logicalCapabilityProfiles : logicalCost?.logicalCapabilitySpec ? [logicalCost.logicalCapabilitySpec] : [];
     if (logicalSpecs.length) {
         const publicOptionNames = logicalCost?.logicalCapabilitySpec?.options || {};
@@ -206,6 +264,9 @@ export function compatibleModelInGroup(config: AiConfig, models: string[], requi
 
 export function resolveCompatibleModel(config: AiConfig, selected: string, requirements?: ModelRequirements) {
     if (!requirements?.capability) return selected;
+    // Automatic resolution keeps the saved identity. Explicit menu selection
+    // may choose the usable canonical entry and refresh its parameters/quote.
+    if (seedancePortraitLabel(selected)) return modelCompatibilityError(config, selected, requirements) ? "" : selected;
     const options = selectableModelsByCapability(config, requirements.capability);
     if (!options.length) return selected;
     const selectedGroup = groupModelsByDisplayName(config, options).find((group) => group.models.includes(selected));
@@ -243,7 +304,6 @@ export function defaultImageParamsForModel(config: AiConfig, model: string): Pic
         transparentBackground: String(image.transparentBackground.default ?? false),
     };
 }
-
 
 export type ModelGenerationDefaults = Pick<AiConfig, "size" | "quality" | "transparentBackground" | "count" | "videoSeconds" | "vquality" | "videoGenerateAudio" | "videoWatermark">;
 
@@ -287,7 +347,7 @@ export function resolveModelGenerationDefaults(
             videoSeconds: normalized.seconds,
             size: normalized.ratio,
             vquality: normalized.resolution.replace(/p$/i, ""),
-            videoGenerateAudio: source("videoGenerateAudio") ?? String(capabilityProfile.video.generateAudio.default),
+            videoGenerateAudio: hasAutomaticVideoAudio(resolveModelChannel(config, model).interfaceType) ? "true" : normalizeVideoBoolean(source("videoGenerateAudio")) ?? String(capabilityProfile.video.generateAudio.default),
             videoWatermark: source("videoWatermark") ?? String(capabilityProfile.video.watermark.default),
         };
     }
@@ -295,17 +355,12 @@ export function resolveModelGenerationDefaults(
     return {};
 }
 
-export function resolveModelVideoBooleanOptions(
-    config: AiConfig,
-    model: string,
-    explicit: Partial<ModelVideoBooleanOptions> = {},
-    fallback: Partial<ModelVideoBooleanOptions> = {},
-): ModelVideoBooleanOptions {
+export function resolveModelVideoBooleanOptions(config: AiConfig, model: string, explicit: Partial<ModelVideoBooleanOptions> = {}, fallback: Partial<ModelVideoBooleanOptions> = {}): ModelVideoBooleanOptions {
     const profile = modelCapabilityConfigFor(config, model).video!;
     const defaults = resolveModelGenerationDefaults(config, model, "video", explicit, fallback);
     return {
-        videoGenerateAudio: profile.generateAudio.supported ? defaults.videoGenerateAudio ?? String(profile.generateAudio.default) : "false",
-        videoWatermark: profile.watermark.supported ? defaults.videoWatermark ?? String(profile.watermark.default) : "false",
+        videoGenerateAudio: profile.generateAudio.supported ? (defaults.videoGenerateAudio ?? String(profile.generateAudio.default)) : "false",
+        videoWatermark: profile.watermark.supported ? (defaults.videoWatermark ?? String(profile.watermark.default)) : "false",
     };
 }
 
@@ -356,6 +411,8 @@ export function inferVideoOperation(input: ModelInputSummary) {
 }
 
 export function resolveVideoOperation(input: ModelInputSummary, storedOperation?: string) {
+    if (storedOperation === "reference_to_video" && input.imageCount + input.characterCount + input.videoCount + input.audioCount > 0) return storedOperation;
+    if (storedOperation === "extend" && input.videoCount > 0) return storedOperation;
     if (storedOperation && !["text_to_video", "image_to_video", "audio_to_video", "extend", "reference_to_video"].includes(storedOperation)) return storedOperation;
     return inferVideoOperation(input);
 }

@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 
 import { runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import type { GenerationTask } from "@/services/api/task-center";
+import { ApiError } from "@/services/api/request";
+import { canvasGenerationFailureMetadata, canvasTaskFailureMetadata } from "../src/pages/canvas/canvas-generation-failure";
 
 test("hydrates a completed text task from the generation result before consuming it", async () => {
     const terminalTask = {
@@ -60,4 +62,21 @@ test("preserves existing text task result fields while hydrating the final text"
     );
 
     expect(JSON.parse(consumedTask?.resultJson || "{}")).toEqual({ mode: "text", reasoning: "brief reasoning", text: "最终正文" });
+});
+
+test("a local save rejection after upstream success is not reported as invalid model parameters", async () => {
+    const task = { id: "successful-image", type: "canvas_image", status: "succeeded", resultJson: JSON.stringify({ images: [{ storageKey: "resource:result" }] }) } as GenerationTask;
+    const saveError = new ApiError("Local asset binding missing", { status: 400 });
+    let caught: unknown;
+    try {
+        await runCanvasGenerationTaskToConsumer(
+            { projectId: "canvas", nodeId: "image", mode: "image", prompt: "image", config: {} as never },
+            { bindTask: () => {}, consumeTask: async () => { throw saveError; }, runTask: async (options) => { options.onTaskCreated?.(task); return { images: [{ storageKey: "resource:result" }] } as never; } },
+        );
+    } catch (error) { caught = error; }
+    const failure = canvasGenerationFailureMetadata(caught, { prompt: "image" });
+    expect(failure.generationErrorCode).not.toBe("invalid_params");
+    expect(failure.resourceReloadAvailable).toBe(true);
+    expect(failure.errorDetails).toContain("生成已成功");
+    expect(canvasTaskFailureMetadata(task, undefined, saveError)).toEqual(failure);
 });

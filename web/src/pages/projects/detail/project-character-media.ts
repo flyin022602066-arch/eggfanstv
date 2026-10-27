@@ -1,23 +1,39 @@
-import { runBackendCanvasGenerationTask } from "@/lib/canvas/canvas-project-generation";
+import { submitBackendGenerationTask } from "@/services/api/generation-task";
+import { getProjectCore } from "@/services/api/projects";
+import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
+import { characterFaceDesignConstraint, characterFacePresetForAsset, characterFaceReference } from "@/lib/project-character-face-presets";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { PromptTemplateOperation, promptTemplateTaskPlaceholder } from "@/lib/prompts";
 import { resolveStyleExecutionPlan, serializeStyleProfile, type StyleProfileSnapshot } from "@/lib/canvas/style-profile";
 import { logicalModelIDForConfig, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 type ProjectStylePrompt = { id: string; title: string; prompt: string; profile?: StyleProfileSnapshot };
 
-export async function generateCharacterTurnaround(input: { projectId: string; assetId: string; versionId: string; name: string; definition: Record<string, unknown>; projectStyle?: ProjectStylePrompt; config: AiConfig }) {
+const characterGenerationDependencies = { loadProject: getProjectCore, submitTask: submitBackendGenerationTask };
+
+export async function generateCharacterTurnaround(input: { projectId: string; assetId: string; versionId: string; name: string; definition: Record<string, unknown>; projectStyle?: ProjectStylePrompt; config: AiConfig }, dependencies = characterGenerationDependencies) {
+    const expectedScope = captureUserScope();
+    const latest = await dependencies.loadProject(input.projectId, expectedScope);
+    assertUserScope(expectedScope);
+    const facePreset = characterFacePresetForAsset(latest.project.characterFacePresetsJson, input.assetId);
     const promptTemplateVariables = characterTurnaroundVariables(input.name, input.definition, input.projectStyle);
     const generationConfig = { ...input.config, model: input.config.imageModel || input.config.model, count: "1" };
     const requestConfig = resolveModelRequestConfig(generationConfig, generationConfig.model);
+    if (facePreset) {
+        const profile = modelCapabilityConfigFor(generationConfig, generationConfig.model).image;
+        if (profile && profile.references.maxImages < 1 && !logicalModelIDForConfig(generationConfig)) throw new Error("当前图片模型不支持参考图，请切换支持图片编辑或图生图的模型后再使用主角人脸预设");
+        promptTemplateVariables.角色设定 += `\n\n${characterFaceDesignConstraint(input.name, facePreset.role)}`;
+    }
     const styleExecutionPlan = input.projectStyle?.profile ? resolveStyleExecutionPlan(input.projectStyle.profile, { mode: "image", model: requestConfig.model, interfaceType: requestConfig.interfaceType || requestConfig.apiFormat }) : undefined;
     if (styleExecutionPlan?.status === "blocked" && !logicalModelIDForConfig(generationConfig)) throw new Error(`当前图片模型无法完整执行项目画风：${styleExecutionPlan.warnings.join("；")}。请切换图片模型，或在项目设置中停用对应画风资产`);
-    await runBackendCanvasGenerationTask({
+    return dependencies.submitTask({
         projectId: input.projectId,
-        nodeId: `character-turnaround:${input.assetId}`,
         mode: "image",
         prompt: promptTemplateTaskPlaceholder("角色三视图"),
         config: generationConfig,
-        metadata: { operation: PromptTemplateOperation.CharacterTurnaround, promptTemplateOperation: PromptTemplateOperation.CharacterTurnaround, promptTemplateVariables, characterAssetId: input.assetId, stylePresetId: input.projectStyle?.id, styleProfileJson: input.projectStyle?.profile ? serializeStyleProfile(input.projectStyle.profile) : undefined, styleExecutionPlan, resolvedCharacterVersions: [{ assetId: input.assetId, versionId: input.versionId }] },
+        expectedScope,
+        referenceImages: facePreset ? [characterFaceReference(facePreset)] : [],
+        metadata: { nodeId: `character-turnaround:${input.assetId}`, operation: PromptTemplateOperation.CharacterTurnaround, promptTemplateOperation: PromptTemplateOperation.CharacterTurnaround, promptTemplateVariables, characterAssetId: input.assetId, stylePresetId: input.projectStyle?.id, styleProfileJson: input.projectStyle?.profile ? serializeStyleProfile(input.projectStyle.profile) : undefined, styleExecutionPlan, resolvedCharacterVersions: [{ assetId: input.assetId, versionId: input.versionId }] },
     });
 }
 

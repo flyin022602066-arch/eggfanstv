@@ -25,7 +25,7 @@ type taskTerminalCoordinator struct {
 
 type taskTerminalRepository interface {
 	Task(id string) (*model.Task, error)
-	UpdateTaskTerminalState(id string, owner string, expected model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time) (bool, error)
+	UpdateTaskTerminalState(id string, owner string, expected model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time, diagnostics ...*model.TaskFailureDiagnostics) (bool, error)
 }
 
 type taskReplayLifecycle interface {
@@ -37,12 +37,14 @@ type taskLifecycleLogger interface {
 }
 
 type taskOutputLifecycle interface {
+	DeliverSucceededTask(task model.Task) error
 	RegisterTaskOutputFromTask(task model.Task) error
 }
 
 type taskTerminalServiceAdapter struct {
 	finalizeReplay func(string, model.TaskStatus) error
 	writeLog       func(string, string, string, string, string) error
+	deliver        func(model.Task) error
 	registerOutput func(model.Task) error
 }
 
@@ -54,6 +56,13 @@ func (a taskTerminalServiceAdapter) log(userID string, taskID string, level stri
 	return a.writeLog(userID, taskID, level, message, payload)
 }
 
+func (a taskTerminalServiceAdapter) DeliverSucceededTask(task model.Task) error {
+	if a.deliver == nil {
+		return nil
+	}
+	return a.deliver(task)
+}
+
 func (a taskTerminalServiceAdapter) RegisterTaskOutputFromTask(task model.Task) error {
 	return a.registerOutput(task)
 }
@@ -62,6 +71,7 @@ func newTaskTerminalCoordinator(s *Service) *taskTerminalCoordinator {
 	adapter := taskTerminalServiceAdapter{
 		finalizeReplay: s.finalizeTaskTextReplay,
 		writeLog:       s.log,
+		deliver:        s.DeliverSucceededTask,
 		registerOutput: s.RegisterTaskOutputFromTask,
 	}
 	return &taskTerminalCoordinator{
@@ -83,6 +93,7 @@ func (s *Service) terminalCoordinator() *taskTerminalCoordinator {
 }
 
 func (c *taskTerminalCoordinator) markPreparationFailure(task *model.Task, stage string, err error, _ bool, _ string) error {
+	captureTaskFailureDiagnostics(task, err, "unknown")
 	c.ensureFailedAttemptLogged(task, err)
 	task.Status = model.TaskStatusFailed
 	task.Stage = stage
@@ -91,6 +102,17 @@ func (c *taskTerminalCoordinator) markPreparationFailure(task *model.Task, stage
 		return errors.Join(err, terminalErr)
 	}
 	return err
+}
+
+// refuse 把一条按产品边界不再支持的任务直接收尾为失败，并记录失败日志。
+// 与 markPreparationFailure 的差别：用户可见原因原样落库，不经过失败分类改写——
+// “按产品边界拒绝执行”本身就是正确的终态结果，不是 worker 执行失败。
+func (c *taskTerminalCoordinator) refuse(task *model.Task, stage string, message string) error {
+	c.ensureFailedAttemptLogged(task, errors.New(message))
+	task.Status = model.TaskStatusFailed
+	task.Stage = stage
+	task.Error = message
+	return c.markTerminalState(task)
 }
 
 // handleExecutionFailure 返回 nil 仅表示取消已被正常收尾；普通失败仍返回原始错误，
@@ -113,9 +135,19 @@ func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err e
 		return nil
 	}
 
+	source := "unknown"
+	if providerSucceeded {
+		source = "local_result"
+	}
+	captureTaskFailureDiagnostics(task, err, source)
 	task.Status = model.TaskStatusFailed
 	c.ensureFailedAttemptLogged(task, err)
 	task.Stage = "任务失败"
+	var imageRecovery imageRecoveryError
+	var unknown providerSubmissionUnknownError
+	if errors.As(err, &imageRecovery) || errors.As(err, &unknown) {
+		task.Stage = "submission_unknown"
+	}
 	task.Error = c.userFacingMessage(err)
 	if terminalErr := c.markTerminalState(task); terminalErr != nil {
 		return errors.Join(err, terminalErr)
@@ -151,6 +183,7 @@ func (c *taskTerminalCoordinator) handleResultPersistenceFailure(task *model.Tas
 	}
 
 	task.Status = model.TaskStatusFailed
+	captureTaskFailureDiagnostics(task, saveErr, "local_result")
 	task.Stage = "任务结果保存失败"
 	task.Error = c.userFacingMessage(saveErr)
 	if terminalErr := c.markTerminalState(task); terminalErr != nil {
@@ -176,10 +209,18 @@ func (c *taskTerminalCoordinator) handleSuccess(task *model.Task) error {
 		completionErr = fmt.Errorf("任务成功后读取任务产物失败：%w", fetchErr)
 		_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但读取任务产物失败", fetchErr.Error())
 	} else {
+		if deliverErr := c.outputs.DeliverSucceededTask(*completedTask); deliverErr != nil {
+			_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但结果交付失败", deliverErr.Error())
+			completionErr = fmt.Errorf("任务成功后的结果交付失败：%w", deliverErr)
+		}
 		if registerErr := c.outputs.RegisterTaskOutputFromTask(*completedTask); registerErr != nil {
 			// 任务成功与产物登记分开记账；登记失败保持步骤异常，允许项目页幂等补登记。
 			_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
-			completionErr = fmt.Errorf("任务成功后的项目产物登记失败：%w", registerErr)
+			completionErr = errors.Join(completionErr, fmt.Errorf("任务成功后的项目产物登记失败：%w", registerErr))
+		}
+		if deliverErr := c.outputs.DeliverSucceededTask(*completedTask); deliverErr != nil {
+			_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但结果交付失败", deliverErr.Error())
+			completionErr = errors.Join(completionErr, fmt.Errorf("任务成功后的结果交付失败：%w", deliverErr))
 		}
 	}
 	_ = c.logger.log(task.UserID, task.ID, "info", "任务完成，结果已持久化", "")
@@ -189,7 +230,7 @@ func (c *taskTerminalCoordinator) handleSuccess(task *model.Task) error {
 func (c *taskTerminalCoordinator) markTerminalState(task *model.Task) error {
 	completedAt := time.Now()
 	task.CompletedAt = &completedAt
-	updated, err := c.repo.UpdateTaskTerminalState(task.ID, task.LeaseOwner, model.TaskStatusRunning, task.Status, task.Stage, task.Error, completedAt)
+	updated, err := c.repo.UpdateTaskTerminalState(task.ID, task.LeaseOwner, model.TaskStatusRunning, task.Status, task.Stage, task.Error, completedAt, task.FailureDiagnostics)
 	if err != nil {
 		return fmt.Errorf("写入任务终态失败：%w", err)
 	}

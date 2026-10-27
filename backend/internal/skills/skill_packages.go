@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -111,6 +112,9 @@ type githubSkillSpec struct {
 	Subdir string
 }
 
+//go:embed seed/video/*.md
+var builtinVideoGuides embed.FS
+
 func (s *Service) EnsureSkillPackages() error {
 	skills, err := s.repo.SkillsForPackageEnsure(skillSourceUser)
 	if err != nil {
@@ -121,6 +125,20 @@ func (s *Service) EnsureSkillPackages() error {
 		archive, err := archiveFromMarkdown([]byte(skill.Instruction), skill.Name, skill.Description)
 		if err != nil {
 			return fmt.Errorf("迁移技能 %s 文件包失败: %w", skill.ID, err)
+		}
+		if skill.Source != skillSourceUser {
+			guideNames := map[string]string{"14811816982540": "world", "14889899551756": "character", "14889899552012": "performance"}
+			if name := guideNames[skill.ID]; name != "" {
+				guide, err := builtinVideoGuides.ReadFile("seed/video/" + name + ".md")
+				if err != nil {
+					return err
+				}
+				archive.Files["references/video-generation.md"] = guide
+				archive, err = finalizeSkillArchive(archive.Files, archive.Metadata)
+				if err != nil {
+					return err
+				}
+			}
 		}
 		if skill.CurrentVersionID != "" && skill.ContentHash == archive.ContentHash {
 			continue

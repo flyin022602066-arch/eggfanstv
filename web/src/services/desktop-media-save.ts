@@ -1,6 +1,9 @@
 import { saveAs } from "file-saver";
+import { nanoid } from "nanoid";
 
 import { sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { uploadResourceFile } from "@/services/api/resources";
 
 export type OwnedMediaSaveResult = "saved" | "cancelled";
 
@@ -30,7 +33,7 @@ export async function downloadOwnedOrBrowserMedia(options: { fileName: string; r
 export async function saveOwnedOrBrowserBlob(fileName: string, blob: Blob): Promise<OwnedMediaSaveResult> {
     const name = sanitizeDownloadFileName(fileName, "未命名导出");
     if (isWailsNativeShell()) {
-        if (blob.size > MAX_OWNED_ARTIFACT_BYTES) throw new Error("导出包太大，请减少所选内容后再导出");
+        if (blob.size > MAX_OWNED_ARTIFACT_BYTES) return saveChunkedArtifact(name, blob);
         const save = window.go?.main?.DesktopApp?.SaveOwnedArtifact;
         if (!save) throw new Error("当前应用还不能把文件存到所选位置");
         const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -39,6 +42,41 @@ export async function saveOwnedOrBrowserBlob(fileName: string, blob: Blob): Prom
     }
     saveAs(blob, name);
     return "saved";
+}
+
+async function saveChunkedArtifact(name: string, blob: Blob): Promise<OwnedMediaSaveResult> {
+    const binding = window.go?.main?.DesktopApp;
+    if (!binding?.BeginOwnedArtifact || !binding.AppendOwnedArtifact || !binding.AbortOwnedArtifact) throw new Error("当前应用不支持大资产包，请更新后再导出");
+    const id = await binding.BeginOwnedArtifact(name, blob.size);
+    if (!id) return "cancelled";
+    let complete = false;
+    try {
+        const chunkSize = 1024 * 1024;
+        for (let offset = 0; offset < blob.size; offset += chunkSize) {
+            const chunk = new Uint8Array(await blob.slice(offset, offset + chunkSize).arrayBuffer());
+            const saved = await binding.AppendOwnedArtifact(id, offset, bytesToBase64(chunk));
+            if (saved !== (offset + chunk.length === blob.size)) throw new Error("导出文件未完整保存，请重新导出");
+            complete = saved;
+        }
+        return "saved";
+    } finally {
+        if (!complete) await binding.AbortOwnedArtifact(id);
+    }
+}
+
+/** Video exports use the resource upload path so large files never cross Wails as base64. */
+export async function saveOwnedOrBrowserVideoBlob(fileName: string, blob: Blob, expectedScope: CapturedUserScope): Promise<OwnedMediaSaveResult> {
+    assertUserScope(expectedScope);
+    if (!isWailsNativeShell()) return saveOwnedOrBrowserBlob(fileName, blob);
+    if (!window.go?.main?.DesktopApp?.SaveOwnedMedia) throw new Error("当前应用还不能把文件存到所选位置");
+    const name = sanitizeDownloadFileName(fileName, "未命名导出.mp4");
+    const resource = await uploadResourceFile(blob, "video", {
+        fileName: name,
+        expectedScope,
+        idempotencyKey: `video-export:${nanoid()}`,
+    });
+    assertUserScope(expectedScope);
+    return downloadOwnedOrBrowserMedia({ fileName: name, resourceId: resource.id });
 }
 
 function bytesToBase64(bytes: Uint8Array) {

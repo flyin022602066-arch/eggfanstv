@@ -47,8 +47,8 @@ export function ArtifactStatus({ artifact, taskStatus }: { artifact?: ShotArtifa
     if (taskStatus === "failed") return <StatusBadge variant="filled" tone="error" label="生成失败" />;
     if (!artifact) return <StatusBadge variant="filled" tone="neutral" label="待生成" />;
     const tone = artifact.status === "ready" ? "success" : artifact.status === "failed" ? "error" : artifact.status === "stale" ? "warning" : "loading";
-    const label = artifact.status === "ready" ? "已生成" : artifact.status === "failed" ? "生成失败" : artifact.status === "stale" ? "已过期" : "生成中";
-    return <StatusBadge variant="filled" tone={tone} label={label} />;
+    const label = artifact.status === "ready" ? "已生成" : artifact.status === "failed" ? "生成失败" : artifact.status === "stale" ? "旧版本" : "生成中";
+    return <StatusBadge variant="filled" tone={tone} label={label} title={artifact.status === "stale" ? "镜头脚本或参考资产已更新，此产物为旧版本，原文件仍可预览和下载。" : undefined} />;
 }
 
 export function currentRevision(detail: ProjectDetail, shot?: ProjectShot): ShotRevision | undefined {

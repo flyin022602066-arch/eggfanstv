@@ -24,6 +24,9 @@ type VideoPlayerProps = {
     hasAudio?: boolean;
     onCanPlay?: MediaPlayerProps["onCanPlay"];
     onPlay?: MediaPlayerProps["onPlay"];
+    onPlaybackError?: () => void;
+    onAutoPlayFail?: MediaPlayerProps["onAutoPlayFail"];
+    onError?: MediaPlayerProps["onError"];
     onFirstFramePresented?: () => void;
 };
 
@@ -71,6 +74,11 @@ const zhCNTranslations = {
 
 const supportedVideoMimeTypes = new Set<VideoMimeType>(["video/mp4", "video/webm", "video/3gp", "video/ogg", "video/avi", "video/mpeg", "video/object"]);
 
+export function normalizeVideoPlayerMimeType(mimeType?: string): VideoMimeType {
+    const container = mimeType?.split(";", 1)[0]?.trim().toLowerCase() as VideoMimeType | undefined;
+    return container && supportedVideoMimeTypes.has(container) ? container : "video/mp4";
+}
+
 /**
  * 统一视频播放表面，保留原生媒体 URL 契约，同时提供可访问的完整控件布局。
  * 画布节点需要隔离播放器手势，避免拖动进度条时被误判为拖动画布。
@@ -88,6 +96,9 @@ export function VideoPlayer({
     hasAudio,
     onCanPlay,
     onPlay,
+    onPlaybackError,
+    onAutoPlayFail,
+    onError,
     onFirstFramePresented,
 }: VideoPlayerProps) {
     const [detectedHasAudio, setDetectedHasAudio] = useState<boolean | undefined>(undefined);
@@ -125,6 +136,16 @@ export function VideoPlayer({
         audioProbeGenerationRef.current += 1;
         firstFrameRequestedRef.current = false;
     }, [src]);
+
+    useEffect(() => {
+        const player = mediaPlayerRef.current?.el;
+        if (!player) return;
+        const handleMediaError = (event: Event) => {
+            if (event.target instanceof HTMLVideoElement || event.target instanceof HTMLSourceElement) onPlaybackError?.();
+        };
+        player.addEventListener("error", handleMediaError, true);
+        return () => player.removeEventListener("error", handleMediaError, true);
+    }, [src, onPlaybackError]);
 
     useEffect(() => {
         const player = mediaPlayerRef.current?.el;
@@ -169,7 +190,7 @@ export function VideoPlayer({
         }
         if (dataCanvasNoZoom) event.stopPropagation();
     };
-    const type = mimeType && supportedVideoMimeTypes.has(mimeType as VideoMimeType) ? (mimeType as VideoMimeType) : "video/mp4";
+    const type = normalizeVideoPlayerMimeType(mimeType);
     const mediaSource = useMemo(() => ({ src, type }), [src, type]);
     const handleCanPlay = (detail: Parameters<NonNullable<MediaPlayerProps["onCanPlay"]>>[0], event: Parameters<NonNullable<MediaPlayerProps["onCanPlay"]>>[1]) => {
         const provider = event.target.provider;
@@ -214,6 +235,8 @@ export function VideoPlayer({
             style={{ "--video-brand": brandColor }}
             onCanPlay={handleCanPlay}
             onPlay={onPlay}
+            onError={(...args) => { onError?.(...args); onPlaybackError?.(); }}
+            onAutoPlayFail={onAutoPlayFail}
             onLoadedMetadata={(event) => {
                 const provider = event.target.provider;
                 const media = isVideoProvider(provider) ? provider.media : undefined;

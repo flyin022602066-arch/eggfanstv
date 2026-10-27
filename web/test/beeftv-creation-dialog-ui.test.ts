@@ -26,6 +26,6 @@ test("thinking control exposes an obvious toggle state and preserves the request
     expect(globalStyles).toContain('box-shadow: inset 0 0 0 1px var(--control-selected-border);');
 });
 
-test("new Eggfans Agent sessions start in the LibTV video mode", () => {
+test("新建创作会话默认使用 LibTV 视频模式", () => {
     expect(creationTypes).toContain('export const defaultCreationMode: CreationMode = "video";');
 });

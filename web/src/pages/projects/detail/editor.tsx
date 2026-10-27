@@ -435,7 +435,7 @@ export default function ProjectEditorView({ detail }: { detail: ProjectDetail })
     }, [assets, canvasSyncKeys, projectId, refreshAssets]);
 
     return (
-        <EditorStoreProvider store={store} host={{ projectId, assets, refreshAssets }}>
+        <EditorStoreProvider store={store} host={{ projectId, assets, refreshAssets, openExport: () => { setRightTab("export"); setRightCollapsed(false); setAiOpen(false); } }}>
             <div ref={workbenchRef} className="editor-workbench relative flex h-full min-h-0 flex-col bg-[var(--director-workspace-bg)]">
                 <EditorTopBar
                     onExport={() => setRightTab("export")}
@@ -458,7 +458,7 @@ export default function ProjectEditorView({ detail }: { detail: ProjectDetail })
                             <Sparkles className="size-4 text-[var(--director-dock-fg)]/80" />
                             <span className="text-xs font-medium text-[var(--director-dock-fg-strong)]">AI 剪辑助手</span>
                             <span className="hidden truncate text-[10px] text-[var(--director-dock-fg)]/45 sm:inline">
-                                编辑意图 → 时间线指令（宿主校验）
+                                素材分析 · 自动成片 · 对话微调
                             </span>
                             <div className="flex-1" />
                             <button

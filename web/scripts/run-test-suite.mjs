@@ -26,7 +26,12 @@ function run(files) {
 
 const files = [...collectTestFiles(join(root, "test")), ...collectTestFiles(join(root, "src"))].sort();
 const isolated = files.filter((file) => {
+    // Browser suites own subprocesses and should not share a Bun worker with
+    // shell-script tests or modules that replace browser globals.
+    if (/\.browser\.test\.[jt]sx?$/.test(file)) return true;
     const source = readFileSync(join(root, file), "utf8");
+    // Bun module replacements persist beyond mock.restore(); isolate their import graphs.
+    if (source.includes("mock.module(")) return true;
     return source.includes("globalThis") && browserGlobalName.test(source);
 });
 const shared = files.filter((file) => !isolated.includes(file));

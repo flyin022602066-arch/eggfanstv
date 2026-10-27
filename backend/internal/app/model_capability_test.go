@@ -1,10 +1,173 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/modelcatalog"
 )
+
+func TestJiasuSeedance25NewModelsRestoreDurationAndResolution(t *testing.T) {
+	for _, modelName := range []string{"sd-2.5-J3-doubao", "sd-2.5-j3-DOUBAO", "vendor/SD2.5-next"} {
+		t.Run(modelName, func(t *testing.T) {
+			profile := DefaultModelCapabilityConfigForModel("jiasu-video", modelName)
+			if profile.Video.Duration.Max != 30 {
+				t.Fatalf("default duration = %#v, want 30 seconds", profile.Video.Duration)
+			}
+			legacy := DefaultModelCapabilityConfigForModel("jiasu-video", "dola-sd-2.0")
+			legacy.Video.Resolutions = nil
+			legacy.Video.DefaultResolution = ""
+			normalized, err := NormalizeModelCapabilityConfigForModel("video", "jiasu-video", modelName, legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if normalized.Video.Duration.Max != 30 || !containsCapabilityString(normalized.Video.Resolutions, "1080p") {
+				t.Fatalf("restored stale Jiasu profile: %#v", normalized.Video)
+			}
+			if normalized.Video.References.MaxImages != 30 || normalized.Video.References.MaxVideos != 10 || normalized.Video.References.MaxAudios != 10 {
+				t.Fatalf("new 2.5 reference limits = %#v", normalized.Video.References)
+			}
+			if strings.EqualFold(modelName, "sd-2.5-J3-doubao") && (normalized.Video.Duration.Min != 4 || fmt.Sprint(normalized.Video.Resolutions) != "[720p 1080p]" || normalized.Video.References.MaxTotalBytes != 0) {
+				t.Fatalf("J3-specific settings = %#v", normalized.Video)
+			}
+			input := jiasuTestInput(modelName)
+			input.Config.VideoSeconds, input.Config.VQuality = "30", "1080p"
+			if err := validateVideoTask(normalized.Video, input); err != nil {
+				t.Fatalf("30-second 1080p input rejected: %v", err)
+			}
+			input.Config.VideoSeconds = "31"
+			if validateVideoTask(normalized.Video, input) == nil {
+				t.Fatal("31 seconds accepted")
+			}
+			if legacy.Video.Duration.Max != 15 || len(legacy.Video.Resolutions) != 0 {
+				t.Fatal("normalization changed another model profile")
+			}
+		})
+	}
+}
+
+func TestSDImageReferenceLimitsReplaceStaleSavedLimits(t *testing.T) {
+	for _, scenario := range []struct {
+		protocol string
+		model    string
+		maximum  int
+	}{
+		{"eggfans-sd2-video", "sd-2.5-B", 30},
+		{"eggfans-sd2-video", "sd-2.5-D", 30},
+		{"eggfans-sd2-video", "sd-2.0-A", 10},
+		{"jiasu-video", "dola-sd-2.5", 30},
+		{"jiasu-video", "sd-2.5-j2-V", 30},
+		{"jiasu-video", "dola-sd-2.0", 10},
+		{"jiasu-video", "sd-2.0-mini-J1", 10},
+		{"eggfans-seedance-video", "seedance-2.5", 30},
+		{"eggfans-volc-video", "seedance-2.0", 10},
+		{"mints-seedance-video", "doubao-seedance-2-0-mini-260615", 10},
+		{"openai", "vendor/sd2.5-pro", 30},
+		{"newapi", "custom-SD2.5-fast", 30},
+		{"jiasu-video", "dola-sd2.5", 30},
+		{"eggfans-sd2-video", "SD2.5-D", 30},
+		{"volcengine-ark-video", "doubao-seedance-2-5-260528", 30},
+		{"openai", "seedance-2.5-fast", 30},
+		{"jiasu-video", "minimax-h3", 10},
+		{"newapi", "video-custom", 10},
+	} {
+		t.Run(scenario.protocol+"/"+scenario.model, func(t *testing.T) {
+			profile := DefaultModelCapabilityConfigForModel(scenario.protocol, scenario.model)
+			if profile.Video.References.MaxImages != scenario.maximum {
+				t.Fatalf("default image limit = %d, want %d", profile.Video.References.MaxImages, scenario.maximum)
+			}
+			profile.Video.References.MaxImages = 6
+			normalized, err := NormalizeModelCapabilityConfigForModel("video", scenario.protocol, scenario.model, profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if normalized.Video.References.MaxImages != scenario.maximum {
+				t.Fatalf("restored image limit = %d, want %d", normalized.Video.References.MaxImages, scenario.maximum)
+			}
+			input := canvasGenerationInput{Config: providerConfig{InterfaceType: scenario.protocol, Model: scenario.model}, ReferenceImages: make([]providerMedia, scenario.maximum)}
+			for index := range input.ReferenceImages {
+				input.ReferenceImages[index] = providerMedia{Width: 1024, Height: 1024}
+			}
+			if err := validateVideoReferenceMedia(normalized.Video, input); err != nil {
+				t.Fatal(err)
+			}
+			input.ReferenceImages = append(input.ReferenceImages, providerMedia{Width: 1024, Height: 1024})
+			if validateVideoReferenceMedia(normalized.Video, input) == nil {
+				t.Fatal("model image reference overflow accepted")
+			}
+		})
+	}
+}
+
+func TestMintsNewVideoTaskDefaultsToAudio(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("mints-seedance-video", "doubao-seedance-2-0-mini-260615")
+	config := map[string]any{}
+	modelcatalog.ApplyChannelCapabilityDefaults(config, "video", profile)
+	if config["videoGenerateAudio"] != "true" {
+		t.Fatalf("new video task audio = %#v, want true", config["videoGenerateAudio"])
+	}
+	config["videoGenerateAudio"] = "false"
+	modelcatalog.ApplyChannelCapabilityDefaults(config, "video", profile)
+	if config["videoGenerateAudio"] != "false" {
+		t.Fatal("explicit audio off was overwritten")
+	}
+}
+
+func TestSeedance25PromptLimitRestoresAndChecksFifteenThousandCharacters(t *testing.T) {
+	for _, scenario := range []struct{ protocol, name string }{
+		{"jiasu-video", "sd-2.5-j2-V"},
+		{"jiasu-video", "dola-sd-2.5"},
+		{"eggfans-sd2-video", "sd-2.5-D"},
+		{"eggfans-seedance-video", "seedance-2.5"},
+		{"volcengine-ark-video", "doubao-seedance-2-5-260528"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			profile := DefaultModelCapabilityConfigForModel(scenario.protocol, scenario.name)
+			if profile.Video.References.PromptMaxChars != 15000 {
+				t.Fatalf("default prompt limit = %d", profile.Video.References.PromptMaxChars)
+			}
+			profile.Video.References.PromptMaxChars = 8000
+			normalized, err := NormalizeModelCapabilityConfigForModel("video", scenario.protocol, scenario.name, profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if normalized.Video.References.PromptMaxChars != 15000 {
+				t.Fatal("stale 8000 character limit was restored")
+			}
+			prompt := strings.Repeat("文", 14999) + "😀"
+			if err := modelcatalog.ValidateWorkflowProviderPromptLength(modelcatalog.TaskInput{Mode: "video", Prompt: prompt, Config: modelcatalog.TaskConfig{CapabilityConfig: normalized}}); err != nil {
+				t.Fatal(err)
+			}
+			if modelcatalog.ValidateWorkflowProviderPromptLength(modelcatalog.TaskInput{Mode: "video", Prompt: prompt + "字", Config: modelcatalog.TaskConfig{CapabilityConfig: normalized}}) == nil {
+				t.Fatal("15001 characters accepted")
+			}
+		})
+	}
+}
+
+func TestSourcedSeedanceGenerationKeepsServerLimitsAndAudio(t *testing.T) {
+	version := "gateway-version"
+	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0")
+	profile.Video.References.MaxImages = 12
+	profile.Video.GenerateAudio.Supported = false
+	input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{InterfaceType: "newapi", BaseURL: "https://enterprise.beefapi.com", Model: "seedance-2.0", VideoSeconds: "5", Size: "16:9", VQuality: "720p", CapabilityConfig: profile, VideoCapabilitiesVersion: &version}}
+	for i := 0; i < 10; i++ {
+		input.ReferenceImages = append(input.ReferenceImages, providerMedia{URL: "asset://test", Width: 640, Height: 640, Bytes: 10})
+	}
+	if err := (&Service{}).validateResolvedVideoCapability(&input); err != nil {
+		t.Fatal(err)
+	}
+	if input.VideoCapability.GenerateAudio.Supported {
+		t.Fatal("catalog audio false was restored by legacy repair")
+	}
+	input.Config.VideoCapabilitiesVersion = nil
+	restoreBeefAPISeedanceAudioControl(context.Background(), input.Config, input.VideoCapability)
+	if !input.VideoCapability.GenerateAudio.Supported {
+		t.Fatal("legacy saved profiles should retain the audio repair")
+	}
+}
 
 func TestNativeArkModelDefaultsAndExplicitRestrictions(t *testing.T) {
 	for _, protocol := range []string{"volcengine-ark-video", "volcengine-ark-agent-plan-video"} {
@@ -45,7 +208,7 @@ func TestNativeArkModelDefaultsAndExplicitRestrictions(t *testing.T) {
 	}
 }
 
-func TestCatalogSeedanceLimitsAreNotOverwritten(t *testing.T) {
+func TestCatalogSeedanceImageLimitIsUpdatedWithoutChangingOtherMedia(t *testing.T) {
 	profile := DefaultModelCapabilityConfigForModel("newapi-channel-2", "seedance-2.5").Video
 	profile.References.MaxImages = 12
 	profile.References.MaxVideos = 4
@@ -54,15 +217,15 @@ func TestCatalogSeedanceLimitsAreNotOverwritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeModelCapabilityConfigForModel() error = %v", err)
 	}
-	if normalized.Video.References.MaxImages != 12 || normalized.Video.References.MaxVideos != 4 || normalized.Video.References.MaxAudios != 5 {
-		t.Fatalf("catalog limits overwritten: %#v", normalized.Video.References)
+	if normalized.Video.References.MaxImages != 30 || normalized.Video.References.MaxVideos != 4 || normalized.Video.References.MaxAudios != 5 {
+		t.Fatalf("incorrect media limits: %#v", normalized.Video.References)
 	}
 	if !containsCapabilityString(normalized.Video.Operations, "audio_to_video") {
 		t.Fatalf("operations = %v, want audio_to_video kept", normalized.Video.Operations)
 	}
 }
 
-func TestCatalogSeedanceExplicitZerosArePreserved(t *testing.T) {
+func TestCatalogSeedanceImageLimitDoesNotEnableOtherMedia(t *testing.T) {
 	profile := DefaultModelCapabilityConfigForModel("newapi", "other-video").Video
 	profile.References.MaxImages = 0
 	profile.References.MaxVideos = 0
@@ -73,23 +236,63 @@ func TestCatalogSeedanceExplicitZerosArePreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeModelCapabilityConfigForModel() error = %v", err)
 	}
-	if normalized.Video.References.MaxImages != 0 || normalized.Video.References.MaxVideos != 0 || normalized.Video.References.MaxAudios != 0 {
-		t.Fatalf("explicit zeros overwritten: %#v", normalized.Video.References)
+	if normalized.Video.References.MaxImages != 30 || normalized.Video.References.MaxVideos != 0 || normalized.Video.References.MaxAudios != 0 {
+		t.Fatalf("incorrect media limits: %#v", normalized.Video.References)
 	}
 	if containsCapabilityString(normalized.Video.Operations, "audio_to_video") || containsCapabilityString(normalized.Video.Operations, "reference_to_video") {
 		t.Fatalf("operations expanded: %v", normalized.Video.Operations)
 	}
 }
 
-func TestEnterpriseSeedanceMaxImagesNotExpandedToOfficial30(t *testing.T) {
+func TestEnterpriseSeedanceMaxImagesUpdatedTo30(t *testing.T) {
 	profile := DefaultModelCapabilityConfigForModel("newapi-channel-2", "seedance-2.5").Video
 	profile.References.MaxImages = 9
 	normalized, err := NormalizeModelCapabilityConfigForModel("video", "newapi-channel-2", "seedance-2.5", &ModelCapabilityConfig{Version: 1, Video: profile})
 	if err != nil {
 		t.Fatalf("NormalizeModelCapabilityConfigForModel() error = %v", err)
 	}
-	if normalized.Video.References.MaxImages != 9 {
-		t.Fatalf("enterprise maxImages expanded: %d", normalized.Video.References.MaxImages)
+	if normalized.Video.References.MaxImages != 30 {
+		t.Fatalf("enterprise maxImages not updated: %d", normalized.Video.References.MaxImages)
+	}
+}
+
+func TestNativeArkSeedanceUsesDocumentedVideoPixelFloor(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("volcengine-ark-video", "seedance-2.0").Video
+	if profile.References.MinVideoPixels != officialSeedanceVideoMinPixels {
+		t.Fatalf("stored default min pixels = %d", profile.References.MinVideoPixels)
+	}
+	input := canvasGenerationInput{
+		Config:          providerConfig{InterfaceType: "volcengine-ark-video", Model: "seedance-2.0", BaseURL: "https://ark.cn-beijing.volces.com/api/v3"},
+		ReferenceVideos: []providerMedia{{Width: 720, Height: 567, DurationMs: 3000, Bytes: 1}},
+	}
+	if err := validateVideoReferenceMedia(profile, input); err != nil {
+		t.Fatalf("720×567 should pass documented 407696 floor: %v", err)
+	}
+	input.ReferenceVideos[0].Height = 566
+	if err := validateVideoReferenceMedia(profile, input); err == nil {
+		t.Fatal("720×566 accepted below 407696")
+	}
+}
+
+func TestCustomSeedancePixelRestrictionIsPreserved(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	profile.References.MinVideoPixels = 500000
+	profile.References.MaxVideoPixels = officialSeedanceVideoMaxPixels
+	input := canvasGenerationInput{
+		Config:          providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://example.com"},
+		ReferenceVideos: []providerMedia{{Width: 720, Height: 700, DurationMs: 3000, Bytes: 1}},
+	}
+	if err := validateVideoReferenceMedia(profile, input); err != nil {
+		t.Fatalf("custom 500000 floor rejected 720×700: %v", err)
+	}
+	input.ReferenceVideos[0].Height = 694
+	if err := validateVideoReferenceMedia(profile, input); err == nil {
+		t.Fatal("custom 500000 floor accepted 720×694")
+	}
+	overlay := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	input.ReferenceVideos[0] = providerMedia{Width: 720, Height: 567, DurationMs: 3000, Bytes: 1}
+	if err := validateVideoReferenceMedia(overlay, input); err == nil {
+		t.Fatal("custom newapi remapped overlay 409600 to 407696")
 	}
 }
 
@@ -380,7 +583,7 @@ func TestAgnesVideo25CapabilityUsesOfficialLimits(t *testing.T) {
 		t.Fatalf("Agnes 2.5 capability = %#v", standard)
 	}
 	flash := DefaultModelCapabilityConfigForModel("agnes-video", "agnes-video-2.5-flash").Video
-	if fmt.Sprint(flash.Resolutions) != fmt.Sprint([]string{"720P"}) || flash.References.MaxImages != 5 || flash.References.MaxVideos != 0 {
+	if fmt.Sprint(flash.Resolutions) != fmt.Sprint([]string{"720P"}) || flash.References.MaxImages != 10 || flash.References.MaxVideos != 0 {
 		t.Fatalf("Agnes 2.5 Flash capability = %#v", flash)
 	}
 }
@@ -416,7 +619,7 @@ func TestDefaultVolcengineArkVideoCapabilitySupportsFullModalReference(t *testin
 	if containsCapabilityString(profile.Video.Operations, "audio_to_video") {
 		t.Fatal("Seedance 2.0 must not advertise audio-only generation")
 	}
-	if profile.Video.References.MaxImages != 9 || profile.Video.References.MaxVideos != 3 || profile.Video.References.MaxAudios != 3 {
+	if profile.Video.References.MaxImages != 10 || profile.Video.References.MaxVideos != 3 || profile.Video.References.MaxAudios != 3 {
 		t.Fatalf("reference limits = %#v", profile.Video.References)
 	}
 }
@@ -453,6 +656,9 @@ func TestNormalizeBeefAPISeedanceFullModalReferenceCapability(t *testing.T) {
 	}
 	if normalized.Video.References.MaxVideos < 3 {
 		t.Fatalf("max videos = %d, want at least 3", normalized.Video.References.MaxVideos)
+	}
+	if !normalized.Video.GenerateAudio.Supported {
+		t.Fatal("BeefAPI Seedance must expose the audio toggle")
 	}
 	if !containsCapabilityString(normalized.Video.Operations, "reference_to_video") {
 		t.Fatalf("operations = %v, want reference_to_video", normalized.Video.Operations)

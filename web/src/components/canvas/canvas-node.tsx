@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, FileText, GripVertical, Image as ImageIcon, Lock, Maximize2, Music2, Pencil, RefreshCw, ScanSearch, Settings2, Star, Trash2, Video, WandSparkles } from "lucide-react";
+import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, FileText, GripVertical, Image as ImageIcon, Lock, Maximize2, Move3d, Music2, Pencil, RefreshCw, ScanSearch, Settings2, Star, Trash2, Video, WandSparkles } from "lucide-react";
 
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
@@ -14,6 +14,7 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
 import { getNodeDefinition, getNodeMinSize, shouldKeepAspectRatio } from "@/lib/canvas/node-registry";
 import { CanvasNodeContent } from "./canvas-node-content";
+import { CanvasSunoStudioEntry } from "./canvas-suno-studio-entry";
 import { CanvasVideoCropEditor, type CanvasVideoCropRect } from "./canvas-video-crop-dialog";
 import { CanvasImageCropEditor, type CanvasImageCropRect } from "./canvas-node-crop-dialog";
 import { CanvasImageAnnotationEditor } from "./canvas-node-annotation-dialog";
@@ -67,7 +68,6 @@ type CanvasNodeProps = {
     onViewImage?: (node: CanvasNodeData) => void;
     onReplaceMedia?: (node: CanvasNodeData) => void;
     onOpenTextEditor?: (node: CanvasNodeData) => void;
-    onOpenDirector?: (node: CanvasNodeData) => void;
     onOpenDrawing?: (node: CanvasNodeData) => void;
     onMediaPlayRequest?: (nodeId: string) => void;
     imageCropActive?: boolean;
@@ -126,7 +126,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     onOpenVersions,
     onViewImage,
     onOpenTextEditor,
-    onOpenDirector,
     onOpenDrawing,
     onMediaPlayRequest,
     imageCropActive = false,
@@ -149,11 +148,12 @@ export const CanvasNode = React.memo(function CanvasNode({
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [titleDraft, setTitleDraft] = useState(data.title);
-    const { download: downloadNode, duplicate: duplicateNode, deleteNode } = useCanvasNodeActions();
+    const { download: downloadNode, duplicate: duplicateNode, deleteNode, openSunoStudio } = useCanvasNodeActions();
     const hasImageContent = data.type === CanvasNodeType.Image && Boolean(data.metadata?.content);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content || data.metadata?.storageKey);
     const isComposerNode = data.type === CanvasNodeType.Config;
+    const isDirectorNode = data.type === CanvasNodeType.Director || Boolean(data.metadata?.directorSceneId);
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
     const showStatusTrack = Boolean(data.metadata?.locked || isBatchRoot || (isBatchChild && !readOnly));
@@ -378,10 +378,10 @@ export const CanvasNode = React.memo(function CanvasNode({
                 data-connection-tilt={connectionTilt ? "true" : undefined}
                 data-state={data.metadata?.status || (isActive ? "active" : isRelated ? "related" : "idle")}
                 style={{
-                    background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
+                    background: hasImageContent || hasVideoContent || isDirectorNode ? "transparent" : theme.node.fill,
                     // 固定占位但不绘制描边，避免聚焦切换时边框宽度变化造成白边跳动。
-                    border: isComposerNode ? "0" : `1px solid ${isSelected || isFocusRelated || isConnectionTarget ? theme.node.activeStroke : "transparent"}`,
-                    boxShadow: isComposerNode ? "none" : isSelected || isFocusRelated ? theme.node.hoverShadow : theme.node.shadow,
+                    border: isComposerNode || isDirectorNode ? "0" : `1px solid ${isSelected || isFocusRelated || isConnectionTarget ? theme.node.activeStroke : "transparent"}`,
+                    boxShadow: isComposerNode || isDirectorNode ? "none" : isSelected || isFocusRelated ? theme.node.hoverShadow : theme.node.shadow,
                     "--connection-tilt-x": `${connectionTilt?.rotateX || 0}deg`,
                     "--connection-tilt-y": `${connectionTilt?.rotateY || 0}deg`,
                     transformOrigin: connectionTilt?.origin,
@@ -400,7 +400,6 @@ export const CanvasNode = React.memo(function CanvasNode({
                     }
                     if (data.metadata?.directorSceneId) {
                         event.stopPropagation();
-                        onOpenDirector?.(data);
                         return;
                     }
                     if (data.type === CanvasNodeType.Drawing) {
@@ -419,10 +418,10 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }}
             >
                 <div
-                    className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${annotationActive || maskEditActive || isBatchRoot || data.type === CanvasNodeType.Script || data.type === CanvasNodeType.BatchTable || isComposerNode ? "overflow-visible" : "overflow-hidden"}`}
+                    className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${annotationActive || maskEditActive || (imageCropActive && hasImageContent) || (videoCropActive && hasVideoContent) || isBatchRoot || data.type === CanvasNodeType.Script || data.type === CanvasNodeType.BatchTable || isComposerNode ? "overflow-visible" : "overflow-hidden"}`}
                     style={
                         {
-                            background: hasImageContent || hasVideoContent || hasAudioContent ? "transparent" : theme.node.fill,
+                            background: hasImageContent || hasVideoContent || hasAudioContent || isDirectorNode ? "transparent" : theme.node.fill,
                             "--batch-from-x": `${batchMotion?.x || 0}px`,
                             "--batch-from-y": `${batchMotion?.y || 0}px`,
                             "--batch-from-rotate": `${6 + (batchMotion?.index || 0) * 4}deg`,
@@ -433,11 +432,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                 >
                     {/* 仅在执行中或异常时显示状态；成功来源由内部元数据保留，不占用卡片视觉层。 */}
                     {data.metadata?.status && data.metadata.status !== "idle" && data.metadata.status !== "success" && data.type !== CanvasNodeType.Frame ? (
-                        <NodeStatusBadge status={data.metadata.status} />
+                        <NodeStatusBadge status={data.metadata.status} resultPending={data.metadata.taskStatus === "succeeded" && data.metadata.resourceReloadAvailable === true} />
                     ) : null}
                     <CanvasNodeContent
                         node={data}
                         theme={theme}
+                        readOnly={readOnly}
                         isEditingContent={isEditingContent}
                         textareaRef={textareaRef}
                         isBatchRoot={isBatchRoot}
@@ -498,9 +498,22 @@ export const CanvasNode = React.memo(function CanvasNode({
                     ) : null}
                 </div>
 
+                {data.type === CanvasNodeType.Audio && !readOnly && openSunoStudio ? (
+                    <div
+                        className={`absolute right-2 top-2 z-[var(--node-z-overlay)] motion-safe:transition-opacity ${isSelected ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+                        aria-hidden={!isSelected}
+                    >
+                        <CanvasSunoStudioEntry
+                            onClick={() => openSunoStudio(data)}
+                            tabIndex={isSelected ? 0 : -1}
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text, outlineColor: theme.accent.primary }}
+                        />
+                    </div>
+                ) : null}
+
                 {data.type === CanvasNodeType.Text && data.metadata?.workflowKind !== "character" && !readOnly ? (
                     <div
-                        className={`canvas-node-inline-edit absolute bottom-[10%] left-1/2 z-[var(--node-z-overlay)] -translate-x-1/2 motion-safe:transition motion-safe:duration-200 ${isSelected ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none translate-y-3 opacity-0"}`}
+                        className={`canvas-node-inline-edit absolute bottom-[10%] left-1/2 z-[var(--node-z-overlay)] flex -translate-x-1/2 items-center gap-2 motion-safe:transition motion-safe:duration-200 ${isSelected ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none translate-y-3 opacity-0"}`}
                         aria-hidden={!isSelected}
                         onMouseDown={(event) => event.stopPropagation()}
                         onPointerDown={(event) => event.stopPropagation()}
@@ -516,6 +529,13 @@ export const CanvasNode = React.memo(function CanvasNode({
                             <Maximize2 className="size-3.5" />
                             放大编辑
                         </button>
+                        {openSunoStudio ? (
+                            <CanvasSunoStudioEntry
+                                onClick={() => openSunoStudio(data)}
+                                tabIndex={isSelected ? 0 : -1}
+                                style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text, outlineColor: theme.accent.primary }}
+                            />
+                        ) : null}
                     </div>
                 ) : null}
 
@@ -635,7 +655,6 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.onViewImage === next.onViewImage &&
         previous.onReplaceMedia === next.onReplaceMedia &&
         previous.onOpenTextEditor === next.onOpenTextEditor &&
-        previous.onOpenDirector === next.onOpenDirector &&
         previous.onOpenDrawing === next.onOpenDrawing &&
         previous.imageCropActive === next.imageCropActive &&
         previous.onCancelImageCrop === next.onCancelImageCrop &&
@@ -725,8 +744,10 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
     // 标题保持屏幕尺寸只适用于近景；远景继续反向缩放会遮住节点和连线。
     if (scale < NODE_EXTERNAL_HEADER_MIN_SCALE && !editing && node.metadata?.fixture !== "libtv-readonly-dense") return null;
     const inverseScale = 1 / Math.max(scale, 0.05);
-    const Icon = nodeTypeIcon(node.type);
+    const isDirectorNode = node.type === CanvasNodeType.Director || Boolean(node.metadata?.directorSceneId);
+    const Icon = isDirectorNode ? Move3d : nodeTypeIcon(node.type);
     const maxHeaderWidth = Math.min(240, node.width * scale);
+    const directorCardWidth = Math.min(node.width, node.height);
 
     return (
         <div
@@ -734,6 +755,7 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
             style={{
                 width: dimensionLabel ? "calc(var(--canvas-node-width) * var(--canvas-live-scale, 1))" : undefined,
                 maxWidth: dimensionLabel ? undefined : maxHeaderWidth,
+                left: node.metadata?.directorSceneId ? Math.max(0, (node.width - directorCardWidth) / 2) : undefined,
                 "--canvas-node-width": `${node.width}px`,
                 borderRadius: "var(--r-sm)",
                 background: "transparent",
@@ -775,7 +797,7 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
                 >
                     {node.metadata?.locked ? <Lock className="size-3" /> : <GripVertical className="size-3" strokeWidth={1.8} />}
                 </button>
-                <Icon className="size-3 shrink-0" strokeWidth={1.8} />
+                <Icon className="size-3 shrink-0" strokeWidth={1.8} data-node-header-icon={isDirectorNode ? "director" : undefined} />
                 {editing ? (
                     <input
                         autoFocus
@@ -818,28 +840,17 @@ function nodeTypeIcon(type: CanvasNodeTypeId) {
 }
 
 // 节点状态徽章（对应 #97 决策2：左上角状态指示，loading/success/error）
-function NodeStatusBadge({ status }: { status: "loading" | "success" | "error" }) {
-    if (status === "loading") {
-        return (
-            <div
-                className="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full px-2 py-0.5 backdrop-blur-sm"
-                style={{ background: "color-mix(in oklch, var(--status-loading) 20%, transparent)", color: "var(--status-loading)" }}
-                aria-label="生成中"
-            >
-                <span className="size-1.5 animate-pulse rounded-full" style={{ background: "var(--status-loading)" }} />
-                <span className="text-[var(--fs-micro)] font-medium leading-none">生成中</span>
-            </div>
-        );
-    }
+function NodeStatusBadge({ status, resultPending }: { status: "loading" | "success" | "error"; resultPending?: boolean }) {
+    if (status === "loading") return null;
     if (status === "error") {
         return (
             <div
                 className="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full px-2 py-0.5 backdrop-blur-sm"
                 style={{ background: "color-mix(in oklch, var(--status-error) 20%, transparent)", color: "var(--status-error)" }}
-                aria-label="生成失败"
+                aria-label={resultPending ? "结果待放入画布" : "生成失败"}
             >
                 <AlertCircle className="size-3" strokeWidth={2} />
-                <span className="text-[var(--fs-micro)] font-medium leading-none">失败</span>
+                <span className="text-[var(--fs-micro)] font-medium leading-none">{resultPending ? "待放入画布" : "失败"}</span>
             </div>
         );
     }
@@ -857,71 +868,32 @@ function NodeStatusBadge({ status }: { status: "loading" | "success" | "error" }
 }
 
 function ConnectionSideRail({ side, scale, theme, visible = false, onPointerDown }: { side: "left" | "right"; scale: number; theme: CanvasTheme; visible?: boolean; onPointerDown: (event: React.PointerEvent, anchorRatio: number) => void }) {
-    const handleRef = useRef<HTMLSpanElement>(null);
     const [railHovered, setRailHovered] = useState(false);
     const inverseScale = 1 / Math.max(scale, 0.05);
     const railSize = 80;
     // Keep the control responsive to zoom, but avoid sub-pixel circles and
     // strokes at far zoom levels where the plus sign appears visually off-center.
     const handleSize = Math.max(20, 8 * inverseScale);
-    // LibTV centers the visual quick-add icon in an approximately 80px
-    // circular hit zone, then offsets it toward the node edge. Keep that
-    // visual layer separate from the real centered connection anchor.
-    const sideOffset = side === "left" ? 25 : -25;
-
-    const resetHandle = useCallback(() => {
-        if (!handleRef.current) return;
-        handleRef.current.style.transform = `translate(${sideOffset}px, 0) scale(1)`;
-    }, [sideOffset]);
-
-    const updateHandle = (event: React.PointerEvent<HTMLButtonElement>) => {
-        const bounds = event.currentTarget.getBoundingClientRect();
-        const width = Math.max(bounds.width, 1);
-        const height = Math.max(bounds.height, 1);
-        const followLimit = 30;
-        const deltaX = event.clientX - (bounds.left + width / 2);
-        const deltaY = event.clientY - (bounds.top + height / 2);
-        const offsetScreenX = Math.max(-followLimit, Math.min(followLimit, deltaX));
-        const offsetScreenY = Math.max(-followLimit, Math.min(followLimit, deltaY));
-        const focus = 1 + Math.max(0, 1 - Math.hypot(offsetScreenX, offsetScreenY) / followLimit) * 0.1;
-        // While the pointer is inside the rail LibTV uses the rail center as
-        // the origin. The side-specific +/-25px offset is only the resting
-        // position used after leaving the rail.
-        const offsetX = offsetScreenX * inverseScale;
-        const offsetY = offsetScreenY * inverseScale;
-        if (handleRef.current) handleRef.current.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${focus})`;
-    };
 
     return (
         <button
             type="button"
             data-canvas-connection-rail={side}
             className={`group pointer-events-auto absolute top-1/2 z-[var(--node-z-overlay)] flex -translate-y-1/2 items-center justify-center touch-none cursor-crosshair rounded-full outline-none transition-opacity duration-150 ${visible || railHovered ? "opacity-100" : "opacity-0"}`}
-            style={{ width: railSize, height: `min(100%, ${railSize}px)`, cursor: "crosshair", ...(side === "left" ? { right: "100%" } : { left: "100%" }) }}
-            onPointerEnter={(event) => {
-                setRailHovered(true);
-                updateHandle(event);
-            }}
-            onPointerMove={updateHandle}
-            onPointerLeave={() => {
-                setRailHovered(false);
-                resetHandle();
-            }}
+            style={{ width: railSize, height: `min(100%, ${railSize}px)`, cursor: "crosshair", ...(side === "left" ? { left: -railSize / 2 } : { right: -railSize / 2 }) }}
+            onPointerEnter={() => setRailHovered(true)}
+            onPointerLeave={() => setRailHovered(false)}
             onPointerDown={(event) => onPointerDown(event, 0.5)}
             aria-label={`${side === "left" ? "输入" : "输出"}连接点，单击创建节点或拖动连线`}
         >
             <span
-                ref={handleRef}
-                className="absolute left-1/2 top-1/2 block transition-transform duration-[80ms] ease-out group-hover:brightness-125 group-focus-visible:brightness-125"
+                data-canvas-connection-pin={side}
+                className="absolute left-1/2 top-1/2 block group-hover:brightness-125 group-focus-visible:brightness-125"
                 style={{
                     width: handleSize,
                     height: handleSize,
                     marginLeft: -handleSize / 2,
                     marginTop: -handleSize / 2,
-                    transform: `translate(${sideOffset}px, 0) scale(1)`,
-                    transition: "transform 80ms ease-out",
-                    transformOrigin: "center",
-                    willChange: "transform",
                 }}
             >
                 <svg

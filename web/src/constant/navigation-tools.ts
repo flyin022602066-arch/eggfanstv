@@ -1,6 +1,12 @@
-import { Blocks, CircleDollarSign, Clapperboard, Images, LibraryBig, ListTodo, PanelsTopLeft, Settings, WandSparkles } from "lucide-react";
+import { Blocks, CircleDollarSign, Clapperboard, Images, LibraryBig, ListTodo, Music2, PanelsTopLeft, Settings, WandSparkles } from "lucide-react";
 
 export const navigationTools = [
+    {
+        slug: "music",
+        label: "音乐导演台",
+        icon: Music2,
+        section: "创作空间",
+    },
     {
         slug: "create",
         label: "创作",

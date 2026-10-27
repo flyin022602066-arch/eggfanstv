@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+
+	"gorm.io/gorm"
 )
 
 type ProjectOverviewMetrics struct {
@@ -77,7 +79,7 @@ func (r *Repository) ProjectOverviewUnits(projectID string, limit int) ([]Projec
 	err := r.db.Raw(`
 		SELECT pu.id, pu.project_id, pu.parent_id, pu.kind, pu.title, pu.word_count, pu.status, pu.position, pu.created_at, pu.updated_at,
 			(SELECT COUNT(*) FROM shots s WHERE s.project_id = pu.project_id AND s.unit_id = pu.id) AS shot_count,
-			(SELECT COUNT(*) FROM project_asset_candidates pac WHERE pac.project_id = pu.project_id AND pac.unit_id = pu.id) AS candidate_count,
+			(SELECT COUNT(*) FROM project_asset_candidates pac WHERE pac.project_id = pu.project_id AND pac.unit_id = pu.id AND pac.status = 'pending_confirmation') AS candidate_count,
 			(SELECT COUNT(DISTINCT cul.canvas_id) FROM canvas_unit_links cul WHERE cul.project_id = pu.project_id AND cul.unit_id = pu.id) AS canvas_count
 		FROM project_units pu
 		WHERE pu.project_id = ?
@@ -207,7 +209,12 @@ func (r *Repository) ProjectAssetCandidatesPage(projectID string, page int, page
 	var total int64
 	query := r.db.Model(&model.ProjectAssetCandidate{}).Where("project_id = ?", projectID)
 	if value := strings.TrimSpace(unitID); value != "" {
-		query = query.Where("unit_id = ?", value)
+		unit := "COALESCE(NULLIF(unit_id, ''), (SELECT s.unit_id FROM shots s JOIN project_units u ON u.id = s.unit_id AND u.project_id = s.project_id WHERE s.id = project_asset_candidates.shot_id AND s.project_id = project_asset_candidates.project_id), '')"
+		if value == "__unassigned__" {
+			query = query.Where(unit + " = ''")
+		} else {
+			query = query.Where(unit+" = ?", value)
+		}
 	}
 	if value := strings.TrimSpace(status); value != "" {
 		query = query.Where("status = ?", value)
@@ -225,10 +232,11 @@ func (r *Repository) ProjectAssetCandidatesPage(projectID string, page int, page
 	return candidates, total, err
 }
 
-func (r *Repository) ProjectAssetsPage(userID string, projectID string, page int, pageSize int, category string, mediaType string, status string, folderID *string, queryText string) ([]model.Asset, int64, error) {
+func (r *Repository) ProjectAssetsPage(userID string, projectID string, page int, pageSize int, category string, mediaType string, status string, folderID *string, queryText string, unitID string) ([]model.Asset, int64, error) {
 	var assets []model.Asset
 	var total int64
 	query := r.db.Table("assets").Joins("JOIN project_asset_links ON project_asset_links.asset_id = assets.id").Where("assets.user_id = ? AND project_asset_links.project_id = ?", userID, projectID)
+	query = r.filterProjectAssetsByUnit(query, projectID, unitID)
 	if value := strings.TrimSpace(category); value != "" {
 		query = query.Where("assets.category = ?", value)
 	}
@@ -251,19 +259,61 @@ func (r *Repository) ProjectAssetsPage(userID string, projectID string, page int
 	return assets, total, err
 }
 
-func (r *Repository) ProjectAssetFacets(projectID string) ([]ProjectAssetCountRow, []ProjectAssetCountRow, error) {
+func (r *Repository) ProjectAssetFacets(userID string, projectID string, unitID string) ([]ProjectAssetCountRow, []ProjectAssetCountRow, error) {
+	base := func() *gorm.DB {
+		query := r.db.Table("assets").Joins("JOIN project_asset_links pal ON pal.asset_id = assets.id").Where("pal.project_id = ? AND assets.user_id = ?", projectID, userID)
+		return r.filterProjectAssetsByUnit(query, projectID, unitID)
+	}
 	var categoryRows []ProjectAssetCountRow
-	if err := r.db.Table("assets").Select("assets.category AS key, COUNT(*) AS count").
-		Joins("JOIN project_asset_links pal ON pal.asset_id = assets.id").
-		Where("pal.project_id = ?", projectID).
+	if err := base().Select("assets.category AS key, COUNT(*) AS count").
 		Group("assets.category").Scan(&categoryRows).Error; err != nil {
 		return nil, nil, err
 	}
 	var folderRows []ProjectAssetCountRow
-	if err := r.db.Table("project_asset_links").Select("folder_id AS key, COUNT(*) AS count").
-		Where("project_id = ?", projectID).
-		Group("folder_id").Scan(&folderRows).Error; err != nil {
+	if err := base().Select("pal.folder_id AS key, COUNT(*) AS count").
+		Group("pal.folder_id").Scan(&folderRows).Error; err != nil {
 		return nil, nil, err
 	}
 	return categoryRows, folderRows, nil
+}
+
+type ProjectAssetUnitRow struct {
+	AssetID string
+	UnitID  string
+}
+
+func (r *Repository) projectAssetUnitAssociations(projectID string) *gorm.DB {
+	return r.db.Raw(`
+		SELECT c.resolved_asset_id AS asset_id, u.id AS unit_id
+		FROM project_asset_candidates c
+		LEFT JOIN shots s ON s.id = c.shot_id AND s.project_id = c.project_id
+		JOIN project_units u ON u.id = COALESCE(NULLIF(c.unit_id, ''), s.unit_id) AND u.project_id = c.project_id
+		WHERE c.project_id = ? AND c.status = 'confirmed' AND c.resolved_asset_id <> ''
+		UNION
+		SELECT av.asset_id, u.id AS unit_id
+		FROM shot_asset_references ref
+		JOIN asset_versions av ON av.id = ref.asset_version_id
+		JOIN shots s ON s.id = ref.shot_id
+		JOIN project_units u ON u.id = s.unit_id AND u.project_id = s.project_id
+		WHERE s.project_id = ?`, projectID, projectID)
+}
+
+func (r *Repository) filterProjectAssetsByUnit(query *gorm.DB, projectID string, unitID string) *gorm.DB {
+	value := strings.TrimSpace(unitID)
+	if value == "" {
+		return query
+	}
+	if value == "__unassigned__" {
+		return query.Where("NOT EXISTS (SELECT 1 FROM (?) asset_units WHERE asset_units.asset_id = assets.id)", r.projectAssetUnitAssociations(projectID))
+	}
+	return query.Where("EXISTS (SELECT 1 FROM (?) asset_units WHERE asset_units.asset_id = assets.id AND asset_units.unit_id = ?)", r.projectAssetUnitAssociations(projectID), value)
+}
+
+func (r *Repository) ProjectAssetUnitLinks(userID string, projectID string) ([]ProjectAssetUnitRow, error) {
+	var rows []ProjectAssetUnitRow
+	err := r.db.Table("assets").Select("assets.id AS asset_id, COALESCE(asset_units.unit_id, '') AS unit_id").
+		Joins("JOIN project_asset_links pal ON pal.asset_id = assets.id AND pal.project_id = ?", projectID).
+		Joins("LEFT JOIN (?) asset_units ON asset_units.asset_id = assets.id", r.projectAssetUnitAssociations(projectID)).
+		Where("assets.user_id = ?", userID).Order("assets.id, asset_units.unit_id").Scan(&rows).Error
+	return rows, err
 }

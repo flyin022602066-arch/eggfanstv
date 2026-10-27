@@ -19,13 +19,17 @@ const (
 
 const legacyStoryboardVideoPromptPreamble = "生成单一连续镜头的视频执行提示词。一个镜头只保留一个叙事目标、一个主运镜和一条主要动作链；摄影机运动必须有起点、动机和停止点。优先保证角色身份、表演、关键动作和连续性，次要环境效果可以简化。\n\n"
 
+const characterReferenceSheetLayout = `同一张角色设定图必须同时包含四个清晰分离的区域：最左侧为一幅独立头部特写，完整展示头顶、发型、脸型和五官，保持中性表情；右侧依次为正面、右侧面、背面三个身体视图。身体三视图仅展示颈部以下至脚底，采用自然画框裁切，三视图区不得出现头部、脸部或头发，也不得表现断颈、伤口。三个身体视图必须属于同一角色，保持服装、体型、道具、站姿与比例一致，脚部完整可见。头部特写与身体三视图必须同时存在，不得只生成三张全身图，也不得遗漏独立头像。与模板、角色设定或补充要求中的构图指令冲突时，以本规则为准；其余已确认的人物细节和项目画风照常保留。`
+
+const characterExtractionVisualRule = `每个人物资产的 multiViewPrompt 必须明确写入以下设定图构图要求，并结合正文已经明确的头部特征、服装和体态填写，不得编造正文未明确的外貌：` + characterReferenceSheetLayout
+
 func defaultPromptDefinitions() []PromptOperationDefinition {
 	return []PromptOperationDefinition{
 		{
 			Operation: OperationChapterAssetsExtract, Label: "章节角色、场景与道具提取", Category: "角色", OutputType: "json", SchemaKey: "chapter-assets/v1",
 			Description:    "从章节正文提取角色、实际发生剧情的场景和影响剧情的道具，分别进入资产待确认列表。",
 			Variables:      []PromptTemplateVariable{{Label: "项目名称", Placeholder: "{{项目名称}}"}, {Label: "章节名称", Placeholder: "{{章节名称}}"}, {Label: "项目画风", Placeholder: "{{项目画风}}"}},
-			DefaultContent: `你是短剧资产导演。按章节事实提取角色、场景和道具。同一身份的别名合并，不编造正文未出现的资产；未明确的视觉信息写“正文未明确”。角色包含剧情定位、稳定外貌服装体态、性格、一致性提示、三视图提示及语言、声音年龄、音色。场景描述空间布局、环境和光照；道具描述材质、形状及剧情用途。无对应资产时返回空数组。`,
+			DefaultContent: `你是短剧资产导演。按章节事实提取角色、场景和道具。同一身份的别名合并，不编造正文未出现的资产；未明确的视觉信息写“正文未明确”。角色包含剧情定位、稳定外貌服装体态、性格、一致性提示、头部特写与身体三视图提示及语言、声音年龄、音色。场景描述空间布局、环境和光照；道具描述材质、形状及剧情用途。无对应资产时返回空数组。` + "\n\n" + characterExtractionVisualRule,
 		},
 		{
 			Operation: OperationStoryboardPlan, Label: "分镜规划", Category: "分镜", OutputType: "json", SchemaKey: "storyboard-plan/v3",
@@ -95,13 +99,13 @@ func defaultPromptDefinitions() []PromptOperationDefinition {
 			Operation: OperationCharacterExtract, Label: "角色卡提取", Category: "角色", OutputType: "json", SchemaKey: "character-breakdown/v1",
 			Description:    "从章节正文提取需要跨镜头保持一致的角色资产。",
 			Variables:      []PromptTemplateVariable{{Label: "项目名称", Placeholder: "{{项目名称}}"}, {Label: "章节名称", Placeholder: "{{章节名称}}"}, {Label: "项目画风", Placeholder: "{{项目画风}}"}},
-			DefaultContent: `你是短剧角色资产导演。只提取章节中实际出场、发言或对剧情产生明确作用，并且后续制作需要保持视觉或声音一致的角色。忽略系统播报、纯物件、无身份群众和没有持续角色价值的一次性路人；合并同一角色的姓名、专属称谓和别名。正文未明确的信息必须写“正文未明确”，不得自行改变人物关系、时代背景或编造编号式姓名。角色设定要具体、稳定、可用于后续三视图和视频一致性控制。`,
+			DefaultContent: `你是短剧角色资产导演。只提取章节中实际出场、发言或对剧情产生明确作用，并且后续制作需要保持视觉或声音一致的角色。忽略系统播报、纯物件、无身份群众和没有持续角色价值的一次性路人；合并同一角色的姓名、专属称谓和别名。正文未明确的信息必须写“正文未明确”，不得自行改变人物关系、时代背景或编造编号式姓名。角色设定要具体、稳定、可用于后续头部特写、身体三视图和视频一致性控制。` + "\n\n" + characterExtractionVisualRule,
 		},
 		{
 			Operation: OperationCharacterTurnaround, Label: "角色三视图", Category: "角色", OutputType: "text",
-			Description:    "按当前角色版本和项目画风生成正、侧、背三视图。",
+			Description:    "按当前角色版本和项目画风生成独立头部特写与不含头部的正、侧、背身体三视图。",
 			Variables:      []PromptTemplateVariable{{Label: "角色名称", Placeholder: "{{角色名称}}"}, {Label: "项目画风", Placeholder: "{{项目画风}}"}, {Label: "角色设定", Placeholder: "{{角色设定}}"}},
-			DefaultContent: `制作专业人物三视图设定表。画面严格分成三个等宽竖向区域，从左到右依次为正面全身、右侧面全身、背面全身。三个视角必须是同一角色、同一服装、同一发型、同一体型和同一比例，采用站立中性姿势，完整显示头顶到脚底。背景使用纯净中性浅色和均匀设定稿光线，只负责分离轮廓，不得改变项目画风的绘画或渲染媒介。禁止文字、边框、道具说明、表情变化和额外人物。`,
+			DefaultContent: `制作专业人物设定图。` + characterReferenceSheetLayout + `背景使用纯净中性浅色和均匀设定稿光线，只负责分离轮廓，不得改变项目画风的绘画或渲染媒介。禁止文字、边框、道具说明、表情变化和额外人物。`,
 		},
 		{
 			Operation: OperationShortDramaOutline, Label: "短剧大纲", Category: "项目", OutputType: "json", SchemaKey: "short-drama-outline/v1",
@@ -132,9 +136,10 @@ func protectedPromptContext(operation string, values map[string]string) string {
 			"【项目画风】\n" + values["项目画风"],
 			"【章节正文】\n" + values["章节正文"],
 			"【受保护输出契约】\n" + promptOutputContract(operation),
+			"【人物设定图固定规则】\n" + characterExtractionVisualRule,
 		}, "\n\n")
 	case OperationCharacterTurnaround:
-		return strings.Join([]string{"【角色名称】\n" + values["角色名称"], "【项目画风】\n" + values["项目画风"], "【角色设定】\n" + values["角色设定"]}, "\n\n")
+		return strings.Join([]string{"【角色名称】\n" + values["角色名称"], "【项目画风】\n" + values["项目画风"], "【角色设定】\n" + values["角色设定"], "【人物设定图固定规则】\n" + characterReferenceSheetLayout}, "\n\n")
 	case OperationShortDramaOutline:
 		return strings.Join([]string{
 			"【用户故事】\n" + values["用户故事"],
@@ -341,7 +346,7 @@ func StoryboardExecutionContract(durationRule string, countRule string) string {
 - 单镜头最多 2 名主要角色、1 个主运镜、1 条主要动作链、3 个 timeBeats 和 3 个 mustHave；超限必须拆镜或在固定镜头数内重新分配。
 - dialogue 只写本镜头实际念出的台词或简短旁白，字数上限按 1 秒最多约 5 个中文字符计算（至少 24 字）；超长台词/旁白必须拆镜或精简，不得用 dialogue 承载长段叙述。
 - characterIds 优先填写当前角色版本中的 assetId；角色只有名称、尚未确认资产时填写角色名称，服务端会保留名称引用。不要编造 ID；没有角色时返回空数组。
-- assetRefs 只能引用当前画布资产中的 nodeId；不要根据相似名称编造 ID。每镜最多 6 个，priority 越大表示越重要。
+- assetRefs 只能引用当前画布资产中的 nodeId；不要根据相似名称编造 ID。完整绑定本镜实际出现的场景、人物和道具，不按 6 个截断；SD2.5 视频最多参考 30 张图片，其他视频模型至少支持 10 张，提交时按模型分别校验图片、视频和音频数量。priority 越大表示越重要。
 - styleGuide 最多 120 个中文字符；visualPrompt 只描述首帧，videoPrompt 只描述运动和结尾状态。
 - 画幅比例由视频节点参数控制，提示词不得写入具体比例，也不要讨论画幅配置。
 - 只返回完整 JSON，不要 Markdown 或解释。
@@ -353,6 +358,7 @@ func characterExtractProtectedContext(values map[string]string) string {
 		fmt.Sprintf("【任务】\n从短剧项目《%s》的章节“%s”提取角色。", values["项目名称"], values["章节名称"]),
 		"【项目画风】\n" + values["项目画风"],
 		"【章节正文】\n" + values["章节正文"],
-		"【受保护输出契约】\n" + promptOutputContract(OperationCharacterExtract) + "\n严格 JSON 示例：{\"characters\":[{\"name\":\"角色名\",\"aliases\":[],\"role\":\"剧情定位与人物关系\",\"appearance\":\"稳定外貌\",\"clothing\":\"固定服装\",\"physique\":\"体型体态\",\"personality\":\"表演基线\",\"props\":\"\",\"consistencyPrompt\":\"跨镜头一致性约束\",\"multiViewPrompt\":\"三视图结构重点\",\"voiceLanguage\":\"语言口音\",\"voiceAge\":\"声音年龄感\",\"voiceTimbre\":\"音色语速力度\"}]}",
+		"【受保护输出契约】\n" + promptOutputContract(OperationCharacterExtract) + "\n严格 JSON 示例：{\"characters\":[{\"name\":\"角色名\",\"aliases\":[],\"role\":\"剧情定位与人物关系\",\"appearance\":\"稳定外貌\",\"clothing\":\"固定服装\",\"physique\":\"体型体态\",\"personality\":\"表演基线\",\"props\":\"\",\"consistencyPrompt\":\"跨镜头一致性约束\",\"multiViewPrompt\":\"独立头部特写＋不含头部的正面、右侧面、背面身体三视图，结合已确认的服装体态细节\",\"voiceLanguage\":\"语言口音\",\"voiceAge\":\"声音年龄感\",\"voiceTimbre\":\"音色语速力度\"}]}",
+		"【人物设定图固定规则】\n" + characterExtractionVisualRule,
 	}, "\n\n")
 }

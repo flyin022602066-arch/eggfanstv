@@ -15,6 +15,7 @@ const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 
 export async function executeVideoGeneration({
+    resolveReferenceLinks,
     nodeId,
     sourceNode,
     prompt,
@@ -35,6 +36,7 @@ export async function executeVideoGeneration({
     skillMetadata,
     taskContext,
     retryContext,
+    clientOperationId,
 }: CanvasGenerationExecution) {
     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
     const reuseSourceNode = canGenerateMediaInPlace(sourceNode, CanvasNodeType.Video);
@@ -56,6 +58,7 @@ export async function executeVideoGeneration({
             status: NODE_STATUS_LOADING,
             errorDetails: undefined,
             generationErrorCode: undefined,
+            outputParameterWarning: undefined,
             resourceReloadAvailable: undefined,
             failedPromptFingerprint: undefined,
             model: generationConfig.model,
@@ -64,6 +67,11 @@ export async function executeVideoGeneration({
             vquality: generationConfig.vquality,
             generateAudio: generationConfig.videoGenerateAudio,
             watermark: generationConfig.videoWatermark,
+            eggfansReferenceMode: generationConfig.videoEggfansReferenceMode,
+            nativeFace: generationConfig.videoNativeFace,
+            jiasuFaceMode: generationConfig.videoJiasuFaceMode,
+            jiasuFaceMask: generationConfig.videoJiasuFaceMask,
+            sd2FaceMask: generationConfig.videoSd2FaceMask,
             references: generationReferenceUrls(generationContext),
             ...videoGenerationMetadata,
             ...styleMetadata,
@@ -102,7 +110,9 @@ export async function executeVideoGeneration({
                 projectId,
                 nodeId: videoId,
                 ...retryContext,
+                ...(clientOperationId ? { clientOperationId } : {}),
                 mode: "video",
+                resolveReferenceLinks,
                 prompt: effectivePrompt,
                 config: generationConfig,
                 referenceImages: generationContext.referenceImages,
@@ -150,6 +160,7 @@ export async function executeAudioGeneration({
     taskContext,
     skillMetadata,
     retryContext,
+    clientOperationId,
 }: CanvasGenerationExecution) {
     const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
     const reuseSourceNode = canGenerateMediaInPlace(sourceNode, CanvasNodeType.Audio);
@@ -178,6 +189,7 @@ export async function executeAudioGeneration({
                 projectId,
                 nodeId: audioId,
                 ...retryContext,
+                ...(clientOperationId ? { clientOperationId } : {}),
                 mode: "audio",
                 prompt: effectivePrompt,
                 config: generationConfig,

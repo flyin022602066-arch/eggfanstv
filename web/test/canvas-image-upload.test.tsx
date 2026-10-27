@@ -7,11 +7,51 @@ import { CanvasNodeType } from "../src/types/canvas";
 import { isCanvasImageSourceNode } from "../src/lib/canvas/canvas-image-source";
 import { CanvasFileUploadContent } from "../src/components/canvas/canvas-file-upload-content";
 import { CanvasNodeActionContext } from "../src/components/canvas/canvas-node-action-context";
+import { CanvasNodeContent } from "../src/components/canvas/canvas-node-content";
 import { canvasThemes } from "../src/lib/canvas-theme";
 
 const file = { name: "photo.png", size: 1234, type: "image/png" };
 const placeholder = () => createImageUploadPlaceholder("upload", file, { x: 100, y: 200 }, { width: 1920, height: 1080 });
 const read = (path: string) => readFileSync(resolve(import.meta.dir, "../src", path), "utf8");
+
+describe("图片节点本地上传入口", () => {
+    const renderEmpty = (readOnly = false, locked = false, type = CanvasNodeType.Image) => renderToStaticMarkup(
+        <CanvasNodeActionContext.Provider value={{ upload: () => {} }}>
+            <CanvasNodeContent
+                node={{ id: "empty-image", type, title: "图片", position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { locked } }}
+                theme={canvasThemes.light}
+                readOnly={readOnly}
+                isEditingContent={false}
+                textareaRef={{ current: null }}
+                isBatchRoot={false}
+                batchCount={1}
+                batchExpanded={false}
+                batchOpening={false}
+                batchRecovering={false}
+                mentionReferences={[]}
+                onContentChange={() => {}}
+                onStopEditing={() => {}}
+            />
+        </CanvasNodeActionContext.Provider>,
+    );
+
+    test("空图片显示明确的本地文件选择按钮", () => {
+        expect(renderEmpty()).toContain("上传本地图片");
+        expect(renderEmpty()).toContain('type="button"');
+    });
+
+    test("空视频显示本地视频上传入口，只读和锁定时隐藏", () => {
+        expect(renderEmpty(false, false, CanvasNodeType.Video)).toContain("上传本地视频");
+        expect(renderEmpty(true, false, CanvasNodeType.Video)).not.toContain("上传本地视频");
+        expect(renderEmpty(false, true, CanvasNodeType.Video)).not.toContain("上传本地视频");
+    });
+
+    test("只读、锁定和配置节点不提供本地上传", () => {
+        expect(renderEmpty(true)).not.toContain("上传本地图片");
+        expect(renderEmpty(false, true)).not.toContain("上传本地图片");
+        expect(renderEmpty(false, false, CanvasNodeType.Config)).not.toContain("上传本地图片");
+    });
+});
 
 describe("图片上传占位", () => {
     for (const [width, height] of [[1920, 1080], [900, 1600], [800, 800], [4000, 500]]) {
@@ -89,7 +129,7 @@ describe("图片上传占位", () => {
         expect(create).toContain("if (!currentNode)");
         expect(create).toContain("fileUpload: undefined");
         const replace = hook.slice(hook.indexOf('const replaceNodeMedia'), hook.indexOf("const pasteSystemClipboard"));
-        expect(replace).toContain("await createFileNode(file, currentNode.position, nodeId)");
+        expect(replace).toContain("await createFileNode(file, currentNode.position, nodeId, expectedScope)");
         expect(create).toContain("original?.metadata?.content");
         expect(read("components/canvas/canvas-upload-modal.tsx")).toContain("onClose();\n            await pendingUpload;");
         expect(read("styles/globals.css")).toContain("prefers-reduced-motion: reduce");
@@ -123,6 +163,17 @@ test("音频与文本在传输前就有独立占位，可重试且不带模型�
         expect(node.metadata?.content).toBeUndefined();
         expect(node.metadata?.status).toBeUndefined();
         expect(interruptFileUpload(node).metadata?.fileUpload).toBe("error");
+    }
+});
+
+test("H.265 视频不需要浏览器解码即可创建上传节点，空 MIME 的 MOV 也可导入", async () => {
+    for (const [name, type] of [["hevc.mp4", "video/mp4"], ["hevc.mov", ""], ["hevc.mkv", "application/octet-stream"]]) {
+        const node = await createFileUploadPlaceholder("hevc", new File(["undecodable video"], name, { type }), { x: 100, y: 200 });
+        expect(node.type).toBe(CanvasNodeType.Video);
+        expect(node.title).toBe(name);
+        expect(node.metadata?.fileUpload).toBe("uploading");
+        expect(node.position.x + node.width / 2).toBe(100);
+        expect(node.metadata?.naturalWidth).toBeUndefined();
     }
 });
 

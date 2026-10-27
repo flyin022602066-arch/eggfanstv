@@ -1,6 +1,7 @@
 package httptransport
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -10,6 +11,14 @@ import (
 )
 
 const LaunchTokenHeader = "X-Desktop-Token"
+
+type desktopAuthenticatedKey struct{}
+
+// DesktopAuthenticated can only be set after the launch credential was verified.
+func DesktopAuthenticated(r *http.Request) bool {
+	trusted, _ := r.Context().Value(desktopAuthenticatedKey{}).(bool)
+	return trusted
+}
 
 func NewLaunchToken() (string, error) {
 	raw := make([]byte, 32)
@@ -39,7 +48,7 @@ func RequireLaunchToken(token string) func(http.Handler) http.Handler {
 				})
 				return
 			}
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), desktopAuthenticatedKey{}, true)))
 		})
 	}
 }

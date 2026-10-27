@@ -1,0 +1,10 @@
+{
+  "id": "jiasu-video",
+  "displayName": "极途 Gway",
+  "baseUrl": "https://www.gway.dev",
+  "catalogUrl": "https://www.gway.dev/pricing",
+  "catalogProtocol": "openai",
+  "presetVersion": 3,
+  "pinned": false,
+  "models": []
+}

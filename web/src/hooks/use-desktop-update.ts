@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 
-import { getSharedDesktopUpdateController, type DesktopUpdateController, type DesktopUpdateSnapshot } from "@/services/desktop-update";
+import { DESKTOP_UPDATE_CHECK_INTERVAL_MS, getSharedDesktopUpdateController, type DesktopUpdateController, type DesktopUpdateSnapshot } from "@/services/desktop-update";
 
 export function useDesktopUpdateBootstrap(controller: DesktopUpdateController = getSharedDesktopUpdateController()) {
     useEffect(() => {
         void controller.start();
+        const id = window.setInterval(() => void controller.check(), DESKTOP_UPDATE_CHECK_INTERVAL_MS);
+        return () => window.clearInterval(id);
     }, [controller]);
 }
 
@@ -23,8 +25,10 @@ export function useDesktopUpdate(controller: DesktopUpdateController = getShared
         persistBusy: snapshot.persistBusy,
         actionBusy: snapshot.actionBusy,
         runtime: snapshot.runtime,
+        check: controller.check,
         download: controller.download,
         install: controller.install,
+        downloadAndInstall: controller.downloadAndInstall,
         retry: controller.retry,
     };
 }

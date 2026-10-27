@@ -40,6 +40,7 @@ export type EditorStore = {
     load: (project: TimelineProject) => void;
     /** 应用一条编辑命令（唯一修改入口）。 */
     dispatch: (cmd: EditCommand) => void;
+    dispatchBatch: (commands: EditCommand[], expectedProject: TimelineProject) => boolean;
     undo: () => void;
     redo: () => void;
     /** 手势预览：临时应用命令到渲染态，不入历史。 */
@@ -140,6 +141,26 @@ export function createEditorStore(options: EditorStoreOptions = {}): UseBoundSto
                 }
                 set({ project: next, history: pushEditorHistory(history, next), isDirty: true, saveError: null });
                 scheduleSave();
+            },
+
+            dispatchBatch: (commands, expectedProject) => {
+                const { project, history, inPreview } = get();
+                if (!project || !history || project !== expectedProject || inPreview) {
+                    set({ saveError: "时间线已变化或正在拖拽，剪辑计划未应用，请重新分析。" });
+                    return false;
+                }
+                let next = project;
+                try {
+                    for (const command of commands) next = registry.apply(next, command);
+                } catch (error) {
+                    setSaveError(error);
+                    return false;
+                }
+                if (commands.length) {
+                    set({ project: next, history: pushEditorHistory(history, next), isDirty: true, saveError: null });
+                    scheduleSave();
+                }
+                return true;
             },
 
             undo: () => {

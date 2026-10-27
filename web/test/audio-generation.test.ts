@@ -5,6 +5,8 @@ import { buildNodeConfig } from "@/components/canvas/canvas-node-prompt-panel";
 import { audioSettingsSummary, audioSpeechProfile, buildAudioSpeechRequest, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { createModelChannel, defaultConfig, type AiConfig } from "@/stores/use-config-store";
+import { canvasSunoBody } from "@/lib/suno-generation";
+import { backendProviderConfig } from "@/services/api/generation-task";
 
 function audioNode(patch: Partial<CanvasNodeData> = {}): CanvasNodeData {
     return {
@@ -43,6 +45,18 @@ function enterpriseConfig(): AiConfig {
 }
 
 describe("enterprise MiniMax speech settings", () => {
+    test("Suno settings survive node config and task boundaries without changing speech channels", () => {
+        const channel = createModelChannel({ id: "suno", name: "Eggfans TV", baseUrl: "https://api.eggfans.com", interfaceType: "openai-audio", models: ["suno_music_open"], modelProfiles: [{ model: "suno_music_open", capability: "audio", protocol: "openai-audio" }] });
+        const values = JSON.stringify({ mode: "custom", mv: "chirp-v6-mini", title: "原创曲", tags: "piano", make_instrumental: false });
+        const original = { ...defaultConfig, channels: [channel], audioModel: "suno::suno_music_open" };
+        const config = buildNodeConfig(original, audioNode({ metadata: { model: original.audioModel, audioSunoParams: values } }), "audio", { capability: "audio" });
+        expect(config.audioSunoParams).toBe(values);
+        expect(audioSettingsSummary(config)).toContain("v6 Mini");
+        const backend = backendProviderConfig(config, "audio", "[Verse] 原创歌词");
+        expect(JSON.parse(backend.audioSunoParams!)).toEqual(canvasSunoBody(config, "[Verse] 原创歌词"));
+        expect(() => buildAudioSpeechRequest(config, "fixture")).toThrow("Suno");
+        expect(backendProviderConfig({ ...config, model: "gpt-4o-mini-tts" }, "audio")).not.toHaveProperty("audioSunoParams");
+    });
     test('blank speed stays 1 instead of clamping Number("") to the floor', () => {
         expect(normalizeAudioSpeedValue("", "minimax-speech-2.8-hd")).toBe("1");
         expect(normalizeAudioSpeedValue("  ", "gpt-4o-mini-tts")).toBe("1");

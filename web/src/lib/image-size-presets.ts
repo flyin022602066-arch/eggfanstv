@@ -86,7 +86,7 @@ export function imageSizePresets(profile: ImageCapabilityConfig): ImageResolutio
     const ratios = tiers.flatMap((tier) =>
         profile.size.values.flatMap((ratio) => {
             try {
-                const preset = imagePresetForRatio(tier, ratio);
+                const preset = declaredAspectRatioPreset(tier, ratio);
                 return pixels.some((pixel) => pixel.ratio === preset.ratio) ? [] : [preset];
             } catch {
                 return [];
@@ -94,6 +94,17 @@ export function imageSizePresets(profile: ImageCapabilityConfig): ImageResolutio
         }),
     );
     return [...pixels, ...ratios];
+}
+
+function declaredAspectRatioPreset(tier: ImageResolutionTier, ratio: string): ImageResolutionOption {
+    const dimensions = ratio.match(/^(\d+):(\d+)$/u);
+    if (!dimensions || !Number(dimensions[1]) || !Number(dimensions[2])) return imagePresetForRatio(tier, ratio);
+    const aspect = Number(dimensions[1]) / Number(dimensions[2]);
+    if (Math.max(aspect, 1 / aspect) <= 3) return imagePresetForRatio(tier, ratio);
+    const longest = { "1k": 1024, "2k": 2048, "4k": 4096 }[tier];
+    const width = Math.round(aspect >= 1 ? longest : longest * aspect);
+    const height = Math.round(aspect >= 1 ? longest / aspect : longest);
+    return { tier, ratio, width, height, size: `${width}x${height}` };
 }
 
 export function imagePresetValue(profile: ImageCapabilityConfig, preset: ImageResolutionOption) {

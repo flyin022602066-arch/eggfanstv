@@ -19,7 +19,7 @@ export function canGenerateMediaInPlace(sourceNode: CanvasNodeData | undefined, 
     if (sourceNode.metadata?.generationResultPlacement) return sourceNode.metadata.generationResultPlacement === "replace-node";
     if (!sourceNode.metadata?.content) return true;
     if (canvasMediaNodeRole(sourceNode) === "generator") return true;
-    if (canvasMediaNodeOrigin(sourceNode) === "generated" && Boolean((sourceNode.metadata?.composerContent || sourceNode.metadata?.prompt)?.trim())) return true;
+    if (canvasMediaNodeOrigin(sourceNode) === "generated") return true;
     // 兼容显式落点字段引入前创建的复制节点和版本节点。
     return Boolean(sourceNode.metadata?.copiedFromNodeId || sourceNode.metadata?.versionOfNodeId);
 }

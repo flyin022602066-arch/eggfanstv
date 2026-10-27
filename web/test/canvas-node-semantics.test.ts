@@ -50,6 +50,19 @@ describe("canvas media node semantics", () => {
         }
     });
 
+    test("clearing a generated result draft does not remove editing or generation controls", () => {
+        for (const type of [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio] as const) {
+            for (const composerContent of [undefined, "", "\n", " \n "]) {
+                const node = mediaNode(type, { nodeRole: "result", resultOrigin: "generated", content: `blob:${type}`, prompt: "original generation prompt", composerContent });
+                expect(canOpenCanvasNodePromptPanel(node)).toBe(true);
+                expect(getNodeGenerationMode(node)).toBe(type);
+            }
+            const referenceOnly = mediaNode(type, { content: `blob:${type}`, taskId: "completed-task", composerContent: "" });
+            expect(canOpenCanvasNodePromptPanel(referenceOnly)).toBe(true);
+            expect(getNodeGenerationMode(referenceOnly)).toBe(type);
+        }
+    });
+
     test("uploaded, library, and derived results do not acquire generation controls", () => {
         const imported = mediaNode(CanvasNodeType.Image, { nodeRole: "result", resultOrigin: "upload", content: "image", prompt: "filename" });
         const derived = mediaNode(CanvasNodeType.Video, { nodeRole: "result", resultOrigin: "derived", content: "video", prompt: "source prompt", videoTrimSourceNodeId: "source" });

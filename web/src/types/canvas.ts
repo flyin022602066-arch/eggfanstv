@@ -1,4 +1,5 @@
 import type { CanvasColorGrade } from "@/lib/canvas/canvas-color-grade";
+import type { JiasuFaceMaskOverrides } from "@/lib/jiasu-face-mask";
 import type { MediaConversionNodeState } from "@/lib/media-conversion/contracts";
 import type { AssetCategory } from "@/lib/asset-category";
 import type { PortraitTextureSettings } from "@/lib/canvas/canvas-portrait-texture";
@@ -37,6 +38,7 @@ export enum CanvasNodeType {
     ColorGrade = "colorgrade",
     MediaConversion = "media-conversion",
     BatchTable = "batch-table",
+    Director = "director",
 }
 
 /** Runtime IDs contributed by plugins share the persisted node type field. */
@@ -121,6 +123,10 @@ export type StoryboardRow = {
     camera: string;
     motion: string;
     timeBeats: string;
+    sceneAssetId?: string;
+    sceneName?: string;
+    sceneChange?: boolean;
+    propNames?: string[];
     imageGenerationPrompt: string;
     videoMotionPrompt: string;
     imagePromptTemplateVariables?: Record<string, string>;
@@ -240,6 +246,7 @@ export type CanvasNodeMetadata = {
     locked?: boolean;
     errorDetails?: string;
     generationErrorCode?: string;
+    outputParameterWarning?: string;
     resourceReloadAvailable?: boolean;
     failedPromptFingerprint?: string;
     failedInputFingerprint?: string;
@@ -255,6 +262,7 @@ export type CanvasNodeMetadata = {
     workflowParameters?: Record<string, unknown>;
     size?: string;
     quality?: string;
+    imageThinkingLevel?: string;
     transparentBackground?: string;
     count?: number;
     textCount?: number;
@@ -269,6 +277,9 @@ export type CanvasNodeMetadata = {
     audioPitch?: string;
     audioVolume?: string;
     audioInstructions?: string;
+    audioSunoParams?: string;
+    sunoTaskId?: string;
+    sunoClips?: Array<{ clipId?: string; title?: string; url?: string; storageKey?: string; mimeType?: string }>;
     references?: string[];
     naturalWidth?: number;
     naturalHeight?: number;
@@ -336,9 +347,12 @@ export type CanvasNodeMetadata = {
     actionBoardColumns?: number;
     taskId?: string;
     taskClientOperationId?: string;
+    taskClientOperationInput?: string;
+    taskClientOperationTerminal?: boolean;
     retryOf?: string;
     attemptGroupId?: string;
     taskStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;
+    taskSyncIssue?: "sync" | "timeout";
     taskProgress?: number;
     taskStage?: string;
     taskProvider?: string;
@@ -346,6 +360,9 @@ export type CanvasNodeMetadata = {
     taskCompletedAt?: string;
     taskDurationMs?: number;
     taskErrorCode?: string;
+    generationErrorSummary?: string;
+    taskFailureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
+    taskProviderRequestId?: string;
     taskOfficialStatus?: "pending" | "processing" | "completed" | "failed" | "cancelled";
     taskReceiptRecorded?: boolean;
     taskCreatedAt?: string;
@@ -365,6 +382,13 @@ export type CanvasNodeMetadata = {
     videoMergeSourceNodeIds?: string[];
     depthSourceNodeId?: string;
     arkPrivateAssetUpload?: string;
+    eggfansReferenceMode?: "uri" | "url";
+    nativeFace?: string;
+    jiasuFaceMode?: string;
+    jiasuFaceMask?: string;
+    jiasuFaceMasks?: JiasuFaceMaskOverrides;
+    sd2FaceMask?: string;
+    sd2FaceMasks?: JiasuFaceMaskOverrides;
     videoCameraMoveId?: string;
     videoCameraMovePrompt?: string;
     videoStartFrameNodeId?: string;
@@ -414,6 +438,9 @@ export type CanvasNodeMetadata = {
     directorSceneId?: string;
     directorShotId?: string;
     directorPreviewNodeId?: string;
+    directorCoverStorageKey?: string;
+    directorCoverUrl?: string;
+    directorCoverSceneUpdatedAt?: string;
     directorDepthNodeId?: string;
     directorNormalNodeId?: string;
     directorClayVideoNodeId?: string;

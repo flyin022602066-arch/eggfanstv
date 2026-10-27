@@ -2,6 +2,7 @@ import { buildApiUrl, isSystemProxyBaseUrl, resolveBackendApiUrl, type AiConfig 
 import { createClientId } from "@/lib/client-id";
 import { createChannelTransport } from "@/services/api/channel-transport";
 import type { GeminiPayload, ImageApiResponse, RequestOptions } from "@/services/api/image-contracts";
+import { isEggfansBaseUrl } from "@/lib/eggfans-seedance";
 
 export function aiApiUrl(config: Pick<AiConfig, "baseUrl">, path: string) {
     return buildApiUrl(config.baseUrl, path);
@@ -22,6 +23,7 @@ export async function postVolcengineArkImage(config: Parameters<typeof createCha
 export function geminiBaseUrl(config: Pick<AiConfig, "baseUrl">) {
     const normalizedBaseUrl = resolveBackendApiUrl(config.baseUrl).replace(/\/+$/, "");
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
+    if (isEggfansBaseUrl(normalizedBaseUrl) && lowerBaseUrl.endsWith("/v1")) return `${normalizedBaseUrl.slice(0, -3)}/v1beta`;
     return isSystemProxyBaseUrl(normalizedBaseUrl) || lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/v1beta") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1beta`;
 }
 

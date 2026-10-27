@@ -195,6 +195,20 @@ describe("逻辑模型选择", () => {
     });
 
 
+    test("显式声音选择优先于 Mints 模型默认，但不能开启模型不支持的音频", () => {
+        const model = "mints::doubao-seedance-2-0-mini-260615";
+        const profile = defaultModelCapabilityConfig("mints-seedance-video", "doubao-seedance-2-0-mini-260615");
+        profile.video!.generateAudio.default = false;
+        const config: AiConfig = {
+            ...defaultConfig,
+            channels: [{ id: "mints", name: "Mints", baseUrl: "https://example.invalid", apiKey: "offline-key", apiFormat: "openai", interfaceType: "mints-seedance-video", models: ["doubao-seedance-2-0-mini-260615"], modelProfiles: [{ model: "doubao-seedance-2-0-mini-260615", capability: "video", protocol: "mints-seedance-video", capabilityConfig: profile }] }],
+        };
+        expect(resolveModelVideoBooleanOptions(config, model, { videoGenerateAudio: "true" }).videoGenerateAudio).toBe("true");
+        expect(resolveModelVideoBooleanOptions(config, model, { videoGenerateAudio: "false" }).videoGenerateAudio).toBe("false");
+        profile.video!.generateAudio.supported = false;
+        expect(resolveModelVideoBooleanOptions(config, model, { videoGenerateAudio: "true" }).videoGenerateAudio).toBe("false");
+    });
+
     test("渠道视频能力配置优先于旧的全局 6 秒和 1:1 配置", () => {
         const model = "autodl-channel::MiniMax H3";
         const profile = defaultModelCapabilityConfig("autodl-comfyui", "MiniMax H3");
@@ -358,16 +372,19 @@ describe("逻辑模型选择", () => {
 
     test("逻辑模型容量使用同名细分模型的最大值", () => {
         const config = policyConfig();
-        expect(modelGroupReferenceLimits(config, "relay::cinema-text", "video")).toEqual({ maxImages: 1, maxVideos: 0, maxAudios: 1 });
+        expect(modelGroupReferenceLimits(config, "relay::cinema-text", "video")).toEqual({ maxImages: 10, maxVideos: 0, maxAudios: 1 });
     });
 });
 
 describe("画布连线能力", () => {
     test("超过所有视频模型的参考图上限时拒绝连线", () => {
         const config = policyConfig();
-        const nodes = [node("image-a", CanvasNodeType.Image), node("image-b", CanvasNodeType.Image), node("target", CanvasNodeType.Config, "video")];
-        const connections: CanvasConnection[] = [{ id: "existing", fromNodeId: "image-a", toNodeId: "target" }];
-        expect(canvasConnectionError(config, nodes, connections, { fromNodeId: "image-b", toNodeId: "target" })).toContain("最多支持 1");
+        const images = Array.from({ length: 11 }, (_, index) => node(`image-${index}`, CanvasNodeType.Image));
+        const nodes = [...images, node("target", CanvasNodeType.Config, "video")];
+        const connections: CanvasConnection[] = images.slice(0, 9).map((image) => ({ id: image.id, fromNodeId: image.id, toNodeId: "target" }));
+        expect(canvasConnectionError(config, nodes, connections, { fromNodeId: images[9]!.id, toNodeId: "target" })).toBe("");
+        connections.push({ id: images[9]!.id, fromNodeId: images[9]!.id, toNodeId: "target" });
+        expect(canvasConnectionError(config, nodes, connections, { fromNodeId: images[10]!.id, toNodeId: "target" })).toContain("最多支持 10");
     });
 
     test("存在音频细分模型时允许音频连接视频生成节点", () => {

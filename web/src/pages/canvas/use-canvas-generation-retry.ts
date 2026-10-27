@@ -26,6 +26,7 @@ import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
 import { generationFailureMetadata, shouldBlockAutomaticRetry } from "@/lib/generation-error";
+import { GenerationTaskObservationError } from "@/services/api/task-center";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -274,6 +275,7 @@ export function useCanvasGenerationRetry({
                                           vquality: generationConfig.vquality,
                                           generateAudio: generationConfig.videoGenerateAudio,
                                           watermark: generationConfig.videoWatermark,
+                                          eggfansReferenceMode: generationConfig.videoEggfansReferenceMode,
                                           ...videoGenerationMetadata,
                                           ...styleMetadata,
                                           ...skillMetadata,
@@ -396,7 +398,8 @@ export function useCanvasGenerationRetry({
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const failure = canvasGenerationFailureMetadata(error, submittedInput);
-                message.error(failure.errorDetails);
+                if (error instanceof GenerationTaskObservationError) message.warning(error.message);
+                else message.error(failure.errorDetails);
                 setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
             } finally {
                 finishGenerationRequest(node.id, controller);

@@ -42,3 +42,25 @@ func TestCatalogValidationRejectsUnsafeOrAmbiguousPresets(t *testing.T) {
 		})
 	}
 }
+
+func TestEggfansSD2PresetIncludesAllVideoModels(t *testing.T) {
+	for _, preset := range BuiltinChannels() {
+		if preset.ID != "eggfans-sd2" {
+			continue
+		}
+		if preset.BaseURL != "https://vip.eggfans.asia" || preset.CatalogURL != "" || preset.Pinned {
+			t.Fatal("SD2 must have its own editable endpoint and local catalog")
+		}
+		want := []string{"sd-2.5-A", "sd-2.5-B", "sd-2.5-C", "sd-2.5-D", "sd-2.5-E"}
+		if len(preset.Models) != len(want) {
+			t.Fatalf("SD2 model count = %d", len(preset.Models))
+		}
+		for index, profile := range preset.Models {
+			if profile.Model != want[index] || profile.Capability != "video" || profile.Protocol != "eggfans-sd2-video" {
+				t.Fatalf("unexpected SD2 model profile at %d", index)
+			}
+		}
+		return
+	}
+	t.Fatal("SD2 built-in channel is missing")
+}

@@ -56,6 +56,10 @@ func EnsureOfficialProtocolAdapter(ctx context.Context, interfaceType string) co
 
 func OfficialDeclarativeVideoInterface(interfaceType string) (string, bool) {
 	switch strings.TrimSpace(interfaceType) {
+	case "jiasu-video":
+		return "佳速视频", true
+	case "mints-seedance-video":
+		return "Mints Seedance", true
 	case string(model.ChannelInterfaceAgnesVideo):
 		return "Agnes", true
 	case string(model.ChannelInterfaceMiniMaxVideo):
@@ -66,6 +70,8 @@ func OfficialDeclarativeVideoInterface(interfaceType string) (string, bool) {
 		return "Novita", true
 	case string(model.ChannelInterfaceNewAPIChannel2):
 		return "NewAPI Video Generations", true
+	case string(model.ChannelInterfaceEggfansSeedanceVideo), string(model.ChannelInterfaceEggfansVolcVideo):
+		return "Eggfans Seedance", true
 	case string(model.ChannelInterfaceNewAPIChannel1):
 		return "NewAPI 媒体任务", true
 	case string(model.ChannelInterfaceXAIVideo):

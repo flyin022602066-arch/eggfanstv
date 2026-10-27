@@ -5,7 +5,10 @@ import { prepareDesktopEditorsForUpdate, registerDesktopUpdatePreparation } from
 import {
     createDesktopUpdateController,
     desktopUpdateActionLabel,
+    desktopUpdateDetailLabel,
     desktopUpdateProgressLabel,
+    formatDesktopUpdateRemaining,
+    hasResumableDesktopUpdate,
     formatDesktopVersionLabel,
     hasDesktopUpdateBinding,
     parseDesktopUpdateState,
@@ -96,6 +99,8 @@ function state(partial: Partial<DesktopUpdateState> & Pick<DesktopUpdateState, "
         releaseNotes: "",
         downloadedBytes: 0,
         totalBytes: 0,
+        bytesPerSecond: 0,
+        reconnecting: false,
         error: "",
         ...partial,
     };
@@ -170,6 +175,39 @@ function collect(controller: ReturnType<typeof createDesktopUpdateController>) {
     };
 }
 
+describe("desktop update progress", () => {
+    test("reads speed and reconnect state from the native contract", () => {
+        const parsed = parseDesktopUpdateState({ status: "downloading", downloadedBytes: 10, totalBytes: 20, bytesPerSecond: "2048", reconnecting: true });
+        expect(parsed.bytesPerSecond).toBe(2048);
+        expect(parsed.reconnecting).toBe(true);
+        expect(parseDesktopUpdateState({ status: "downloading", reconnecting: "yes" }).reconnecting).toBe(false);
+    });
+
+    test("shows speed with time left, then falls back to amounts or connecting", () => {
+        const mb = 1024 * 1024;
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", downloadedBytes: 30 * mb, totalBytes: 150 * mb, bytesPerSecond: 2 * mb }))).toBe("2.0 MB/s · 剩余约 1 分钟");
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", downloadedBytes: 30 * mb, totalBytes: 150 * mb, bytesPerSecond: 512 * 1024 }))).toBe("512 KB/s · 剩余约 4 分钟");
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", downloadedBytes: 30 * mb, totalBytes: 150 * mb }))).toBe("30 MB / 150 MB");
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", totalBytes: 150 * mb }))).toBe("正在连接");
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", downloadedBytes: 30 * mb, totalBytes: 150 * mb, bytesPerSecond: mb, reconnecting: true }))).toBe("网络中断，正在重新连接");
+        expect(desktopUpdateDetailLabel(state({ status: "error", error: "网络不稳定，已保留下载进度" }))).toBe("网络不稳定，已保留下载进度");
+    });
+
+    test("formats remaining time without false precision", () => {
+        expect(formatDesktopUpdateRemaining(null)).toBe("");
+        expect(formatDesktopUpdateRemaining(20)).toBe("剩余不到 1 分钟");
+        expect(formatDesktopUpdateRemaining(61)).toBe("剩余约 2 分钟");
+        expect(formatDesktopUpdateRemaining(3600)).toBe("剩余约 1 小时");
+        expect(formatDesktopUpdateRemaining(5400)).toBe("剩余约 1 小时 30 分钟");
+    });
+
+    test("only a failed partial download is resumable", () => {
+        expect(hasResumableDesktopUpdate(state({ status: "error", downloadedBytes: 5, totalBytes: 10 }))).toBe(true);
+        expect(hasResumableDesktopUpdate(state({ status: "error", downloadedBytes: 0, totalBytes: 10 }))).toBe(false);
+        expect(hasResumableDesktopUpdate(state({ status: "downloading", downloadedBytes: 5, totalBytes: 10 }))).toBe(false);
+    });
+});
+
 describe("desktop update parsing", () => {
     test("reads the frozen JSON contract fields and ignores unknown status", () => {
         expect(
@@ -189,6 +227,8 @@ describe("desktop update parsing", () => {
             releaseNotes: "修复保存",
             downloadedBytes: 12,
             totalBytes: 40,
+            bytesPerSecond: 0,
+            reconnecting: false,
             error: "",
         });
         expect(parseDesktopUpdateState({ status: "nope", error: "boom" }).status).toBe("error");
@@ -430,7 +470,7 @@ describe("desktop update controller", () => {
         third.stop();
     });
 
-    test("startup check failures keep the installed version and expose a working retry", async () => {
+    test("startup check failures keep the installed version and retry in the background", async () => {
         const mock = mockBinding(state({ status: "idle", currentVersion: "v1.5.1" }));
         mock.binding.CheckForUpdate = async () => {
             mock.calls.check += 1;
@@ -448,37 +488,91 @@ describe("desktop update controller", () => {
         expect(view.latest().state.status).toBe("error");
         expect(userFacingDesktopUpdateError(view.latest().state.error)).toBe("更新没有完成，请再试一次。");
         expect(view.latest().state.currentVersion).toBe("v1.5.1");
-        expect(shouldShowDesktopUpdaterControls(view.latest()!)).toBe(true);
+        expect(shouldShowDesktopUpdaterControls(view.latest()!)).toBe(false);
         mock.binding.CheckForUpdate = async () => {
             mock.calls.check += 1;
             return state({ status: "available", latestVersion: "v1.5.5" });
         };
-        await controller.retry();
+        await controller.check();
         expect(mock.calls.check).toBe(2);
         expect(view.latest().state.status).toBe("available");
         view.stop();
     });
 
-    test("an up-to-date desktop can manually check again after a new release", async () => {
+    test("an up-to-date desktop checks again in the background after a new release", async () => {
         const mock = mockBinding(state({ status: "idle", currentVersion: "v1.5.4", latestVersion: "v1.5.4" }));
         const controller = createDesktopUpdateController({ getBinding: () => mock.binding, isDesktopRuntime: () => true, scheduler: { interval: () => () => {} } });
         await controller.start();
-        expect(shouldShowDesktopUpdaterControls(controller.getSnapshot())).toBe(true);
-        expect(desktopUpdateActionLabel("idle")).toBe("检查更新");
+        expect(shouldShowDesktopUpdaterControls(controller.getSnapshot())).toBe(false);
         const successfulCheck = mock.binding.CheckForUpdate!;
         mock.binding.CheckForUpdate = async () => {
             mock.calls.check += 1;
             throw new Error("无法检查更新");
         };
-        await controller.retry();
+        await controller.check();
         expect(controller.getSnapshot().state.status).toBe("error");
         expect(controller.getSnapshot().state.latestVersion).toBe("v1.5.4");
         mock.binding.CheckForUpdate = successfulCheck;
         mock.setState(state({ status: "available", latestVersion: "v1.5.5" }));
-        await controller.retry();
+        await controller.check();
         expect(mock.calls.check).toBe(3);
         expect(mock.calls.download).toBe(0);
         expect(controller.getSnapshot().state.status).toBe("available");
+        expect(shouldShowDesktopUpdaterControls(controller.getSnapshot())).toBe(true);
+        controller.dispose();
+    });
+
+    test("background check refreshes an available release before download", async () => {
+        const mock = mockBinding(state({ status: "available", latestVersion: "v1.5.2" }));
+        const controller = createDesktopUpdateController({ getBinding: () => mock.binding, isDesktopRuntime: () => true, scheduler: { interval: () => () => {} } });
+        await controller.start();
+        mock.setState(state({ status: "available", latestVersion: "v1.5.3" }));
+        await controller.check();
+        expect(mock.calls.check).toBe(2);
+        expect(controller.getSnapshot().state.latestVersion).toBe("v1.5.3");
+        controller.dispose();
+    });
+
+    test("one click downloads a verified update then installs only after saving", async () => {
+        const mock = mockBinding(state({ status: "available", latestVersion: "v1.5.2" }));
+        mock.holdDownload();
+        let persistCalls = 0;
+        const controller = createDesktopUpdateController({
+            getBinding: () => mock.binding,
+            isDesktopRuntime: () => true,
+            persistWorkspace: async () => { persistCalls += 1; },
+            scheduler: { interval: () => () => {} },
+        });
+        await controller.start();
+        const update = controller.downloadAndInstall();
+        expect(mock.calls.download).toBe(1);
+        expect(mock.calls.install).toBe(0);
+        mock.finishDownload(state({ status: "ready", latestVersion: "v1.5.2" }));
+        await update;
+        expect(persistCalls).toBe(1);
+        expect(mock.calls.install).toBe(1);
+        controller.dispose();
+    });
+
+    test("one click does not install if download fails and can retry", async () => {
+        const mock = mockBinding(state({ status: "available", latestVersion: "v1.5.2" }));
+        mock.holdDownload();
+        const controller = createDesktopUpdateController({
+            getBinding: () => mock.binding,
+            isDesktopRuntime: () => true,
+            persistWorkspace: async () => undefined,
+            scheduler: { interval: () => () => {} },
+        });
+        await controller.start();
+        const first = controller.downloadAndInstall();
+        mock.failDownload(new Error("network failed"));
+        await first;
+        expect(controller.getSnapshot().state.status).toBe("error");
+        expect(mock.calls.install).toBe(0);
+        mock.setState(state({ status: "ready", latestVersion: "v1.5.2" }));
+        await controller.downloadAndInstall();
+        expect(mock.calls.download).toBe(2);
+        expect(mock.calls.install).toBe(1);
         controller.dispose();
     });
 });

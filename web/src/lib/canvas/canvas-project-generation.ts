@@ -1,4 +1,4 @@
-import { type GenerationTask } from "@/services/api/task-center";
+import { GenerationTaskResultSyncError, type GenerationTask } from "@/services/api/task-center";
 import { backendProviderConfig, logicalModelIDForConfig, runBackendGenerationTask, type GenerationTaskDependencies } from "@/services/api/generation-task";
 import { configuredModelMatchesCapability, defaultConfig, normalizeModelOptionValue, normalizeRunningHubCapability, resolveModelRequestConfig, type AiConfig, type WorkflowFieldMapping } from "@/stores/use-config-store";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -8,6 +8,9 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
+import { isJiasuSdModel } from "@/lib/jiasu-face-mask";
+import { isEggfansSd2DModel } from "@/lib/eggfans-sd2-face-mask";
+import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { modelCapabilityConfigFor, workflowFieldCurrentValue, workflowFieldHasStoredValue, workflowFieldKey, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowOutputSizeValue, workflowVideoFieldsFromJson } from "@/lib/model-capabilities";
 import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveVideoOperation, type ModelGenerationDefaults, type ModelRequirements } from "@/lib/model-selection";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
@@ -18,6 +21,9 @@ import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-p
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError } from "@/lib/user-scope-guard";
+import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
+import type { persistCanvasGenerationTarget } from "@/services/canvas-generation-target";
 
 export async function runBackendCanvasGenerationTask(
     {
@@ -36,6 +42,8 @@ export async function runBackendCanvasGenerationTask(
         clientOperationId,
         retryOf,
         attemptGroupId,
+        expectedScope,
+        resolveReferenceLinks,
     }: {
         projectId: string;
         nodeId: string;
@@ -52,6 +60,8 @@ export async function runBackendCanvasGenerationTask(
         clientOperationId?: string;
         retryOf?: string;
         attemptGroupId?: string;
+        expectedScope?: import("@/lib/user-scope-guard").CapturedUserScope;
+        resolveReferenceLinks?: import("@/services/api/reference-link-replacement").ResolveReferenceLinks;
     },
     dependencies?: GenerationTaskDependencies,
 ) {
@@ -72,6 +82,8 @@ export async function runBackendCanvasGenerationTask(
             clientOperationId,
             retryOf,
             attemptGroupId,
+            expectedScope,
+            resolveReferenceLinks,
         },
         dependencies,
     );
@@ -124,23 +136,48 @@ export async function runCanvasGenerationTaskToConsumer(
         bindTask(task: GenerationTask): void;
         consumeTask(task: GenerationTask): Promise<void>;
         runTask?: (options: Parameters<typeof runBackendCanvasGenerationTask>[0]) => ReturnType<typeof runBackendCanvasGenerationTask>;
+        prepareTarget?: typeof persistCanvasGenerationTarget;
     },
 ) {
     return runGenerationOperationOnce(input.clientOperationId, async () => {
+        const expectedScope = input.expectedScope ?? captureUserScope();
+        if (input.mode === "image") {
+            const prepare = dependencies.prepareTarget ?? (await import("@/services/canvas-generation-target")).persistCanvasGenerationTarget;
+            await prepare({ ...input, expectedScope });
+        }
+        if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        assertUserScope(expectedScope);
         let completedTask: GenerationTask | undefined;
         const result = await (dependencies.runTask ?? runBackendCanvasGenerationTask)({
             ...input,
+            expectedScope,
             onTaskCreated: (task) => {
+                if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+                assertUserScope(expectedScope);
                 input.onTaskCreated?.(task);
                 dependencies.bindTask(task);
                 if (task.status === "succeeded") completedTask = task;
             },
         });
+        if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        assertUserScope(expectedScope);
         if (!completedTask) throw new Error("生成任务缺少成功终态");
         const taskForConsumer = input.mode === "text" && completedTask.type === "canvas_text" && result.text
             ? hydrateCompletedTextTask(completedTask, result.text)
             : completedTask;
-        await dependencies.consumeTask(taskForConsumer);
+        try {
+            await dependencies.consumeTask(taskForConsumer);
+            if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+            assertUserScope(expectedScope);
+        } catch (error) {
+            if (isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError")) throw error;
+            const cause = error instanceof CanvasGenerationDurableAckError ? error.cause : error;
+            dependencies.bindTask({
+                ...taskForConsumer,
+                failureDiagnostics: { ...taskForConsumer.failureDiagnostics, source: "client_result", executionResult: "completed", stage: "画布应用结果", summary: cause instanceof Error ? cause.message : "画布应用结果失败", capturedAt: new Date().toISOString() },
+            });
+            throw error instanceof CanvasGenerationDurableAckError ? error : new CanvasGenerationDurableAckError(error);
+        }
         return result;
     });
 }
@@ -177,6 +214,8 @@ export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata
         taskCompletedAt: task.completedAt,
         taskDurationMs: task.startedAt && task.completedAt ? Math.max(0, Date.parse(task.completedAt) - Date.parse(task.startedAt)) : undefined,
         taskErrorCode: task.errorCode,
+        taskFailureDiagnostics: task.failureDiagnostics,
+        taskProviderRequestId: task.providerRequestId,
         taskOfficialStatus: task.officialStatus,
         taskReceiptRecorded: task.receiptRecorded,
         taskCreatedAt: task.createdAt || task.created_at,
@@ -191,6 +230,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
         status,
         errorDetails: undefined,
         generationErrorCode: undefined,
+        generationErrorSummary: undefined,
         resourceReloadAvailable: undefined,
         failedPromptFingerprint: undefined,
         failedInputFingerprint: undefined,
@@ -207,6 +247,8 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
     delete next.taskCompletedAt;
     delete next.taskDurationMs;
     delete next.taskErrorCode;
+    delete next.taskFailureDiagnostics;
+    delete next.taskProviderRequestId;
     delete next.taskOfficialStatus;
     delete next.taskReceiptRecorded;
     delete next.taskCreatedAt;
@@ -241,6 +283,7 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
         model: config.model,
         size: config.size,
         quality: config.quality,
+        imageThinkingLevel: config.imageThinkingLevel,
         transparentBackground: config.transparentBackground,
         count,
         references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
@@ -281,6 +324,7 @@ export function buildAudioGenerationMetadata(config: AiConfig): CanvasNodeMetada
         audioPitch: config.audioPitch,
         audioVolume: config.audioVolume,
         audioInstructions: config.audioInstructions,
+        audioSunoParams: config.audioSunoParams,
     };
 }
 
@@ -367,6 +411,8 @@ export function buildVideoGenerationMetadata(
         videoCameraMovePrompt: metadata?.videoCameraMovePrompt,
         videoStartFrameNodeId: startFrame,
         videoEndFrameNodeId: endFrame,
+        ...(config && isJiasuSdModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model) ? { jiasuFaceMask: metadata?.jiasuFaceMask ?? config.videoJiasuFaceMask, jiasuFaceMasks: metadata?.jiasuFaceMasks } : {}),
+        ...(config && isEggfansSd2DModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model) ? { sd2FaceMask: metadata?.sd2FaceMask ?? config.videoSd2FaceMask, sd2FaceMasks: metadata?.sd2FaceMasks } : {}),
     };
 }
 
@@ -458,6 +504,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const requestedConfig: AiConfig = {
         ...config,
         quality: node?.metadata?.quality ?? workflowParameterValue("quality") ?? config.quality ?? defaultConfig.quality,
+        imageThinkingLevel: node?.metadata?.imageThinkingLevel ?? config.imageThinkingLevel,
         size: workflowProvider === "model"
             ? node?.metadata?.size ?? config.size ?? defaultConfig.size
             : workflowOutputSize || node?.metadata?.size || config.size || defaultConfig.size,
@@ -467,6 +514,11 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoGenerateAudio: node?.metadata?.generateAudio ?? config.videoGenerateAudio ?? defaultConfig.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark ?? config.videoWatermark ?? defaultConfig.videoWatermark,
         videoArkPrivateAssetUpload: node?.metadata?.arkPrivateAssetUpload ?? config.videoArkPrivateAssetUpload ?? defaultConfig.videoArkPrivateAssetUpload,
+        videoEggfansReferenceMode: node?.metadata?.eggfansReferenceMode ?? config.videoEggfansReferenceMode ?? defaultConfig.videoEggfansReferenceMode,
+        videoNativeFace: (node?.metadata?.nativeFace ?? config.videoNativeFace ?? defaultConfig.videoNativeFace) === "true" ? "true" : "false",
+        videoJiasuFaceMode: node?.metadata?.jiasuFaceMode ?? config.videoJiasuFaceMode ?? defaultConfig.videoJiasuFaceMode,
+        videoJiasuFaceMask: node?.metadata?.jiasuFaceMask ?? config.videoJiasuFaceMask ?? defaultConfig.videoJiasuFaceMask,
+        videoSd2FaceMask: node?.metadata?.sd2FaceMask ?? config.videoSd2FaceMask ?? defaultConfig.videoSd2FaceMask,
         ...resolveAudioSpeechSettings(preferredModel, {
             audioVoice: node?.metadata?.audioVoice ?? config.audioVoice,
             audioFormat: node?.metadata?.audioFormat ?? config.audioFormat,
@@ -474,6 +526,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
             audioPitch: node?.metadata?.audioPitch ?? config.audioPitch,
             audioVolume: node?.metadata?.audioVolume ?? config.audioVolume,
             audioInstructions: node?.metadata?.audioInstructions ?? config.audioInstructions,
+            audioSunoParams: node?.metadata?.audioSunoParams ?? config.audioSunoParams,
         }),
         count: String(node?.metadata?.count ?? (mode === "image" ? config.canvasImageCount || config.count || defaultConfig.count : config.count || defaultConfig.count)),
     };
@@ -534,13 +587,25 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoGenerateAudio: generationDefaults.videoGenerateAudio || requestedConfig.videoGenerateAudio,
         videoWatermark: generationDefaults.videoWatermark || requestedConfig.videoWatermark,
         videoArkPrivateAssetUpload: requestedConfig.videoArkPrivateAssetUpload,
+        videoEggfansReferenceMode: requestedConfig.videoEggfansReferenceMode,
+        videoNativeFace: requestedConfig.videoNativeFace,
+        videoJiasuFaceMode: requestedConfig.videoJiasuFaceMode,
         count: generationDefaults.count || requestedConfig.count,
     };
+}
+
+export function buildMaskEditGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, overrides: Partial<Pick<AiConfig, "model" | "imageModel" | "size" | "quality" | "count" | "transparentBackground">> = {}): AiConfig {
+    const model = resolveCanvasGenerationModel(config, overrides.imageModel || overrides.model || config.imageModel, "image");
+    const source = node ? { ...node, metadata: { ...node.metadata, model } } : undefined;
+    return { ...buildGenerationConfig(config, source, "image"), ...overrides, model, imageModel: model };
 }
 
 export function resolveCanvasGenerationModel(config: AiConfig, model: string | undefined, mode: CanvasNodeGenerationMode): string {
     if (!model) return "";
     const normalized = normalizeModelOptionValue(model, config.channels);
+    // Keep an explicit paid-tier choice when its catalog entry disappears.
+    // Validation will report unavailable instead of choosing a standard default.
+    if (mode === "video" && seedancePortraitModel(model)) return normalized || model;
     if (!normalized) return "";
     return configuredModelMatchesCapability(config, normalized, mode) ? normalized : "";
 }

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -43,44 +44,45 @@ type SkillEffectiveUser struct {
 }
 
 type SkillItem struct {
-	SkillID         string               `json:"skillId"`
-	SkillName       string               `json:"skillName"`
-	Description     string               `json:"description"`
-	Instruction     string               `json:"instruction,omitempty"`
-	VersionID       string               `json:"versionId"`
-	Version         string               `json:"version"`
-	ContentHash     string               `json:"contentHash"`
-	FileCount       int                  `json:"fileCount"`
-	TotalBytes      int64                `json:"totalBytes"`
-	SourceType      string               `json:"sourceType"`
-	SourceURL       string               `json:"sourceUrl"`
-	SourceRef       string               `json:"sourceRef"`
-	SourceSubdir    string               `json:"sourceSubdir"`
-	SourceCommit    string               `json:"sourceCommit"`
-	SyncStatus      string               `json:"syncStatus"`
-	SyncError       string               `json:"syncError,omitempty"`
-	AutoUpdate      bool                 `json:"autoUpdate"`
-	LastCheckedAt   *time.Time           `json:"lastCheckedAt,omitempty"`
-	LastSyncedAt    *time.Time           `json:"lastSyncedAt,omitempty"`
-	Status          int                  `json:"status"`
-	MarkdownURL     string               `json:"markdownUrl"`
-	CreatedAt       time.Time            `json:"createdAt"`
-	UpdatedAt       time.Time            `json:"updatedAt"`
-	Source          int                  `json:"source"`
-	Tag             string               `json:"tag"`
-	SortWeight      int                  `json:"sortWeight"`
-	IsPrivate       bool                 `json:"isPrivate"`
-	LikeCount       int64                `json:"likeCount"`
-	IsLike          bool                 `json:"isLike"`
-	OwnerUID        string               `json:"ownerUid"`
-	EffectiveUser   SkillEffectiveUser   `json:"effectiveUser"`
-	OriginalSkillID *string              `json:"originalSkillId"`
-	ShowcaseMedia   []SkillShowcaseMedia `json:"showcaseMedia"`
-	AddedCount      int64                `json:"addedCount"`
-	IsTest          bool                 `json:"isTest"`
-	ExtraInfo       string               `json:"extraInfo"`
-	IsAdded         bool                 `json:"isAdded"`
-	IsOwner         bool                 `json:"isOwner"`
+	SkillID          string               `json:"skillId"`
+	SkillName        string               `json:"skillName"`
+	Description      string               `json:"description"`
+	Instruction      string               `json:"instruction,omitempty"`
+	VersionID        string               `json:"versionId"`
+	Version          string               `json:"version"`
+	ContentHash      string               `json:"contentHash"`
+	FileCount        int                  `json:"fileCount"`
+	TotalBytes       int64                `json:"totalBytes"`
+	SourceType       string               `json:"sourceType"`
+	SourceURL        string               `json:"sourceUrl"`
+	SourceRef        string               `json:"sourceRef"`
+	SourceSubdir     string               `json:"sourceSubdir"`
+	SourceCommit     string               `json:"sourceCommit"`
+	SyncStatus       string               `json:"syncStatus"`
+	SyncError        string               `json:"syncError,omitempty"`
+	AutoUpdate       bool                 `json:"autoUpdate"`
+	LastCheckedAt    *time.Time           `json:"lastCheckedAt,omitempty"`
+	LastSyncedAt     *time.Time           `json:"lastSyncedAt,omitempty"`
+	Status           int                  `json:"status"`
+	MarkdownURL      string               `json:"markdownUrl"`
+	CreatedAt        time.Time            `json:"createdAt"`
+	UpdatedAt        time.Time            `json:"updatedAt"`
+	Source           int                  `json:"source"`
+	Tag              string               `json:"tag"`
+	SortWeight       int                  `json:"sortWeight"`
+	IsPrivate        bool                 `json:"isPrivate"`
+	LikeCount        int64                `json:"likeCount"`
+	IsLike           bool                 `json:"isLike"`
+	OwnerUID         string               `json:"ownerUid"`
+	EffectiveUser    SkillEffectiveUser   `json:"effectiveUser"`
+	OriginalSkillID  *string              `json:"originalSkillId"`
+	ShowcaseMedia    []SkillShowcaseMedia `json:"showcaseMedia"`
+	AddedCount       int64                `json:"addedCount"`
+	IsTest           bool                 `json:"isTest"`
+	ExtraInfo        string               `json:"extraInfo"`
+	Has15SecondLimit bool                 `json:"has15SecondLimit"`
+	IsAdded          bool                 `json:"isAdded"`
+	IsOwner          bool                 `json:"isOwner"`
 }
 
 type SkillCategory struct {
@@ -311,10 +313,16 @@ func (s *Service) skillItems(userID string, skills []model.Skill, includeInstruc
 			Source: skill.Source, Tag: skill.Tag, SortWeight: skill.SortWeight, IsPrivate: skill.IsPrivate,
 			LikeCount: metric.LikeCount, IsLike: state.Liked, OwnerUID: skill.OwnerID,
 			EffectiveUser: SkillEffectiveUser{Name: ownerName, AvatarURL: ownerAvatarURL, UID: skill.OwnerID}, ShowcaseMedia: showcaseMedia,
-			AddedCount: metric.AddedCount, ExtraInfo: skill.ExtraInfo, IsAdded: state.Added || skill.OwnerID == userID, IsOwner: skill.OwnerID == userID,
+			AddedCount: metric.AddedCount, ExtraInfo: skill.ExtraInfo, Has15SecondLimit: skillHas15SecondLimit(skill.Name, skill.Description, skill.Instruction), IsAdded: state.Added || skill.OwnerID == userID, IsOwner: skill.OwnerID == userID,
 		})
 	}
 	return items, nil
+}
+
+var skill15SecondLimitPattern = regexp.MustCompile(`(?i)(?:15\s*(?:秒|s|sec(?:ond)?s?)|十五秒|fifteen[- ]second)`)
+
+func skillHas15SecondLimit(name, description, instruction string) bool {
+	return skill15SecondLimitPattern.MatchString(strings.Join([]string{name, description, instruction}, "\n"))
 }
 
 // 所有详情和关系写入都先经过同一可见性边界，避免私有技能通过加入、收藏或画布接口泄露正文。

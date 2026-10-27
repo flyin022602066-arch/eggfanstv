@@ -1,4 +1,4 @@
-import { BookOpen, Bot, ChevronRight, Home, PanelLeftClose, PanelLeftOpen, Plus, Settings2, Sun, Moon } from "lucide-react";
+import { BookOpen, Bot, ChevronLeft, ChevronRight, Home, Plug, Plus, Settings2, Sun, Moon } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
@@ -49,9 +49,11 @@ function buildNav(features: FeatureAvailability): { groups: WorkspaceNavGroup[];
             items: [
                 { id: "home", title: "首页", icon: Home, to: "/" },
                 { ...toolItem("canvas", "/project"), title: "项目" },
+                toolItem("music", "/music"),
                 { ...toolItem("assets", "/assets"), title: "资产" },
                 { id: "skills", title: "技能库", icon: BookOpen, to: "/skills" },
                 { id: "settings:channels", title: "模型配置", icon: Settings2, to: "/settings?section=channels" },
+                { id: "agents", title: "Eggfans MCP", icon: Plug, to: "/agents" },
             ],
         },
     ];
@@ -68,7 +70,7 @@ function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse }: { co
         return (
             <div className="app-workspace-sidebar-rail-header shrink-0">
                 <button type="button" className="app-workspace-sidebar-rail-button" aria-label="展开侧栏菜单" title="展开侧栏菜单" onClick={onExpand}>
-                    <PanelLeftOpen className="size-4" strokeWidth={1.7} />
+                    <ChevronRight className="size-4" strokeWidth={1.7} />
                 </button>
             </div>
         );
@@ -85,7 +87,7 @@ function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse }: { co
                 </span>
             </Link>
             <button type="button" className="app-workspace-sidebar-collapse-button" aria-label="收起侧栏" title="收起侧栏" onClick={onCollapse}>
-                <PanelLeftClose className="size-4" strokeWidth={1.7} />
+                <ChevronLeft className="size-4" strokeWidth={1.7} />
             </button>
         </div>
     );
@@ -303,11 +305,12 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
                         ))}
                     </div>
                 ) : null}
-                <WorkspaceSidebarUpdate collapsed={collapsed} />
-                <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} className="flex min-h-9 items-center justify-center gap-2 rounded-lg text-foreground/65 hover:bg-foreground/5 hover:text-foreground focus-visible:outline focus-visible:outline-2">
-                    {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-                    {!collapsed && <span className="text-sm">{theme === "dark" ? "浅色模式" : "深色模式"}</span>}
-                </AnimatedThemeToggler>
+                <div className={cn("app-workspace-sidebar-utility-row", collapsed && "is-collapsed")}>
+                    <WorkspaceSidebarUpdate collapsed={collapsed} />
+                    <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} className="app-workspace-theme-action">
+                        {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+                    </AnimatedThemeToggler>
+                </div>
             </div>
         </div>
     );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
 import { latchCanvasConnectionApproach, type CanvasConnectionApproach } from "@/lib/canvas/canvas-connection-tilt";
@@ -9,17 +9,19 @@ import { batchSourceRestriction, buildBatchConnectionCreateRequest, hasBatchConn
 import { batchReferenceHandleAtY } from "@/lib/canvas/canvas-batch-table";
 import { connectedNodeCenterFromEdgeDrop } from "@/lib/canvas/canvas-connected-node-placement";
 import { canvasConnectionError } from "@/lib/canvas/canvas-connection-policy";
-import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, isHiddenBatchChild, normalizeConnection, storyboardHandleAtY, storyboardPromptTemplateMetadata, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
+import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, normalizeConnection, storyboardHandleAtY, storyboardPromptTemplateMetadata, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
 import { createCanvasDrawingFromImage } from "@/lib/canvas/canvas-drawing-storage";
 import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
-import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
 import { normalizeRunningHubCapability, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
+import { applyCanvasConnectionPreview } from "@/lib/canvas/canvas-live-viewport";
+import { createCanvasConnectionTargetIndex } from "@/lib/canvas/canvas-connection-target-index";
 
 type UseCanvasConnectionControllerOptions = {
+    containerRef: RefObject<HTMLDivElement | null>;
     projectId: string;
     config: AiConfig;
     defaultDrawingEngine: CanvasDrawingEngine;
@@ -112,6 +114,7 @@ function selectRunningHubWorkflow(config: AiConfig) {
 }
 
 export function useCanvasConnectionController({
+    containerRef,
     projectId,
     config,
     defaultDrawingEngine,
@@ -150,6 +153,7 @@ export function useCanvasConnectionController({
     const pointerMoveFrameRef = useRef<number | null>(null);
     const latestPointerMoveRef = useRef<PointerEvent | null>(null);
     const hoveredReplaceElRef = useRef<HTMLElement | null>(null);
+    const connectionTargetIndexRef = useRef(createCanvasConnectionTargetIndex());
 
     const updateConnectionReplaceHover = useCallback((element: HTMLElement | null, clientX = 0, clientY = 0) => {
         if (hoveredReplaceElRef.current === element) {
@@ -193,6 +197,7 @@ export function useCanvasConnectionController({
         connectingParamsRef.current = next;
         setConnectingParams(next);
         if (!next) {
+            applyCanvasConnectionPreview(containerRef.current, null);
             updateConnectionReplaceHover(null);
             setConnectionApproach(null);
             connectingPointerIdRef.current = null;
@@ -200,7 +205,7 @@ export function useCanvasConnectionController({
             setConnectionTargetNodeId(null);
             setConnectionTargetAnchorRatio(undefined);
         }
-    }, [updateConnectionReplaceHover]);
+    }, [containerRef, updateConnectionReplaceHover]);
 
     const closeConnectionCreateMenu = useCallback(() => {
         pendingConnectionCreateRef.current = null;
@@ -316,15 +321,12 @@ export function useCanvasConnectionController({
             : nodeType === CanvasNodeType.Video && storyboardRow
               ? { prompt: videoPrompt, composerContent: videoPrompt, ...storyboardPromptTemplateMetadata(storyboardRow, "video"), generationMode: "video" as const, videoEditOperation: "text_to_video" as const, workflowKind: "shot" as const, workflowTitle: `镜头 ${storyboardRow.shotNumber} 视频`, shotIndex: storyboardRow.shotNumber, seconds: String(storyboardRow.durationSeconds), status: NODE_STATUS_IDLE }
               : undefined;
-        // The create menu can be opened either by the quick pin click or by
-        // releasing a dragged connection in empty space. In both cases the
-        // pending connection already carries the real source/target node id;
-        // anchoring to that node keeps repeated output connections on the
-        // correct side instead of depending on the pointer-up world position.
+        // A pin click has no dragged endpoint, so place its new node beside
+        // the source. A dragged connection must use its recorded drop point.
         const sourceNodeForQuickCreate = nodesRef.current.find((node) => node.id === pending.connection.nodeId);
         const spec = getNodeSpec(nodeType);
         const anchorY = sourceNodeForQuickCreate ? sourceNodeForQuickCreate.position.y + sourceNodeForQuickCreate.height * (pending.connection.anchorRatio ?? 0.5) : pending.position.y;
-        const position = sourceNodeForQuickCreate
+        const position = pending.quick && sourceNodeForQuickCreate
             ? placeConnectedNodeWithoutOverlap(
                 nodesRef.current,
                 sourceNodeForQuickCreate,
@@ -465,9 +467,7 @@ export function useCanvasConnectionController({
         let bestAnchorRatio: number | undefined;
         let bestPriority = Number.POSITIVE_INFINITY;
 
-        [...nodesRef.current]
-            .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current) && !isFrameNode(node))
-            .reverse()
+        connectionTargetIndexRef.current.query(nodesRef.current, world, handleRadius)
             .forEach((node) => {
                 const scrollTop = scriptScrollTopById[node.id] || 0;
                 const targetHandleId = node.type === CanvasNodeType.Script ? storyboardHandleAtY(node, world.y, scrollTop) : node.type === CanvasNodeType.BatchTable ? batchReferenceHandleAtY(node, world.y, handleRadius) : undefined;
@@ -512,9 +512,7 @@ export function useCanvasConnectionController({
         let bestPriority = Number.POSITIVE_INFINITY;
         const current: ConnectionHandle = { nodeId: source.id, handleType: "source" };
 
-        [...nodesRef.current]
-            .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current) && !isFrameNode(node))
-            .reverse()
+        connectionTargetIndexRef.current.query(nodesRef.current, world, handleRadius)
             .forEach((node) => {
                 const scrollTop = scriptScrollTopById[node.id] || 0;
                 const targetHandleId = node.type === CanvasNodeType.Script ? storyboardHandleAtY(node, world.y, scrollTop) : node.type === CanvasNodeType.BatchTable ? batchReferenceHandleAtY(node, world.y, handleRadius) : undefined;
@@ -778,9 +776,10 @@ export function useCanvasConnectionController({
             setConnectionApproach((previous) => latchCanvasConnectionApproach(previous, dropTarget.nodeId, point));
             setConnectionTargetNodeId(dropTarget.nodeId);
             setConnectionTargetAnchorRatio(dropTarget.anchorRatio);
-            setMouseWorld(point);
+            applyCanvasConnectionPreview(containerRef.current, { handle: current, mouseWorld: point, targetNodeId: dropTarget.nodeId, targetHandleId: dropTarget.handleId });
         };
         const handlePointerMove = (event: PointerEvent) => {
+            if (!connectingParamsRef.current && !batchConnectionPreviewRef.current) return;
             // Pointer events can arrive faster than the canvas can paint. Keep
             // only the latest position and update the preview once per frame,
             // which prevents redundant React/Leafer work and visible jitter.
@@ -853,7 +852,7 @@ export function useCanvasConnectionController({
             window.removeEventListener("pointercancel", handlePointerCancel);
             window.removeEventListener("blur", cancel);
         };
-    }, [clearBatchConnection, commitBatchConnection, finishBatchConnection, finishConnection, getBatchConnectionDropTarget, getConnectionDropTarget, openBatchConnectionCreateMenu, previewBatchConnection, screenToCanvas, setConnecting]);
+    }, [clearBatchConnection, commitBatchConnection, containerRef, finishBatchConnection, finishConnection, getBatchConnectionDropTarget, getConnectionDropTarget, openBatchConnectionCreateMenu, previewBatchConnection, screenToCanvas, setConnecting, updateConnectionReplaceHover]);
 
     return {
         cancelPendingConnectionCreate,

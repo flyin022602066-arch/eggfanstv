@@ -6,13 +6,18 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
+	"infinite-canvas/backend/internal/desktopstorage"
 	"infinite-canvas/backend/internal/desktopupdate"
+	"infinite-canvas/backend/internal/outbound"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 func main() {
@@ -24,11 +29,28 @@ func main() {
 		}
 		return
 	}
+	if err := validateDesktopArgs(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	outbound.EnableDesktopSystemProxy()
+	if runtime.GOOS == "windows" {
+		executable, err := os.Executable()
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := configureDesktopMediaTools(executable); err != nil {
+			log.Fatal(err)
+		}
+	}
 	dataDir, err := defaultDataDir()
 	if err != nil {
 		log.Fatal(err)
 	}
 	app := newDesktopApp(dataDir)
+	if err := configureDesktopTemp(dataDir); err != nil {
+		log.Fatal(err)
+	}
 	startupErrorPath := filepath.Join(dataDir, "startup-error.log")
 	if err := prepareDesktopApp(app); err != nil {
 		_ = os.MkdirAll(dataDir, 0o755)
@@ -36,14 +58,22 @@ func main() {
 		log.Fatalf("启动本地后端失败: %v", err)
 	}
 	_ = os.Remove(startupErrorPath)
+	webviewDataDir := filepath.Join(dataDir, "webview2")
+	if err := os.MkdirAll(webviewDataDir, 0o700); err != nil {
+		log.Fatalf("创建 WebView2 数据目录失败: %v", err)
+	}
 
 	err = wails.Run(&options.App{
 		Title:  "Eggfans TV",
 		Width:  1440,
 		Height: 960,
+		Mac:    &mac.Options{},
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
 			Handler: desktopAssetHandler{app: app},
+		},
+		Windows: &windows.Options{
+			WebviewUserDataPath: webviewDataDir,
 		},
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,
@@ -59,12 +89,56 @@ func prepareDesktopApp(app *DesktopApp) error {
 }
 
 func defaultDataDir() (string, error) {
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--data-dir=") {
+			dir := strings.TrimSpace(strings.TrimPrefix(arg, "--data-dir="))
+			clean := filepath.Clean(dir)
+			if !filepath.IsAbs(dir) || filepath.Dir(clean) == clean {
+				return "", fmt.Errorf("--data-dir 需要明确的绝对目录")
+			}
+			return clean, nil
+		}
+	}
 	if override := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_DATA_DIR")); override != "" {
 		return override, nil
 	}
-	root, err := os.UserConfigDir()
+	if runtime.GOOS == "windows" {
+		executable, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("定位应用程序目录: %w", err)
+		}
+		if projectDir := projectWorkspaceDataDir(executable); projectDir != "" {
+			return projectDir, nil
+		}
+	}
+	root, err := desktopstorage.DefaultRoot()
 	if err != nil {
 		return "", fmt.Errorf("定位用户应用数据目录: %w", err)
 	}
-	return filepath.Join(root, "BeefTV"), nil
+	return desktopstorage.Resolve(root)
+}
+
+func configureDesktopTemp(dataDir string) error {
+	path := filepath.Join(dataDir, "cache", "tmp")
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	for _, name := range []string{"TMPDIR", "TEMP", "TMP"} {
+		if err := os.Setenv(name, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func projectWorkspaceDataDir(executable string) string {
+	for directory := filepath.Dir(executable); ; directory = filepath.Dir(directory) {
+		launcher, err := os.Stat(filepath.Join(directory, "run-eggfans-tv.cmd"))
+		if err == nil && !launcher.IsDir() {
+			return filepath.Join(directory, ".local", "EggfansTV")
+		}
+		if parent := filepath.Dir(directory); parent == directory {
+			return ""
+		}
+	}
 }

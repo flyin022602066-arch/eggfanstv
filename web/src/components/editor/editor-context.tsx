@@ -17,6 +17,7 @@ export type EditorHostContextValue = {
     assets: ProjectAsset[];
     /** 重新拉取项目资产（导入媒体后刷新列表）。 */
     refreshAssets: () => Promise<ProjectAsset[] | null>;
+    openExport?: () => void;
 };
 
 const EditorStoreContext = createContext<EditorStoreHook | null>(null);

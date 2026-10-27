@@ -13,6 +13,73 @@ import (
 	"infinite-canvas/backend/internal/generation"
 )
 
+func TestOutboundPolicyErrorsHaveActionableCopyAndDiagnostics(t *testing.T) {
+	for _, message := range []string{
+		"不允许访问本机或内网地址", "不允许访问本机、内网或链路本地地址",
+		"不允许访问保留地址或特殊用途地址", "外部服务域名解析失败",
+	} {
+		raw := message + "。HTTP 400。排查编号：任务 job-outbound · 请求 req-outbound。"
+		for _, failure := range []generation.Failure{
+			generation.ClassifyText(raw), generation.ClassifyAppError(400, 400, "invalid_argument", raw),
+		} {
+			if failure.Category != generation.CategoryNetwork || failure.HTTPStatus != 400 || failure.RequestID != "req-outbound" || failure.TaskID != "job-outbound" {
+				t.Fatalf("lost classification or diagnostics for %q: %+v", message, failure)
+			}
+			if strings.Contains(failure.Action, "CANVAS_ALLOW_PRIVATE_UPSTREAMS") {
+				t.Fatalf("unsafe global bypass advice: %+v", failure)
+			}
+			if strings.Contains(message, "不允许") && (!strings.Contains(failure.Action, "管理员") || !strings.Contains(failure.Action, "仅将该主机")) {
+				t.Fatalf("missing bounded administrator guidance: %+v", failure)
+			}
+			if strings.Contains(message, "解析失败") && !strings.Contains(failure.Action, "域名是否正确") {
+				t.Fatalf("missing DNS guidance: %+v", failure)
+			}
+		}
+	}
+}
+
+func TestOutboundPolicyCopyDoesNotOverrideStructuredProviderErrors(t *testing.T) {
+	for _, raw := range []string{
+		`{"error":{"code":"invalid_api_key","message":"不允许访问本机或内网地址"},"request_id":"req-auth","task_id":"job-auth"}`,
+		`{"error":{"code":"invalid_api_key","message":"invalid key"},"prompt":"外部服务域名解析失败","request_id":"req-auth","task_id":"job-auth"}`,
+	} {
+		failure := generation.ClassifyAppError(401, 401, "invalid_api_key", raw)
+		if failure.Category != generation.CategoryAuth || failure.HTTPStatus != 401 || failure.RequestID != "req-auth" || failure.TaskID != "job-auth" {
+			t.Fatalf("structured provider error overwritten: %+v", failure)
+		}
+	}
+	if failure := generation.ClassifyText(`{"prompt":"不允许访问本机或内网地址"}`); failure.Category != generation.CategoryUnknown {
+		t.Fatalf("request echo classified as local policy failure: %+v", failure)
+	}
+}
+
+func TestLocalDatabaseFailuresNeverBlameModelParameters(t *testing.T) {
+	for _, message := range []string{"table tasks has no column named failure_diagnostics", "no such column: failure_diagnostics", "no such table: tasks", "database is locked", "attempt to write a readonly database", "disk I/O error", "UNIQUE constraint failed: tasks.id", "NOT NULL constraint failed: tasks.type", "CHECK constraint failed: task_status", "FOREIGN KEY constraint failed"} {
+		for _, failure := range []generation.Failure{generation.ClassifyText(message), generation.ClassifyAppError(400, 400, "invalid_argument", message), generation.ClassifyHTTP(500, "", message), generation.ClassifyText(fmt.Sprintf(`{"error":{"code":"invalid_argument","message":%q}}`, message))} {
+			if string(failure.Category) != "local_storage" || failure.Retryable || !failure.BlocksAutomaticRetry() || !strings.Contains(failure.UserMessage(), "数据库") || strings.Contains(failure.UserMessage(), "failure_diagnostics") {
+				t.Errorf("%q: %+v; display=%s", message, failure, failure.UserMessage())
+			}
+		}
+	}
+}
+
+func TestLocalDatabaseClassificationPreservesProviderParameters(t *testing.T) {
+	for _, echo := range []string{"UNIQUE constraint failed: tasks.id", "NOT NULL constraint failed: tasks.type", "CHECK constraint failed: task_status", "FOREIGN KEY constraint failed"} {
+		if got := generation.ClassifyText(fmt.Sprintf(`{"error":{"code":"invalid_parameter","message":"invalid size"},"prompt":%q}`, echo)); got.Category != generation.CategoryInvalidParams {
+			t.Errorf("request echo changed classification: %+v", got)
+		}
+	}
+	for _, raw := range []string{`{"error":{"code":"invalid_parameter","message":"invalid size"},"prompt":"table tasks has no column named failure_diagnostics"}`, `{"error":{"code":"invalid_parameter","message":"invalid size"}}`} {
+		if got := generation.ClassifyText(raw); got.Category != generation.CategoryInvalidParams {
+			t.Errorf("provider parameter failure changed: %+v", got)
+		}
+	}
+	failure := generation.ClassifyAppError(500, 500, "local_storage", "")
+	if failure.Category != generation.CategoryLocalStorage || generation.ClassifyText(failure.UserMessage()).Category != generation.CategoryLocalStorage {
+		t.Errorf("stable reason or persisted copy lost: %+v", failure)
+	}
+}
+
 func TestGatewayReferenceGeometryAndRequestSize(t *testing.T) {
 	height := `{"error":{"code":"400","message":"Height must be between 300px and 6000px","type":"api_error"}} (request id: 202609270829245377912978268d9d6USz1NP3R)`
 	failure := generation.ClassifyText(height)
@@ -40,6 +107,55 @@ func TestGatewayReferenceGeometryAndRequestSize(t *testing.T) {
 	}
 }
 
+func TestAssetURIUnsupportedErrorExplainsGatewayLimitation(t *testing.T) {
+	body := `{"code":"client_parameter","data":null,"message":"content[1] 暂不支持 asset:// 素材引用，请传公网可访问的图片 URL","request_id":"req_asset_uri_123"}`
+	failure := generation.ClassifyHTTP(http.StatusBadRequest, "400 Bad Request", body)
+	if failure.Category != generation.CategoryInvalidParams {
+		t.Fatalf("category = %s", failure.Category)
+	}
+	if !strings.Contains(failure.UserMessage(), "不支持 asset:// 图片 URI") || !strings.Contains(failure.Action, "网关维护者") || strings.Contains(failure.UserMessage(), "尺寸") {
+		t.Fatalf("misleading asset URI message: %q", failure.UserMessage())
+	}
+	failure.TaskID = "task_asset_uri_123"
+	structured, err := json.Marshal(map[string]string{"code": "invalid_params", "message": failure.UserMessage()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{failure.UserMessage(), string(structured)} {
+		roundTrip := generation.ClassifyText(input)
+		if roundTrip.UserMessage() != failure.UserMessage() || roundTrip.RequestID != "req_asset_uri_123" || roundTrip.TaskID != "task_asset_uri_123" || !roundTrip.BlocksAutomaticRetry() {
+			t.Fatalf("asset URI message did not survive persistence: %+v", roundTrip)
+		}
+	}
+}
+
+func TestAssetURIRejectionDoesNotOverrideCodesOrTrustRequestEchoes(t *testing.T) {
+	for _, code := range []string{"invalid_api_key", "permission_denied", "insufficient_user_quota"} {
+		body, err := json.Marshal(map[string]string{"code": code, "message": "content[1] 暂不支持 asset:// 素材引用，请传公网可访问的图片 URL"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		failure := generation.ClassifyHTTP(400, "", string(body))
+		if failure.Category == generation.CategoryInvalidParams || strings.Contains(failure.UserMessage(), "asset://") {
+			t.Fatalf("asset URI copy overrode %s: %+v", code, failure)
+		}
+	}
+	for _, input := range []string{
+		`prompt: content[1] 暂不支持 asset:// 素材引用，请传公网可访问的图片 URL`,
+		`{"code":"invalid_request_error","message":"Invalid parameter; prompt: content[1] 暂不支持 asset:// 素材引用，请传公网可访问的图片 URL"}`,
+		`{"code":"invalid_request_error","request":{"content":[{"image_url":{"url":"asset://private-asset"}}]},"message":"Unsupported duration"}`,
+	} {
+		failure := generation.ClassifyText(input)
+		if strings.Contains(failure.UserMessage(), "asset://") {
+			t.Fatalf("request echo invented an asset URI limitation: %+v", failure)
+		}
+	}
+	unsafe := `{"code":"client_parameter","message":"content[1] 暂不支持 asset:// 素材引用，请传公网可访问的图片 URL https://private.example/img?token=PROBE_PRIVATE_URL prompt=PROBE_PRIVATE_PROMPT"}`
+	if message := generation.ClassifyText(unsafe).UserMessage(); strings.Contains(message, "PROBE_PRIVATE") || strings.Contains(message, "private.example") {
+		t.Fatalf("asset rejection reflected secrets: %q", message)
+	}
+}
+
 func TestGatewayReferenceDurationWithRequestSuffix(t *testing.T) {
 	raw := `{"error":{"code":"400","message":"素材转换失败: Duration must be between 1.8s and 30.2s.","type":"api_error"}} (request id: 202609270829245377912978268d9d6USz1NP3R)`
 	f := generation.ClassifyText(raw)
@@ -58,6 +174,57 @@ func TestClassifyHTTPUsesStructuredCodeBeforeStatus(t *testing.T) {
 	}
 	if !strings.Contains(failure.UserMessage(), "内容安全审核") {
 		t.Fatalf("user message = %q", failure.UserMessage())
+	}
+}
+
+func TestClassifyHTTPDistinguishesMissingRouteFromInvalidParams(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		status   int
+		body     string
+		category generation.FailureCategory
+	}{
+		{"missing-route", 404, `{"error":{"message":"Invalid URL (POST /v1/private-avatar/groups/list)","type":"invalid_request_error","code":""}}`, generation.CategoryModelMissing},
+		{"invalid-duration", 400, `{"error":{"message":"Invalid duration","type":"invalid_request_error","param":"duration"}}`, generation.CategoryInvalidParams},
+		{"specific-permission", 404, `{"error":{"message":"Invalid URL","code":"permission_denied","type":"invalid_request_error"}}`, generation.CategoryPermission},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			failure := generation.ClassifyHTTP(testCase.status, "", testCase.body)
+			if failure.Category != testCase.category {
+				t.Fatalf("category = %s, want %s", failure.Category, testCase.category)
+			}
+			if testCase.name == "missing-route" && (!strings.Contains(failure.UserMessage(), "接口") || strings.Contains(failure.UserMessage(), "时长")) {
+				t.Fatalf("misleading route failure: %s", failure.UserMessage())
+			}
+		})
+	}
+}
+
+func TestMissingPrivateRouteCopySurvivesPersistenceWithoutReflectingSecrets(t *testing.T) {
+	message := "查询私域素材组失败（HTTP 404，POST /v1/private-avatar/groups/list）：当前渠道不支持请求的接口。请联系 Eggfans 网关维护者确认并开通私域素材接口后重试。排查编号：任务 task_avatar_123。"
+	structured, err := json.Marshal(map[string]string{"code": "model_missing", "message": message})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{message, string(structured)} {
+		failure := generation.ClassifyText(input)
+		if failure.Category != generation.CategoryModelMissing || failure.TaskID != "task_avatar_123" || failure.UserMessage() != message || !failure.BlocksAutomaticRetry() {
+			t.Fatalf("lost persisted private route: %+v", failure)
+		}
+		if repeated := generation.ClassifyText(failure.UserMessage()); repeated.UserMessage() != message {
+			t.Fatalf("repeated classification changed copy: %s", repeated.UserMessage())
+		}
+	}
+	unsafe := strings.ReplaceAll(message, "/groups/list", "/groups/list?key=PRIVATE")
+	if strings.Contains(generation.ClassifyText(unsafe).UserMessage(), "PRIVATE") {
+		t.Fatal("unsafe route reflected credentials")
+	}
+	permission, err := json.Marshal(map[string]string{"code": "permission_denied", "message": message})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generation.ClassifyText(string(permission)).Category != generation.CategoryPermission {
+		t.Fatal("persisted route overrode explicit permission error")
 	}
 }
 
@@ -267,8 +434,8 @@ func TestBeefAPIErrorCodeInventory(t *testing.T) {
 	if err := json.Unmarshal(data, &inventory); err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory) != 50 {
-		t.Fatalf("BeefAPI error code inventory has %d entries, want 50", len(inventory))
+	if len(inventory) != 51 {
+		t.Fatalf("BeefAPI error code inventory has %d entries, want 51", len(inventory))
 	}
 	for code, category := range inventory {
 		t.Run(code, func(t *testing.T) {
@@ -427,6 +594,59 @@ func TestWholeRequestTooLargeIsNotASingleFileAdvice(t *testing.T) {
 			if got.Category != generation.CategoryInputTooLarge || !strings.Contains(got.Reason, "整次请求") || !strings.Contains(got.Action, "素材链接") || got.Retryable {
 				t.Fatalf("request size explanation lost: %#v", got)
 			}
+		}
+	}
+}
+
+func TestGatewayVideoPreflightErrorFixture(t *testing.T) {
+	data, err := os.ReadFile("../../../web/test/fixtures/reference-video-errors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct{ Message, Reason, Action string }
+	if err = json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range cases {
+		body, _ := json.Marshal(map[string]any{"error": map[string]string{"code": "invalid_reference_video", "message": item.Message}})
+		failure := generation.ClassifyText(string(body))
+		if !strings.Contains(failure.Reason, item.Reason) || !strings.Contains(failure.Action, item.Action) {
+			t.Fatalf("lost guidance for %s: %+v", item.Message, failure)
+		}
+		persisted := generation.ClassifyText(failure.UserMessage())
+		if !strings.Contains(persisted.UserMessage(), item.Action) {
+			t.Fatalf("lost persisted guidance: %+v", persisted)
+		}
+	}
+}
+
+func TestReferencePixelDiagnosticIDIsNotDuplicated(t *testing.T) {
+	input := "第 1 个参考视频像素总量为 331776（432×768）。需要 407696–8295044 像素；请调整尺寸。排查编号：请求 202609290516575609492488268d9d6HqaXq7bq。"
+	failure := generation.ClassifyText(input)
+	if strings.Count(failure.UserMessage(), "202609290516575609492488268d9d6HqaXq7bq") != 1 {
+		t.Fatalf("duplicate ID: %s", failure.UserMessage())
+	}
+}
+
+func TestMediaCopyPreservesAuthenticationAndIgnoresRequestEcho(t *testing.T) {
+	for _, message := range []string{"asset access denied", "unsupported video codec", "Frame rate must be between 24 and 60."} {
+		body, _ := json.Marshal(map[string]any{"error": map[string]string{"code": "invalid_api_key", "message": message}, "request_id": "req_media_auth_123"})
+		failure := generation.ClassifyText(string(body))
+		if failure.Category != generation.CategoryAuth || failure.RequestID != "req_media_auth_123" {
+			t.Fatalf("auth overwritten: %+v", failure)
+		}
+	}
+	failure := generation.ClassifyText(`{"error":{"code":"unknown","message":"Failure"},"prompt":"unsupported video codec"}`)
+	if failure.Category != generation.CategoryUnknown {
+		t.Fatalf("request echo classified: %+v", failure)
+	}
+}
+
+func TestWindowsSocketFailureIsActionable(t *testing.T) {
+	for _, message := range []string{"An existing connection was forcibly closed by the remote host.", "An established connection was aborted by the software in your host machine."} {
+		failure := generation.ClassifyError(errors.New(`Get "https://private.example/task?token=secret": read tcp: wsarecv: ` + message))
+		if failure.Category != generation.CategoryNetwork || strings.Contains(failure.UserMessage(), "wsarecv") || strings.Contains(failure.UserMessage(), "secret") {
+			t.Fatalf("failure=%+v message=%s", failure, failure.UserMessage())
 		}
 	}
 }

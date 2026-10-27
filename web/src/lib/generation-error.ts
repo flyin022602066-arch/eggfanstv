@@ -1,5 +1,6 @@
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { moderationErrorCopy, persistedModerationCopy } from "./moderation-error";
+import { taskConstraintCopy, persistedTaskConstraintCopy } from "./task-constraint-error";
 
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
 
@@ -14,6 +15,8 @@ export const GENERATION_ERROR_CATEGORIES = [
     "moderation_reference",
     "moderation_output",
     "invalid_params",
+    "local_storage",
+    "canvas_conflict",
     "context_too_long",
     "input_inaccessible",
     "input_too_large",
@@ -28,6 +31,7 @@ export const GENERATION_ERROR_CATEGORIES = [
     "cancelled",
     "partial_success",
     "download_failed",
+    "delivery_failed",
     "results_missing",
     "malformed_response",
     "unknown",
@@ -36,6 +40,7 @@ export const GENERATION_ERROR_CATEGORIES = [
 export type GenerationErrorCategory = (typeof GENERATION_ERROR_CATEGORIES)[number];
 
 export type GenerationFailureExplanation = {
+    summary?: string;
     category: GenerationErrorCategory;
     reason: string;
     action: string;
@@ -51,6 +56,7 @@ export type GenerationFailureExplanation = {
 };
 
 export type GenerationFailureMetadata = {
+    generationErrorSummary?: string;
     errorDetails: string;
     generationErrorCode?: string;
     failedPromptFingerprint?: string;
@@ -58,6 +64,10 @@ export type GenerationFailureMetadata = {
 };
 
 export type GenerationFailureContext = {
+    errorSummary?: string;
+    failureDiagnostics?: GenerationFailureDiagnostics;
+    completedAt?: string;
+    updatedAt?: string;
     taskId?: string;
     providerRequestId?: string;
     model?: string;
@@ -65,12 +75,35 @@ export type GenerationFailureContext = {
     stage?: string;
 };
 
+export type GenerationFailureDiagnostics = {
+    source: "local_validation" | "upstream_http" | "upstream_response" | "local_result" | "local_response" | "client_result" | "unknown";
+    version?: string;
+    platform?: string;
+    executionResult?: string;
+    omittedRequests?: number;
+    requests?: { operation: string; method: string; dispatched: boolean; outcome: string; httpStatus?: number; requestId?: string; providerCode?: string; summary?: string; startedAt: string; durationMs: number; requestBytes?: number; receivedBytes?: number; declaredResponseBytes?: number; responseLimitBytes?: number }[];
+    input?: { protocol?: string; model?: string; size?: string; quality?: string; count?: string; promptChars: number; imageCount: number; videoCount: number; audioCount: number; images?: { bytes: number; width: number; height: number }[]; imageLimitsRecorded?: boolean; maxImages?: number; maxImageBytes?: number };
+    summary?: string;
+    providerCode?: string;
+    httpStatus?: number;
+    requestId?: string;
+    providerTaskId?: string;
+    param?: string;
+    stage?: string;
+    capturedAt?: string;
+};
+
 type CategoryCopy = { reason: string; action: string };
+
+const LOCAL_TASK_ADMISSION_FAILURE: CategoryCopy = {
+    reason: "本地任务保存失败，尚未提交生成",
+    action: "请重启应用后重试；若仍失败，请保留排查信息并联系支持",
+};
 
 const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     auth: { reason: "模型服务鉴权失败", action: "请检查 API Key 后重试" },
     permission: { reason: "当前渠道没有使用该模型的权限", action: "请更换模型或检查渠道权限" },
-    quota_user: { reason: "当前账号额度不足", action: "请检查账号余额或联系管理员调整额度后重试" },
+    quota_user: { reason: "当前账号可用额度不足", action: "请检查账号余额，补充额度或调整令牌、套餐额度后重试" },
     quota_upstream: { reason: "模型供应商拒绝了计费或额度相关请求", action: "请到供应商核对账单与额度后，再决定是否重试" },
     quota_unknown: { reason: "模型服务拒绝了计费或额度相关请求", action: "请到当前渠道或模型供应商核对账单与额度后，再决定是否重试" },
     quota_limit: { reason: "模型调用已达到设置的用量上限", action: "请检查当前渠道的用量或预算限制，调整后再试" },
@@ -78,6 +111,8 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     moderation_reference: { reason: "参考素材未通过内容安全审核", action: "请检查并更换参考素材后重新生成" },
     moderation_output: { reason: "生成结果未通过内容安全审核", action: "请调整提示词或参考素材后重新生成" },
     invalid_params: { reason: "模型不接受当前参数", action: "请检查模型、尺寸、时长、格式或数量后重试" },
+    local_storage: { reason: "本地数据库无法读写", action: "请重启应用；若仍失败，请保留排查信息并联系支持，不要重复生成" },
+    canvas_conflict: { reason: "生成结果已保留，画布尚未更新", action: "请先使用画布最新版本，再重新加载资源，不要重新生成" },
     context_too_long: { reason: "输入内容超出模型长度限制", action: "请缩短提示词或减少参考内容后重试" },
     input_inaccessible: { reason: "参考素材无法读取", action: "请检查素材后重试" },
     input_too_large: { reason: "参考素材过大", action: "请压缩或更换素材后重试" },
@@ -92,21 +127,26 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     cancelled: { reason: "任务已取消", action: "可按原输入重新提交" },
     partial_success: { reason: "部分结果已生成，其余失败", action: "请查看已有结果后再决定是否补做" },
     download_failed: { reason: "生成结果下载失败", action: "请稍后重新加载，不要立即重新提交" },
+    delivery_failed: { reason: "视频已生成，但暂时无法取回", action: "请联系支持恢复成片，恢复后点击「取回结果」；无需重新付费生成" },
     results_missing: { reason: "任务结束但没有可用结果", action: "请查看详情后再决定是否重试" },
     malformed_response: { reason: "模型服务返回了无法解析的内容", action: "请查看详情并核对原任务状态后，再决定是否重新生成" },
     unknown: { reason: "生成失败", action: "请查看详情后再决定是否重试" },
 };
 
 const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
+    local_storage_failed: "local_storage",
     accountoverdueerror: "quota_upstream",
     "operationdenied.serviceoverdue": "quota_upstream",
     setlimitexceeded: "quota_limit",
     inflightbatchsizeexceeded: "concurrency",
     modelnotopen: "permission",
+    // 中转网关 ai-claude-code-hub 实测码：账号未开通该模型（不是模型名写错）。
+    model_not_allowed: "permission",
     "operationdenied.servicenotopen": "permission",
     contentsecuritydetectionerror: "provider_unavailable",
     invalid_reference_audio: "invalid_params",
     insufficient_user_quota: "quota_user",
+    model_temporarily_unavailable: "provider_unavailable",
     no_available_channel: "provider_unavailable",
     "channel:invalid_key": "provider_unavailable",
     "channel:no_available_key": "provider_unavailable",
@@ -198,6 +238,12 @@ const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
     request_cancelled: "cancelled",
     provider_submission_unknown: "submission_uncertain",
     video_submission_unknown: "submission_uncertain",
+    video_delivery_failed: "delivery_failed",
+    image_result_unknown: "submission_uncertain",
+    image_submission_pending: "submission_uncertain",
+    image_result_expired: "submission_uncertain",
+    image_result_unavailable: "submission_uncertain",
+    idempotency_conflict: "submission_uncertain",
     provider_reference_invalid: "input_inaccessible",
 };
 
@@ -205,6 +251,7 @@ const DEFAULT_GENERATION_ERROR_MESSAGE = "生成失败。请查看详情后再�
 export const CONTENT_MODERATION_MESSAGE = "提示词未通过内容安全审核。请修改提示词或参考图后重新生成。";
 
 const HTML_BODY = /^\s*(?:<!doctype|<html|<head|<body)/i;
+const LOCAL_DATABASE_ERROR = /(?:^|:\s*)(?:table\s+[a-z0-9_]+\s+has no column named\s+[a-z0-9_]+|no such (?:column|table):\s*[a-z0-9_.]+|(?:UNIQUE|NOT NULL|CHECK) constraint failed:\s*\S+|FOREIGN KEY constraint failed|database (?:is locked|is malformed)|database disk image is malformed|attempt to write a readonly database|disk I\/O error)(?:\b|$)/i;
 const HTTP_STATUS = /(?:HTTP\s+|status(?:[_\s]+code)?\s*[:：=]?\s*)(\d{3})\b/i;
 const WRAPPED_HTTP_STATUS = /Request failed with status code\s+(\d{3})/i;
 const URL_PATTERN = /(?:https?:\/\/|data:[a-z0-9.+-]+\/[^;]+;base64,)[^\s"'<>]+/gi;
@@ -213,6 +260,9 @@ const PROMPT_ECHO = /((?:prompt|input|query)\s*[=:：]\s*)(?:"[^"]{0,400}"|'[^']
 const SIGNED_QUERY = /(?:[?&](?:signature|x-amz-signature|x-oss-signature|token|key)=)[^\s&]+/gi;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$/;
 const UNSAFE_ID = /secret|token|password|apikey|api-key|bearer|sk-/i;
+const ASSET_URI_UNSUPPORTED = /^(?:(?:content\[\d+\]\s+)?暂?不支持\s+asset:\/\/\s+素材引用|当前视频接口不支持\s+asset:\/\/\s+图片 URI)(?:[，。,;；\s]|$)/i;
+const MISSING_PRIVATE_ROUTE = /^((?:(?:创建|查询|读取|更新|删除)私域素材组?|上传私域素材|创建真人认证会话|获取真人素材组|私域素材同步)失败（HTTP 404，(?:POST|GET|PATCH|DELETE) \/v1\/(?:private-avatar\/(?:groups|assets)(?:\/list)?|real-avatar\/(?:auth\/session|groups\/from-token))）：当前渠道不支持请求的接口)。请联系 Eggfans 网关维护者确认并开通私域素材接口后重试(?:。|$)/;
+const MISSING_UPSTREAM_ENDPOINT_PATTERN = /未找到对应端点|请求路径或资源不存在|endpoint not found/i;
 
 type ExtractedFields = {
     code: string;
@@ -232,6 +282,7 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
     const uncertain = classified.uncertain || classified.category === "submission_uncertain" || classified.category === "download_failed" || (classified.category === "timeout" && classified.status === 524);
     return {
         category: classified.category,
+        summary: classified.category === "local_storage" ? copy.reason : sanitizeProviderText(error instanceof Error ? error.message : typeof error === "string" ? error : providerPayloadMessage(error)),
         reason: copy.reason,
         action: copy.action,
         message: message || DEFAULT_GENERATION_ERROR_MESSAGE,
@@ -262,7 +313,7 @@ export function generationErrorCode(error: unknown) {
 export function generationFailureMetadata(error: unknown, prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []): GenerationFailureMetadata {
     const explained = explainGenerationError(error);
     const inputFingerprint = generationInputFingerprint(prompt, references);
-    if (!explained.moderation) return { errorDetails: explained.message, generationErrorCode: explained.category === "unknown" ? undefined : explained.errorCode };
+    if (!explained.moderation) return { errorDetails: explained.message, generationErrorSummary: explained.summary, generationErrorCode: explained.category === "unknown" ? undefined : explained.errorCode };
     return {
         errorDetails: explained.message,
         generationErrorCode: explained.errorCode,
@@ -318,21 +369,60 @@ export function generationInputFingerprint(prompt: string, references: Array<str
 }
 
 export function formatGenerationDiagnostics(explanation: GenerationFailureExplanation, context: GenerationFailureContext = {}) {
+    const evidence = context.failureDiagnostics;
     const taskId = sanitizeDebugId(context.taskId) || sanitizeDebugId(explanation.taskId);
-    const requestId = sanitizeDebugId(context.providerRequestId) || sanitizeDebugId(explanation.requestId);
+    const requestId = sanitizeDebugId(evidence?.requestId) || sanitizeDebugId(explanation.requestId);
     const model = sanitizeProviderCode(context.model || "");
     const createdAt = context.createdAt && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(context.createdAt) ? context.createdAt : "";
     const lines = [
+        "排查信息版本：2",
         `原因：${sanitizeProviderText(explanation.reason)}`,
         explanation.action ? `下一步：${sanitizeProviderText(explanation.action)}` : "",
         `类别：${explanation.category}`,
-        sanitizeProviderCode(explanation.providerCode || "") ? `上游代码：${sanitizeProviderCode(explanation.providerCode || "")}` : "",
+        `错误来源：${explanation.category === "local_storage" ? "本地任务存储" : ({ local_validation: "本地参数校验", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
+        `错误摘要：${sanitizeProviderText(evidence?.summary || context.errorSummary || explanation.summary || "") || "未记录"}`,
+        evidence && ["upstream_http", "upstream_response"].includes(evidence.source) && sanitizeProviderCode(evidence.providerCode || "") ? `上游代码：${sanitizeProviderCode(evidence.providerCode || "")}` : "",
+        evidence?.httpStatus && Number.isInteger(evidence.httpStatus) && evidence.httpStatus >= 100 && evidence.httpStatus <= 599 ? `HTTP 状态：${evidence.httpStatus}` : "",
+        sanitizeProviderCode(evidence?.param || "") ? `参数：${sanitizeProviderCode(evidence?.param || "")}` : "",
+        sanitizeProviderText(evidence?.stage || context.stage || "") ? `失败阶段：${sanitizeProviderText(evidence?.stage || context.stage || "")}` : "",
         taskId ? `任务 ID：${taskId}` : "",
-        requestId ? `请求 ID：${requestId}` : "",
+        `请求 ID：${requestId || "未记录"}`,
+        sanitizeDebugId(evidence?.providerTaskId) ? `上游任务 ID：${sanitizeDebugId(evidence?.providerTaskId)}` : "",
+        sanitizeDebugId(context.providerRequestId) ? `服务端关联 ID：${sanitizeDebugId(context.providerRequestId)}` : "",
         model ? `模型：${model}` : "",
-        createdAt ? `时间：${createdAt}` : "",
+        evidence?.version ? `运行版本：${diagnosticToken(evidence.version)} (${diagnosticToken(evidence.platform || "")})` : "",
+        evidence?.executionResult ? `生成执行：${evidence.executionResult === "completed" ? "完成" : evidence.executionResult === "pending" ? "等待回查" : evidence.executionResult === "failed" ? "未完成" : "未知"}` : "",
+        ...formatExecutionEvidence(evidence),
+        createdAt ? `任务创建时间：${createdAt}` : "",
+        ...[["错误记录时间", evidence?.capturedAt], ["任务结束时间", context.completedAt], ["任务更新时间", context.updatedAt]].flatMap(([label, value]) => value && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(value) ? [`${label}：${value}`] : []),
     ].filter(Boolean);
     return lines.join("\n");
+}
+
+function formatExecutionEvidence(evidence?: GenerationFailureDiagnostics): string[] {
+    const lines: string[] = [];
+    const number = (n: number | undefined) => Number.isSafeInteger(n) && n! >= 0 ? String(n) : "未知";
+    const input = evidence?.input;
+    if (input) {
+        lines.push(`任务配置（协议可能转换或省略）：协议=${diagnosticToken(input.protocol)}，模型=${diagnosticToken(input.model)}，尺寸=${diagnosticToken(input.size)}，质量=${diagnosticToken(input.quality)}，数量=${diagnosticToken(input.count)}`);
+        lines.push(`输入统计：提示词 ${number(input.promptChars)} 字；图片/视频/音频 ${number(input.imageCount)}/${number(input.videoCount)}/${number(input.audioCount)}`);
+        if (input.imageLimitsRecorded) lines.push(`本地参考图限制：最多 ${number(input.maxImages)} 张，单图字节上限=${number(input.maxImageBytes)}（字节上限为 0 表示未设置大小限制）`);
+        input.images?.slice(0, 16).forEach((media, i) => lines.push(`参考图 ${i + 1}：${number(media.width)}×${number(media.height)}，${number(media.bytes)} 字节`));
+    }
+    const outcomes: Record<string, string> = { response_received: "收到响应（业务结果另判）", transport_error: "传输或读取失败", not_dispatched: "本地拦截，未发送", http_error: "HTTP 错误", cancelled: "取消", timeout: "超时", business_error: "业务错误", response_limit: "本地响应大小限制" };
+    evidence?.requests?.slice(0, 8).forEach((request, i) => {
+        lines.push(`请求 ${i + 1}：${sanitizeProviderCode(request.operation)}；${outcomes[request.outcome] || "未知"}；已发起=${request.dispatched === true ? "是" : "否"}；HTTP=${number(request.httpStatus)}；ID=${sanitizeDebugId(request.requestId) || "未记录"}；耗时=${number(request.durationMs)}ms`);
+        lines.push(`请求 ${i + 1} 字节：提交=${number(request.requestBytes)}；响应声明=${number(request.declaredResponseBytes)}；已读=${number(request.receivedBytes)}；响应上限=${number(request.responseLimitBytes)}`);
+        if (/^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(request.startedAt)) lines.push(`请求 ${i + 1} 时间：${request.startedAt}`);
+        if (sanitizeProviderCode(request.providerCode || "")) lines.push(`请求 ${i + 1} 上游代码：${sanitizeProviderCode(request.providerCode || "")}`);
+        if (request.summary) lines.push(`请求 ${i + 1} 摘要：${sanitizeProviderText(request.summary)}`);
+    });
+    if (evidence?.omittedRequests) lines.push(`中间请求省略：${number(evidence.omittedRequests)}`);
+    return lines;
+}
+
+function diagnosticToken(value?: string): string {
+    return value && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(value) && !value.includes("://") && !/(?:bearer|api[_-]?key|secret|token|sk-|^[a-z]:[\\/]|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)/i.test(value) ? value : "未记录";
 }
 
 export function isGenerationErrorCode(code: string) {
@@ -356,7 +446,17 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (context.stage === "submission_unknown") return { category: "submission_uncertain", uncertain: true, retryable: false };
     if (!error) return { category: "unknown", retryable: false };
     if (typeof error === "object" && error) {
-        const record = error as Record<string, unknown>;
+    const record = error as Record<string, unknown>;
+        if (record.reason === "local_storage_failed") return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
+        if (record.name === "ApiError" && record.reason === "quota_exceeded") {
+            return { category: "quota_limit", reason: sanitizeProviderText(String(record.message || "工作区用量已达到上限")), action: "请清理不需要的任务记录或素材后重试", fromCode: true, retryable: false };
+        }
+        if (record.reason === "stale_revision" || record.code === "canvas_conflict") {
+            return { category: "canvas_conflict", fromCode: true, retryable: false };
+        }
+        if (typeof record.message === "string" && isCanvasSaveConflictText(record.message) && (record.reason === "conflict" || record.status === 409 || record.status === 428)) {
+            return { category: "canvas_conflict", fromCode: true, retryable: false };
+        }
         const response = record.response && typeof record.response === "object" ? (record.response as Record<string, unknown>) : undefined;
         const status = numericStatus(record.status) ?? numericStatus(record.statusCode) ?? numericStatus(response?.status);
         const data = record.data ?? record.body ?? response?.data ?? record.response;
@@ -383,6 +483,24 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
     if (body && typeof body === "object") {
         const fromObject = classifyText(stringifyAllowlisted(body));
         if (fromObject.fromCode || (fromObject.category !== "unknown" && classified.category === "unknown")) classified = fromObject;
+        else {
+            classified.requestId ||= fromObject.requestId;
+            classified.taskId ||= fromObject.taskId;
+        }
+    }
+    if (
+        status === 404 &&
+        ["unknown", "invalid_params"].includes(classified.category) &&
+        genericProviderCode(classified.providerCode || "") &&
+        /^invalid url/i.test((extractProviderFields(text).message || text).trim())
+    ) {
+        classified.category = "model_missing";
+        classified.reason = "当前渠道不支持请求的接口";
+        classified.action = "请检查接口地址或联系渠道维护者确认接口支持";
+    }
+    const fields = extractProviderFields(typeof body === "string" ? body : body && typeof body === "object" ? stringifyAllowlisted(body) : "");
+    if (status === 402 && fields.code === "video_reservation_failed" && fields.message.startsWith("insufficient balance for this video request")) {
+        classified = { ...classified, category: "quota_user", fromCode: true, reason: undefined, action: undefined };
     }
     if (classified.category !== "unknown" && !classified.fromCode && !trustProviderMessageStatus(status)) {
         classified = { category: "unknown", retryable: false };
@@ -402,6 +520,13 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
         classified.reason = "模型服务响应超时，请求可能仍在服务端执行";
         classified.action = "请先查询原任务或到供应商核对状态，不要立即重新提交";
     }
+    // 网关把上游的 404 透传过来（「请求路径或资源不存在：上游未找到对应端点」）：
+    // 模型名与路径都对，只是这一跳被路由到了没有该端点的上游 —— 换个上游就能过，属可重试。
+    // 必须显式覆盖：404 不在 trustProviderMessageStatus 白名单里，消息判定会被丢弃，
+    // 最终落到 404 → model_missing，提示用户去「检查模型名称和渠道配置」，属于误导。
+    if (status === 404 && MISSING_UPSTREAM_ENDPOINT_PATTERN.test(text)) {
+        classified = { category: "provider_unavailable", status, retryable: true };
+    }
     if (status === 413 && classified.category === "input_too_large" && !classified.reason) {
         classified.reason = "整次请求的数据量超过接口上限";
         classified.action = "请减少参考素材，或改用可公开访问的素材链接后再提交";
@@ -411,9 +536,44 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
     return classified;
 }
 
+function persistedMissingPrivateRoute(text: string): Classified | undefined {
+    const match = text.match(MISSING_PRIVATE_ROUTE);
+    if (!match) return undefined;
+    const debug = text.match(/。排查编号：([^。]+)。?$/)?.[1] || "";
+    return {
+        category: "model_missing",
+        reason: match[1],
+        action: "请联系 Eggfans 网关维护者确认并开通私域素材接口后重试",
+        requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
+        taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]),
+        retryable: false,
+    };
+}
+
+function persistedTransportFailure(text: string): Classified | undefined {
+    const preparationFailure = text.match(/^((?:参考图片|参考视频|参考音频) [0-9]+\/[0-9]+ 准备(?:超时|失败)，视频请求尚未发送)。请检查 Uguu 图床连接或本地素材后重试(?:。|$)/);
+    if (preparationFailure) return { category: "input_inaccessible", reason: preparationFailure[1], action: "请检查 Uguu 图床连接或本地素材后重试", uncertain: false, retryable: false };
+    const connectionFailure = text.match(/^((?:视频|图片|模型)接口连接(?:超时|失败)（(?:域名解析|TCP 连接|TLS 握手|发送请求|等待响应|连接接口)），请求尚未发送)。请检查渠道地址、网络或代理后重试(?:。|$)/);
+    if (connectionFailure) return { category: "network", reason: connectionFailure[1], action: "请检查渠道地址、网络或代理后重试", uncertain: false, retryable: false };
+    const submissionFailure = text.match(/^((?:视频|图片|模型)提交未确认（(?:发送请求|等待响应)(?:超时|失败)），尚未取得上游任务 ID)。请先核对渠道后台记录，再决定是否重新提交(?:。|$)/);
+    if (submissionFailure) return { category: "submission_uncertain", reason: submissionFailure[1], action: "请先核对渠道后台记录，再决定是否重新提交", uncertain: true, retryable: false };
+}
+
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
+    if (text === LOCAL_TASK_ADMISSION_FAILURE.reason || text.startsWith(`${LOCAL_TASK_ADMISSION_FAILURE.reason}。`)) {
+        return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
+    }
+    if (isCanvasSaveConflictText(text)) {
+        return { category: "canvas_conflict", fromCode: true, retryable: false };
+    }
+    const taskCopy = persistedTaskConstraintCopy(text);
+    if (taskCopy) return { category: "invalid_params", ...taskCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
+    const missingPrivateRoute = persistedMissingPrivateRoute(text);
+    if (missingPrivateRoute) return missingPrivateRoute;
+    const transportFailure = persistedTransportFailure(text);
+    if (transportFailure) return transportFailure;
     const moderationCopy = persistedModerationCopy(text);
     if (moderationCopy) {
         return { ...moderationCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
@@ -448,6 +608,9 @@ function classifyText(raw: string): Classified {
     const storage = resourceStorageFailureMessage(text);
     if (storage) return { category: "input_inaccessible", reason: storage.replace(/。$/, ""), action: "", retryable: false };
     const fields = extractProviderFields(text);
+    // Inspect only the error message, never JSON request echoes or debug fields.
+    const databaseMessage = fields.code || fields.type || fields.message || fields.status || /^[{[]/.test(text) ? fields.message : text;
+    if (LOCAL_DATABASE_ERROR.test(databaseMessage)) return { category: "local_storage", fromCode: true, requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId), retryable: false };
     if (fields.code || fields.type || fields.message || fields.status) {
         const fromCode = categoryFromProviderCode(fields.code, fields.type, fields.status);
         if (fromCode) return specialize({ category: fromCode, fromCode: true, providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) }, fields);
@@ -455,6 +618,8 @@ function classifyText(raw: string): Classified {
         if (fromMessage) return specialize({ category: fromMessage, providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) }, fields);
     }
     if (/^[{[]/.test(text)) return { category: "unknown", providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId), retryable: false };
+    const assetCopy = assetURIUnsupportedCopy(text);
+    if (assetCopy) return assetCopy;
     const persisted = matchPersistedCategory(text);
     if (persisted) return { category: persisted, uncertain: ["timeout", "download_failed", "submission_uncertain"].includes(persisted), retryable: false };
     if (isMalformedText(text)) return { category: "malformed_response", retryable: false };
@@ -470,13 +635,35 @@ function classifyText(raw: string): Classified {
     return { category: "unknown", retryable: false };
 }
 
+function genericProviderCode(code: string) {
+    return ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(code)) || /^\d{3}$/.test(code);
+}
+
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
     classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b/i)?.[1]);
+    const taskConstraint = persistedTaskConstraintCopy(fields.message) || taskConstraintCopy(`${fields.code} ${fields.message}`);
+    if (taskConstraint && ["unknown", "invalid_params"].includes(classified.category))
+        return {
+            ...classified,
+            category: "invalid_params",
+            ...taskConstraint,
+            requestId: classified.requestId || sanitizeDebugId(fields.message.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]),
+            taskId: classified.taskId || sanitizeDebugId(fields.message.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]),
+            retryable: false,
+        };
+    const assetCopy = assetURIUnsupportedCopy(fields.message);
+    if (assetCopy && ["unknown", "invalid_params"].includes(classified.category)) return { ...classified, ...assetCopy, requestId: classified.requestId || assetCopy.requestId, taskId: classified.taskId || assetCopy.taskId };
     // Only broad wrappers may be refined by a more specific provider message.
-    const genericCode =
-        ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) ||
-        /^\d{3}$/.test(fields.code);
+    const genericCode = genericProviderCode(fields.code);
+    const transportFailure = persistedTransportFailure(fields.message);
+    if (transportFailure && (classified.category === transportFailure.category || (genericCode && ["unknown", "invalid_params"].includes(classified.category)))) {
+        return { ...classified, ...transportFailure, requestId: classified.requestId, taskId: classified.taskId };
+    }
+    const missingPrivateRoute = persistedMissingPrivateRoute(fields.message);
+    if (missingPrivateRoute && (classified.category === "model_missing" || (genericCode && ["unknown", "invalid_params"].includes(classified.category)))) {
+        return { ...classified, ...missingPrivateRoute, requestId: classified.requestId || missingPrivateRoute.requestId, taskId: classified.taskId || missingPrivateRoute.taskId };
+    }
     const persistedCopy = persistedModerationCopy(fields.message);
     if (persistedCopy && (classified.category === persistedCopy.category || (genericCode && ["unknown", "invalid_params"].includes(classified.category)))) {
         const persisted = classifyText(fields.message);
@@ -492,7 +679,7 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
     }
     const audioOrDuration = referenceAudioCopy(fields.message, normalizeCode(fields.code) === "invalid_reference_audio") || referenceDurationCopy(fields.message);
     if (audioOrDuration) return { ...classified, category: "invalid_params", ...audioOrDuration, retryable: false };
-    const mediaCopy = referenceMediaConstraintCopy(fields.message);
+    const mediaCopy = ["unknown", "invalid_params", "input_too_large", "input_inaccessible"].includes(classified.category) ? referenceMediaConstraintCopy(fields.message) : undefined;
     if (mediaCopy) return { ...classified, category: mediaCopy.reason.includes("过大") ? "input_too_large" : "invalid_params", ...mediaCopy, retryable: false };
     if (classified.category === "invalid_params") {
         const refined = categoryFromProviderMessage(fields.message);
@@ -525,7 +712,7 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
         const pixels = fields.message.match(/(?:pixel(?:s)?(?:\s+count)?|total\s+pixels)\s+(?:must|should)\s+be\s+between\s+(\d+)\s+and\s+(\d+)/i);
         if (pixels) {
             classified.reason = "参考素材像素总量不符合模型要求";
-            classified.action = "请调整尺寸或更换后再提交";
+            classified.action = `请将参考素材的宽×高调整到 ${pixels[1]}–${pixels[2]} 像素；修改生成分辨率不会改变参考素材`;
         }
     }
     if (classified.category === "input_too_large") {
@@ -677,6 +864,26 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
 }
 
 function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
+    text = text.split("。排查编号：", 1)[0];
+    if (text.startsWith("当前渠道需要在线素材链接：")) {
+        const [reason, ...action] = text.split("。");
+        return { reason, action: action.join("。") };
+    }
+    const unreadableFps = text.match(/^(第 \d+ 个参考视频帧率无法读取)/);
+    if (unreadableFps) return {reason:unreadableFps[1],action:"请重新导出 MP4/MOV 视频后上传，确保文件完整且包含有效的视频轨"};
+    const measuredFps = text.match(/^(第 \d+ 个参考视频平均帧率为 \d+(?:\.\d+)? FPS)[，。](?:需要 |请将参考视频重新导出为 )(\d+)–(\d+) FPS/);
+    if (measuredFps) return { reason: measuredFps[1], action: `请将参考视频重新导出为 ${measuredFps[2]}–${measuredFps[3]} FPS 后再提交` };
+    const fps = text.match(/^(?:素材转换失败:\s*)?(?:frame rate|framerate|fps) must be between (\d+(?:\.\d+)?)\s*(?:fps)? and (\d+(?:\.\d+)?)[.\s]*$/i);
+    if (fps) return { reason: "参考视频帧率不符合要求", action: `请将参考视频重新导出为 ${fps[1]}–${fps[2]} FPS 后再提交` };
+    if (text.startsWith("参考视频帧率不符合要求。请将参考视频重新导出为 ")) return { reason: text.split("。")[0], action: text.slice(text.indexOf("。") + 1) };
+    if (/^(?:(?:素材转换失败:\s*)?(?:unsupported (?:video |audio )?codec|(?:video |audio )?codec (?:is )?not supported)[.\s]*$|参考素材编码不受当前模型支持。)/i.test(text)) return { reason: "参考素材编码不受当前模型支持", action: "请将视频重新导出为常见的 H.264 MP4，音频重新导出为 MP3 或 WAV 后替换素材；只修改文件后缀无效" };
+    if (/^(?:asset (?:is )?(?:not ready|still processing)[.\s]*$|参考素材仍在处理中。)/i.test(text)) return { reason: "参考素材仍在处理中", action: "请在素材库确认处理完成后再生成，不要重复上传或反复提交" };
+    if (/^(?:asset (?:access denied|permission denied|forbidden)[.\s]*$|无权访问参考素材。)/i.test(text)) return { reason: "无权访问参考素材", action: "请使用上传该素材的账号与渠道，或重新上传原文件；检查素材权限，无需修改提示词" };
+    const pixelPersisted = text.match(/^(参考素材像素总量不符合模型要求)。((?:请将参考素材的宽×高调整到) \d+–\d+ 像素[^{}]*)$/);
+    if (pixelPersisted) return { reason: pixelPersisted[1], action: pixelPersisted[2] };
+    const videoPersisted = text.match(/^(第 \d+ 个参考视频(?:无法读取|格式或地址不支持|文件过大|尺寸为 \d+×\d+|时长为 \d+(?:\.\d+)? 秒|像素总量为 \d+（\d+×\d+）))[。]([^{}]+)$/);
+    if (videoPersisted) return { reason: videoPersisted[1], action: videoPersisted[2] };
+
     const persisted = text.match(/^参考素材(宽度|高度|宽高比)不符合模型要求。请将(?:宽度|高度|宽高比)调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)( 像素| )后重新提交/);
     if (persisted) return { reason: `参考素材${persisted[1]}不符合模型要求`, action: `请将${persisted[1]}调整为 ${persisted[2]}–${persisted[3]}${persisted[4]}后重新提交` };
     const single = text.match(/^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)(?:宽度|高度|宽高比|时长)为 \d+(?:\.\d+)?(?: 像素| 秒)?)[，。]需要 ((?:至少|不超过) \d+(?:\.\d+)?(?: 像素| 秒)?)/);
@@ -685,6 +892,20 @@ function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
     if (size) return { reason: `第 ${size[1]} ${size[2]}参考${size[3]}${size[4]}为 ${size[5]} 像素`, action: `需要 ${size[6]}–${size[7]} 像素；请调整尺寸或更换后再提交` };
     const aspect = text.match(/^第 (\d+) (张|个|段)参考(图|视频|音频)宽高比为 (\d+(?:\.\d+)?)[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)/);
     if (aspect) return { reason: `第 ${aspect[1]} ${aspect[2]}参考${aspect[3]}宽高比为 ${aspect[4]}`, action: `需要 ${aspect[5]}–${aspect[6]}；请调整尺寸或更换后再提交` };
+    const videoDuration = text.match(/^(第 \d+ 个参考视频时长为 \d+(?:\.\d+)? 秒)，需要 (\d+)–(\d+) 秒/);
+    if (videoDuration) return { reason: videoDuration[1], action: `请将这段参考视频裁剪或更换为 ${videoDuration[2]}–${videoDuration[3]} 秒` };
+    const videoRead = text.match(/^第 (\d+) 个参考视频[：:]?(?:参考视频)?(?:尺寸|时长)?(?:下载失败|无法读取|无法完整读取|数据无法读取|分段读取失败|在读取期间发生变化|时长无法读取|尺寸无法读取)/);
+    if (videoRead) return { reason: `第 ${videoRead[1]} 个参考视频无法读取`, action: "请检查素材链接，或重新导出 MP4/MOV 文件后导入" };
+    const videoFormat = text.match(/^第 (\d+) 个参考视频[：:]?(?:参考视频)?需使用/);
+    if (videoFormat) return { reason: `第 ${videoFormat[1]} 个参考视频格式或地址不支持`, action: "请导入 MP4/MOV 文件，或使用可公开访问的 HTTP/HTTPS 视频链接" };
+    const videoBytes = text.match(/^第 (\d+) 个参考视频[：:]?(?:参考视频)?文件不能超过 (\d+)MB/);
+    if (videoBytes) return { reason: `第 ${videoBytes[1]} 个参考视频文件过大`, action: `请压缩至 ${videoBytes[2]}MB 以内或更换素材` };
+    const videoSize = text.match(/^(第 \d+ 个参考视频尺寸为 \d+×\d+)，需要宽高均在 (\d+)–(\d+) 像素之间/);
+    if (videoSize) return { reason: videoSize[1], action: `请将这段参考视频的宽和高均调整到 ${videoSize[2]}–${videoSize[3]} 像素` };
+    const pixelDetail = text.match(/^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)像素总量为 \d+（\d+×\d+）)，需要 ([^；]+) 像素/);
+    if (pixelDetail) return { reason: pixelDetail[1], action: `需要 ${pixelDetail[2]} 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材` };
+    const unknownSize = text.match(/^(第 \d+ 个参考视频尺寸无法读取)/);
+    if (unknownSize) return { reason: unknownSize[1], action: "请重新导出 MP4/MOV 后导入" };
     const pixels = text.match(/^第 (\d+) (张|个|段)参考(图|视频|音频)像素总量/);
     if (pixels) return { reason: `第 ${pixels[1]} ${pixels[2]}参考${pixels[3]}像素总量不符合当前模型要求`, action: "请调整尺寸或更换后再提交" };
     const file = text.match(/^第 (\d+) (张|个|段)参考(图|视频|音频)文件过大[，。]当前模型单文件上限为 ([^；;]+)/);
@@ -695,6 +916,7 @@ function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
 function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" {
     const normalized = sanitizeProviderText(raw).toLowerCase();
     if (!normalized.trim()) return "";
+    if (assetURIUnsupportedMessage(normalized)) return "invalid_params";
     if (/duration\s+(?:must|should)\s+be\s+between\s+\d/.test(normalized)) return "invalid_params";
     if (
         /(?:width|height)\s+(?:must|should)\s+be\s+between\s+\d/.test(normalized) ||
@@ -711,6 +933,9 @@ function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" 
         return normalized.includes("arrearage") || normalized.includes("billing_hard_limit") ? "quota_upstream" : "quota_unknown";
     if (normalized.includes("rate limit") || normalized.includes("too many requests") || normalized.includes("throttl") || normalized.includes("频繁")) return "throttled";
     if (normalized.includes("context length") || normalized.includes("too many tokens") || normalized.includes("max_tokens") || (normalized.includes("长度") && (normalized.includes("最大") || normalized.includes("超出")))) return "context_too_long";
+    // 中转网关把上游的 404 透传过来（「请求路径或资源不存在：上游未找到对应端点」）：
+    // 模型名与路径都对，只是这一跳被路由到了没有该端点的上游 —— 判成可重试，别让用户去改配置。
+    if (normalized.includes("未找到对应端点") || normalized.includes("请求路径或资源不存在") || normalized.includes("endpoint not found")) return "provider_unavailable";
     if (normalized.includes("model_not_found") || normalized.includes("model not found") || normalized.includes("模型不存在") || normalized.includes("当前模型或接口不可用")) return "model_missing";
     if (normalized.includes("invalid api key") || normalized.includes("incorrect api key") || normalized.includes("authentication") || normalized.includes("unauthorized") || normalized.includes("鉴权失败")) return "auth";
     if (normalized.includes("permission") && (normalized.includes("denied") || normalized.includes("model") || normalized.includes("access"))) return "permission";
@@ -719,6 +944,23 @@ function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" 
         return "input_too_large";
     if (normalized.includes("invalid") || normalized.includes("parameter") || normalized.includes("argument") || normalized.includes("请检查模型")) return "invalid_params";
     return "";
+}
+
+function assetURIUnsupportedMessage(text: string) {
+    return ASSET_URI_UNSUPPORTED.test(text);
+}
+
+function assetURIUnsupportedCopy(text: string): Classified | undefined {
+    if (!assetURIUnsupportedMessage(sanitizeProviderText(text))) return undefined;
+    const debug = text.match(/。排查编号：([^。]+)。?$/)?.[1] || "";
+    return {
+        category: "invalid_params",
+        reason: "当前视频接口不支持 asset:// 图片 URI",
+        action: "请联系 Eggfans 网关维护者开通私域资产引用，或配置支持该 URI 的视频接口后再生成",
+        requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
+        taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]),
+        retryable: false,
+    };
 }
 
 function containsContentSafety(normalized: string) {
@@ -804,8 +1046,9 @@ function sanitizeProviderText(value: string) {
     // since a whitespace-based token matcher cannot know where a secret ends.
     text = text.replace(/(?:authorization|cookie|set-cookie|api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|password|prompt|input|query)\s*[=:：][\s\S]*/i, "[已隐藏]");
     text = text.replace(URL_PATTERN, "").replace(SIGNED_QUERY, "").replace(SECRET_PATTERN, "").replace(PROMPT_ECHO, "$1[已隐藏]");
+    text = text.replace(/(?:[a-z]:[\\/](?![\\/])|\\\\|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)[^\r\n:"'<>]+/gi, "[路径已隐藏]");
     text = text.replace(/\s+/g, " ").trim();
-    if (text.startsWith("{") || text.startsWith("<")) return "";
+    if (text.startsWith("{") || text.startsWith("[") || text.startsWith("<")) return "";
     return text.slice(0, 240);
 }
 
@@ -849,7 +1092,7 @@ function retryableCategory(category: GenerationErrorCategory) {
 }
 
 function isNetworkText(value: string) {
-    return /\b(?:dial tcp|connection refused|connection reset|no such host|i\/o timeout|context deadline exceeded|network error|failed to fetch|fetch failed|socket hang up|econnrefused|econnreset|etimedout)\b/i.test(value);
+    return /\b(?:dial tcp|connection refused|connection reset|forcibly closed by the remote host|software caused connection abort|connection was aborted by the software in your host machine|wsaeconnreset|wsaeconnaborted|no such host|i\/o timeout|context deadline exceeded|network error|failed to fetch|fetch failed|socket hang up|econnrefused|econnreset|etimedout)\b/i.test(value);
 }
 
 function isMalformedText(value: string) {
@@ -868,7 +1111,19 @@ function isResultsMissingText(value: string) {
     return value.includes("没有返回图片") || value.includes("没有返回视频") || value.includes("没有可用结果") || value.includes("接口没有返回");
 }
 
+function isCanvasSaveConflictText(text: string) {
+    return (
+        text.includes("云端画布已有更新") ||
+        text.includes("已停止覆盖") ||
+        text.includes("画布有版本冲突") ||
+        text.includes("生成结果已保留，但画布有版本冲突") ||
+        text.includes("画布有未处理的外部改动") ||
+        text.startsWith(CATEGORY_COPY.canvas_conflict.reason)
+    );
+}
+
 function matchPersistedCategory(text: string): GenerationErrorCategory | "" {
+    if (text.startsWith("当前账号额度不足")) return "quota_user";
     for (const [category, copy] of Object.entries(CATEGORY_COPY) as Array<[GenerationErrorCategory, CategoryCopy]>) {
         if (category === "unknown") continue;
         if (text.startsWith(copy.reason)) return category;

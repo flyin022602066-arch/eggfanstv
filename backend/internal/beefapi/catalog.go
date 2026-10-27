@@ -5,10 +5,13 @@ import (
 	"strings"
 	"unicode"
 
+	"infinite-canvas/backend/internal/providerpreset"
 	"infinite-canvas/backend/internal/workspace"
 )
 
-func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string) error {
+const DefaultManagedAssistantModel = "gpt-6-astra"
+
+func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, authorizationID string) error {
 	if store == nil {
 		return nil
 	}
@@ -28,6 +31,12 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 	for _, model := range models {
 		nextModels = append(nextModels, model.ID)
 		profile := map[string]any{"model": model.ID}
+		// A refreshed catalog owns this quote. Clear a stale quote when the
+		// current account/model no longer supplies one.
+		profile["videoPricing"] = nil
+		if pricing, ok := NormalizeCatalogVideoPricing(model.VideoPricing); ok {
+			profile["videoPricing"] = pricing
+		}
 		if model.DisplayName != "" {
 			profile["displayName"] = model.DisplayName
 		}
@@ -42,6 +51,12 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 			if protocol != "" {
 				profile["protocol"] = protocol
 			}
+			if capability == "video" {
+				if video, ok := NormalizeCatalogVideoCapability(model.VideoCapabilities); ok {
+					profile["capabilityConfig"] = map[string]any{"version": 1, "video": video}
+					profile["videoCapabilitiesVersion"] = model.VideoCapabilitiesVersion
+				}
+			}
 		}
 		nextProfiles = append(nextProfiles, profile)
 	}
@@ -54,6 +69,9 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 			channel["models"] = nextModels
 			channel["modelProfiles"] = nextProfiles
 		} else {
+			// Paid portrait availability and prices belong to the current catalog.
+			// Retain other legacy/custom entries under the existing merge contract.
+			channel["models"], channel["modelProfiles"] = withoutPortraitCatalogEntries(channel["models"], channel["modelProfiles"])
 			channel["models"] = mergeModelIDs(channel["models"], nextModels)
 			channel["modelProfiles"] = mergeProfiles(channel["modelProfiles"], nextProfiles)
 		}
@@ -70,11 +88,34 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 		}}, channels...)
 	}
 	config["channels"] = channels
+	defaultModel := ""
+	if authorizationID != "" {
+		preferred := DefaultManagedAssistantModel
+		for _, raw := range channels {
+			channel, _ := raw.(map[string]any)
+			if channel["id"] != ChannelID {
+				continue
+			}
+			if aliases, ok := channel["modelAliases"].(map[string]any); ok {
+				if alias, ok := aliases[preferred].(string); ok && strings.TrimSpace(alias) != "" {
+					preferred = strings.TrimSpace(alias)
+				}
+			}
+		}
+		// Only the freshly fetched catalog can establish availability, not a stale merged entry.
+		for _, model := range models {
+			capability, protocol := catalogCapabilityAndProtocol(model)
+			if model.ID == preferred && capability == "text" && (protocol == "chat-completion" || protocol == "claude-api" || protocol == "responses" || protocol == "openai-response") {
+				defaultModel = ChannelID + "::" + preferred
+				break
+			}
+		}
+	}
 	body, err := json.Marshal(config)
 	if err != nil {
 		return err
 	}
-	return store.SaveLocalModelConfig(body)
+	return store.SaveCatalogWithAssistantDefault(body, authorizationID, defaultModel)
 }
 
 func clearBeefAPIModels(store *workspace.ProviderConfig) error {
@@ -120,6 +161,9 @@ func catalogProtocol(model CatalogModel) string {
 }
 
 func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol string) {
+	if contract, ok := providerpreset.BeefAPIVideoContract(model.ID); ok {
+		return "video", contract.Protocol
+	}
 	id := strings.ToLower(strings.TrimSpace(model.ID))
 	modelType := strings.ToLower(strings.TrimSpace(model.ModelType))
 	endpoints := catalogEndpoints(model)
@@ -141,7 +185,7 @@ func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol stri
 		{capability: "audio", protocol: "openai-audio", endpoints: []string{"audio.speech", "audio-speech"}},
 		{capability: "text", protocol: "openai-response", endpoints: []string{"openai-response", "openai-response-compact", "responses"}},
 		{capability: "text", protocol: "claude-api", endpoints: []string{"anthropic", "messages"}},
-		{capability: "text", protocol: "google-gemini-generate-content", endpoints: []string{"gemini"}},
+		{capability: "text", protocol: "gemini-generate-content", endpoints: []string{"gemini"}},
 	} {
 		if !containsAnyString(endpoints, item.endpoints) {
 			continue
@@ -346,6 +390,12 @@ func RedactConfig(config map[string]any, managed bool) map[string]any {
 		if id != ChannelID {
 			continue
 		}
+		credentialRef, _ := channel["credentialRef"].(string)
+		baseURL, _ := channel["baseUrl"].(string)
+		pinned, _ := channel["pinned"].(bool)
+		if !managed && credentialRef != CredentialRef && !pinned && !IsEnterpriseBaseURL(baseURL) {
+			continue
+		}
 		apiKey, _ := channel["apiKey"].(string)
 		secretKey, _ := channel["secretKey"].(string)
 		hasKey := strings.TrimSpace(apiKey) != "" || strings.TrimSpace(secretKey) != "" || managed
@@ -383,7 +433,7 @@ func PreserveManagedChannel(incoming, existing map[string]any, managed bool) {
 		delete(channel, "deviceCode")
 		delete(channel, "device_code")
 		delete(channel, "encryptedApiKey")
-		if existingBeef != nil {
+		if existingBeef != nil && (managed || isManagedConfigChannel(channel) || isManagedConfigChannel(existingBeef)) {
 			channel["models"] = existingBeef["models"]
 			channel["modelProfiles"] = existingBeef["modelProfiles"]
 			if baseURL, _ := existingBeef["baseUrl"].(string); strings.TrimSpace(baseURL) != "" {
@@ -410,7 +460,7 @@ func PreserveManagedChannel(incoming, existing map[string]any, managed bool) {
 		}
 		incomingChannels[index] = channel
 	}
-	if !found && existingBeef != nil {
+	if !found && existingBeef != nil && (managed || isManagedConfigChannel(existingBeef)) {
 		cloned, err := cloneAnyMap(existingBeef)
 		if err == nil {
 			delete(cloned, "deviceCode")
@@ -427,6 +477,13 @@ func PreserveManagedChannel(incoming, existing map[string]any, managed bool) {
 	incoming["channels"] = incomingChannels
 }
 
+func isManagedConfigChannel(channel map[string]any) bool {
+	credentialRef, _ := channel["credentialRef"].(string)
+	baseURL, _ := channel["baseUrl"].(string)
+	pinned, _ := channel["pinned"].(bool)
+	return credentialRef == CredentialRef || pinned || IsEnterpriseBaseURL(baseURL)
+}
+
 func findChannel(channels []any, id string) map[string]any {
 	for _, raw := range channels {
 		channel, ok := raw.(map[string]any)
@@ -435,4 +492,26 @@ func findChannel(channels []any, id string) map[string]any {
 		}
 	}
 	return nil
+}
+
+func withoutPortraitCatalogEntries(models, profiles any) ([]any, []any) {
+	isPortrait := func(id string) bool { return id == "seedance-2.0-portrait" || id == "seedance-2.5-portrait" }
+	keptModels := make([]any, 0)
+	for _, raw := range mergeModelIDs(models, nil) {
+		id, _ := raw.(string)
+		if !isPortrait(id) {
+			keptModels = append(keptModels, raw)
+		}
+	}
+	keptProfiles := make([]any, 0)
+	if items, ok := profiles.([]any); ok {
+		for _, raw := range items {
+			profile, _ := raw.(map[string]any)
+			id, _ := profile["model"].(string)
+			if !isPortrait(id) {
+				keptProfiles = append(keptProfiles, raw)
+			}
+		}
+	}
+	return keptModels, keptProfiles
 }

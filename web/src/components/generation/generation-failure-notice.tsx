@@ -36,6 +36,17 @@ export function GenerationFailureNotice({ explanation, context, compact, onRetry
         <div className={`generation-failure-notice${compact ? " is-compact" : ""}`}>
             <p className="generation-failure-reason">{explanation.reason}</p>
             {explanation.action ? <p className="generation-failure-action">{explanation.action}</p> : null}
+            <details
+                className="generation-failure-log"
+                data-canvas-no-zoom
+                data-canvas-wheel-scroll
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+            >
+                <summary>失败日志（上游返回 / 本地原因）</summary>
+                <pre aria-label="生成失败日志" tabIndex={0}>{diagnostics}</pre>
+            </details>
             <div className="generation-failure-actions">
                 {onOpenDetails ? (
                     <button

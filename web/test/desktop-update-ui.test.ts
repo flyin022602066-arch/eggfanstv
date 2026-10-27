@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { appChangelogZh } from "../src/components/layout/app-changelog.zh";
 
 const root = resolve(import.meta.dir, "..");
 
@@ -9,6 +10,12 @@ function read(path: string) {
 }
 
 describe("desktop update UI contract", () => {
+    test("installed release has published notes in both the release and in-app changelogs", () => {
+        const version = read("../VERSION").trim();
+        expect(read("../CHANGELOG.md")).toContain(`## ${version}\n`);
+        expect(appChangelogZh.find((entry) => entry.version === version)?.changes.length).toBeGreaterThan(0);
+        expect(new Set(appChangelogZh.map((entry) => entry.version)).size).toBe(appChangelogZh.length);
+    });
     test("sidebar version area is desktop-gated and keeps changelog access", () => {
         const sidebar = read("src/components/layout/workspace-sidebar-nav.tsx");
         const update = read("src/components/layout/workspace-sidebar-update.tsx");
@@ -22,11 +29,15 @@ describe("desktop update UI contract", () => {
         expect(account).toContain("showVersion");
         expect(changelog).toContain("查看更新日志");
         expect(shell).toContain("useDesktopUpdateBootstrap");
-        expect(update).toContain("AppModal");
-        expect(update).toContain("保存并安装");
-        expect(update).toContain("安装后应用会关闭再打开。");
-        expect(update).toContain("请先把画布保存到本机，避免未完成的内容丢失。");
+        expect(update).toContain("AppChangelogButton");
+        expect(update).toContain("showVersion");
+        expect(update).toContain("updater.downloadAndInstall()");
+        expect(update).not.toContain("AppModal");
+        expect(update).toContain("updater.check()");
         expect(update).toContain('aria-live="polite"');
+        expect(update).toContain("desktopUpdateDetailLabel");
+        expect(update).toContain("hasResumableDesktopUpdate");
+        expect(update).toContain('role="progressbar"');
         expect(update).toContain("useReducedMotion");
         expect(update).not.toContain("Modal.confirm");
         expect(update).not.toContain("所有修改已保存");
@@ -49,6 +60,8 @@ describe("desktop update UI contract", () => {
         expect(service).toContain("CheckForUpdate");
         expect(service).toContain("DownloadUpdate");
         expect(service).toContain("InstallUpdate");
+        expect(hook).toContain("DESKTOP_UPDATE_CHECK_INTERVAL_MS");
+        expect(hook).toContain("controller.check()");
         expect(service).toContain("flushCanvasStorePersistence");
         expect(runtime).toContain("UpdateStatus");
         expect(runtime).toContain("currentVersion");

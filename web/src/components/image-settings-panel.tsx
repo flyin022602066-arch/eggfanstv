@@ -9,6 +9,7 @@ import { buildImageResolutionOptions, formatImageResolutionSize } from "@/lib/im
 import { modelCapabilityConfigFor, normalizeImageValue, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import { type AiConfig } from "@/stores/use-config-store";
+import { geminiNanoBananaThinkingLevel, isGeminiNanoBananaModel } from "@/lib/gemini-nano-banana";
 
 const qualityOptions = [
     { value: "auto", label: "自动" },
@@ -43,19 +44,20 @@ const aspectOptions: AspectOption[] = [
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "transparentBackground" | "count", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "transparentBackground" | "count" | "imageThinkingLevel", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     showQuality?: boolean;
     showTransparent?: boolean;
     showSize?: boolean;
     showCount?: boolean;
+    showThinking?: boolean;
     className?: string;
     maxCount?: number;
     quickCount?: number;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, showQuality = true, showTransparent = true, showSize = true, showCount = true, className = "w-[304px] space-y-3 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 3 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, showQuality = true, showTransparent = true, showSize = true, showCount = true, showThinking = true, className = "w-[304px] space-y-3 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 3 }: ImageSettingsPanelProps) {
     const profile = mergedImageCapabilityConfig(config, config.model || config.imageModel);
     const normalized = normalizeImageValue(profile, config);
     const quality = normalized.quality;
@@ -103,6 +105,18 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </span>
                 </div> : null}
                 {showSize ? <ImageSizePicker profile={profile} size={activeSize} quality={quality} onChange={(size, nextQuality) => applyImageSizeSelection(onConfigChange, size, nextQuality)} /> : null}
+                {showThinking && isGeminiNanoBananaModel(config.model || config.imageModel) ? (
+                    <div className="space-y-2">
+                        <SettingTitle color={theme.node.muted}>思考强度</SettingTitle>
+                        <div className="grid grid-cols-3 gap-1.5">
+                            {[{ value: "", label: "模型默认" }, { value: "minimal", label: "快速" }, { value: "high", label: "深入" }].map((option) => (
+                                <OptionPill key={option.value} selected={(geminiNanoBananaThinkingLevel(config.model || config.imageModel, config.imageThinkingLevel) || "") === option.value} theme={theme} onClick={() => onConfigChange("imageThinkingLevel", option.value)}>
+                                    {option.label}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    </div>
+                ) : null}
                 {showCount && effectiveMaxCount > 1 ? (
                     <div className="space-y-2">
                         <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
@@ -157,6 +171,7 @@ function OptionPill({ selected, disabled = false, theme, onClick, children }: { 
     return (
         <button
             type="button"
+			aria-pressed={selected}
 			className="h-8 cursor-pointer rounded-full px-2 text-xs transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 disabled:cursor-not-allowed disabled:opacity-40"
 			style={{ background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
 			disabled={disabled}

@@ -14,7 +14,7 @@ import { fallbackSkillCategories, formatSkillCount, groupSkills, skillCategoryLa
 import { SkillDetailModal } from "@/pages/skills/skill-detail-drawer";
 import { SkillEditorDrawer } from "@/pages/skills/skill-editor-drawer";
 import { SkillInstallModal } from "@/pages/skills/skill-install-modal";
-import { addSkill, deleteSkill, getSkill, likeSkill, listSkills, removeSkill, syncSkill, unlikeSkill, type Skill, type SkillCategory, type SkillScope, type SkillSort } from "@/services/api/skills";
+import { addSkill, deleteSkill, getSkill, likeSkill, listSkills, removeSkill, skillDisplayName, syncSkill, unlikeSkill, type Skill, type SkillCategory, type SkillScope, type SkillSort } from "@/services/api/skills";
 
 const scopeOptions = [
     { label: "技能广场", value: "public", icon: Sparkles },
@@ -312,7 +312,7 @@ function SkillCard({ skill, categories, loading, style, onOpen, onAdd, onLike, o
             <div className="skill-card-top">
                 <span className="library-icon-tile skill-card-icon" aria-hidden="true"><CategoryIcon /></span>
                 <button type="button" className="skill-card-title-button" onClick={onOpen}>
-                    <h3>{skill.skillName}</h3>
+                    <h3>{skillDisplayName(skill)}</h3>
                 </button>
                 {skill.isOwner ? (
                     <Dropdown

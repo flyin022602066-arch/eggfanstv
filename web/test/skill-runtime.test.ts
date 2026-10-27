@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Skill, SkillPackageFile, SkillPackageFileContent } from "../src/services/api/skills";
-import { createSkillRuntime, resolveSkillMentions } from "../src/services/skill-runtime";
+import { createSkillRuntime, resolveCanvasAgentSkillIds, resolveSkillMentions } from "../src/services/skill-runtime";
 
 function skill(overrides: Partial<Skill> = {}): Skill {
     return {
@@ -54,6 +54,40 @@ function file(path: string, content: string, kind: SkillPackageFile["kind"] = "m
 }
 
 describe("skill runtime", () => {
+    test("视频生成使用技能的专用规则而不发送整份 Agent 工作流", async () => {
+        const entry = "# 导演工作流\n" + "分析世界观并输出表格。".repeat(1800);
+        const guidance = "保持参考图身份与服装，按已确认节拍连续表演。";
+        const readPaths: string[] = [];
+        const runtime = createSkillRuntime({
+            getFile: async (_id, path) => {
+                readPaths.push(path);
+                return { file: file(path, path === "references/video-generation.md" ? guidance : entry) };
+            },
+            listFiles: async () => ({ files: [file("SKILL.md", entry).file, file("references/video-generation.md", guidance).file] }),
+        });
+        const result = await runtime.prepare({ profile: "shortDrama", purpose: "video", prompt: "0–30秒：角色说“我们回家。”", skills: [skill()], selectedSkillIds: ["director"] });
+        expect(result.prompt).toContain(guidance);
+        expect(result.prompt).toContain("0–30秒：角色说“我们回家。”");
+        expect(result.prompt).not.toContain(entry);
+        expect(result.prompt).not.toContain("<skill-context");
+        expect(result.prompt).not.toContain("权限边界");
+        expect(readPaths).toEqual(["references/video-generation.md"]);
+        expect(result.metadata.skillFiles).toEqual([{ skillId: "director", path: "references/video-generation.md", sha256: "sha-references/video-generation.md" }]);
+        const original = await runtime.prepare({ profile: "canvas", prompt: "拆解故事", skills: [skill()], selectedSkillIds: ["director"] });
+        expect(original.prompt).toContain(entry);
+    });
+
+    test("画布小说改编自动选择已安装技能并保留既有选择", () => {
+        const novel = skill({ skillId: "eggfans-novel-screenplay", skillName: "小说拆解剧本" });
+        expect(resolveCanvasAgentSkillIds("将画布小说改编为短剧剧本", [skill(), novel], ["director"])).toEqual(["director", novel.skillId]);
+        expect(resolveCanvasAgentSkillIds("继续写第2集", [novel], [novel.skillId])).toEqual([novel.skillId]);
+        expect(resolveCanvasAgentSkillIds("@[skill:eggfans-novel-screenplay] 分析这段文字", [novel], [])).toEqual([novel.skillId]);
+        expect(resolveCanvasAgentSkillIds("给图片调色", [novel], [])).toEqual([]);
+        expect(resolveCanvasAgentSkillIds("将小说拆解成剧本", [skill({ ...novel, isAdded: false })], [])).toEqual([]);
+        expect(resolveCanvasAgentSkillIds("将小说拆解成剧本", [skill({ ...novel, status: 0 })], [])).toEqual([]);
+        expect(resolveCanvasAgentSkillIds("将小说拆解成剧本", [novel], ["a", "b", "c", "d"])).toEqual(["a", "b", "c", "d"]);
+    });
+
     test("技能引用解析由统一规则同时支持稳定 token 和自然提及", () => {
         const director = skill();
         const storyboard = skill({ skillId: "storyboard", skillName: "小说转分镜" });

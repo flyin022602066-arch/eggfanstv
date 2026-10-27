@@ -9,6 +9,11 @@
   "frontend:dev:serverUrl": "http://127.0.0.1:3000",
   "assetdir": "frontend/dist",
   "wailsjsdir": "frontend/wailsjs",
+  "info": {
+    "companyName": "Eggfans TV",
+    "productName": "Eggfans TV",
+    "productVersion": "1.7.28"
+  },
   "author": {
     "name": "Eggfans TV Contributors"
   }

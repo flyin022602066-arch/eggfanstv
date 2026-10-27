@@ -25,6 +25,8 @@ export type CanvasNodeActionContextValue = {
     addPanoramaCaptureNode?: (node: CanvasNodeData, dataUrl: string, title: string) => Promise<void> | void;
     /** 打开视频片段剪辑工作流（智能剪辑节点复用）。 */
     openVideoSegment?: (node: CanvasNodeData) => void;
+    /** 在画布内打开 Suno 音乐导演台。 */
+    openSunoStudio?: (node: CanvasNodeData) => void;
 };
 
 export const CanvasNodeActionContext = createContext<CanvasNodeActionContextValue>({});

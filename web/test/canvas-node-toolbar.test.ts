@@ -28,11 +28,38 @@ function createNodeContext(node: CanvasNodeData): ToolContext {
 }
 
 describe("canvas node toolbar model", () => {
+    test("text can be explicitly saved from both toolbar modes", () => {
+        const node: CanvasNodeData = { id: "text", type: CanvasNodeType.Text, title: "剧本", position: { x: 0, y: 0 }, width: 300, height: 180, metadata: { content: "手动保存的剧本" } };
+        const saved: CanvasNodeData[] = [];
+        for (const mode of ["professional", "simple"] as const) {
+            const context = createNodeContext(node);
+            context.workspaceMode = mode;
+            context.handlers = { onNodeSaveAsset: (target) => saved.push(target) } as ToolbarHandlers;
+            const tool = resolveToolbarTools("node-hover", context, null).find((item) => item.id === "saveAsset");
+            expect(tool).toBeDefined();
+            expect(resolveNodeToolbarPlacement(tool!, context).group).toBe("utility");
+            tool!.run(context);
+        }
+        expect(saved).toEqual([node, node]);
+    });
+
+    test("opens the same subtitles action for uploaded audio and video", () => {
+        for (const type of [CanvasNodeType.Audio, CanvasNodeType.Video]) {
+            const node: CanvasNodeData = { id: "media", type, title: "素材", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { storageKey: "resource:media-fixture" } };
+            const ctx = createNodeContext(node);
+            const received: CanvasNodeData[] = [];
+            ctx.handlers = { onNodeSubtitles: target => received.push(target) } as ToolbarHandlers;
+            const action = resolveToolbarTools("node-hover", ctx, null).find(tool => tool.id === "subtitles");
+            expect(action).toBeDefined();
+            action?.run(ctx);
+            expect(received).toEqual([node]);
+        }
+    });
     test("preserves empty, simple and busy video states", () => {
         const ctx = createNodeContext({ id: "video", type: CanvasNodeType.Video, title: "视频", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: {} });
         const emptyTools = resolveToolbarTools("node-hover", ctx, null);
         expect(emptyTools.some((tool) => tool.id === "extractAudio")).toBe(false);
-        expect(emptyTools.some((tool) => tool.id === "uploadVideo")).toBe(false);
+        expect(resolveNodeToolbarPlacement(emptyTools.find((tool) => tool.id === "uploadVideo")!, ctx).group).toBe("primary");
         ctx.nodeMetadata = { content: "video.mp4" };
         const uploadedTools = resolveToolbarTools("node-hover", ctx, null);
         expect(resolveNodeToolbarPlacement(uploadedTools.find((tool) => tool.id === "uploadVideo")!, ctx).group).toBe("more");
@@ -41,6 +68,22 @@ describe("canvas node toolbar model", () => {
         expect(audio.disabled?.(ctx)).toBe(true);
         ctx.workspaceMode = "simple";
         expect(resolveToolbarTools("node-hover", ctx, null).some((tool) => tool.id === "extractAudio")).toBe(false);
+    });
+
+    test("empty video upload targets the original node in both toolbar modes", () => {
+        const node: CanvasNodeData = { id: "video-reference", type: CanvasNodeType.Video, title: "参考视频", position: { x: 0, y: 0 }, width: 320, height: 180 };
+        const received: CanvasNodeData[] = [];
+        for (const mode of ["professional", "simple"] as const) {
+            const context = createNodeContext(node);
+            context.workspaceMode = mode;
+            context.handlers = { onNodeUpload: (target) => received.push(target) } as ToolbarHandlers;
+            const tool = resolveToolbarTools("node-hover", context, null).find((item) => item.id === "uploadVideo");
+            expect(tool).toBeDefined();
+            tool!.run(context);
+            context.node = { ...node, type: CanvasNodeType.Image };
+            expect(resolveToolbarTools("node-hover", context, null).some((item) => item.id === "uploadVideo")).toBe(false);
+        }
+        expect(received).toEqual([node, node]);
     });
 
     test("image menu actions remain lazy and keep the original node", () => {

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { App, Button, Dropdown, Input, Modal, Tag, Tooltip } from "antd";
 import type { MenuProps } from "antd";
-import { Camera, ChevronDown, ChevronRight, Images, Maximize2, Plus, Settings2, SlidersHorizontal, UserRound } from "lucide-react";
+import { Camera, ChevronDown, ChevronRight, Images, Info, Maximize2, Plus, Settings2, SlidersHorizontal, Upload, UploadCloud, UserRound } from "lucide-react";
 
 import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
 import { ASSET_CATEGORY_OPTIONS } from "@/lib/asset-category";
@@ -18,6 +18,9 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode, type ViewportTransform } from "@/types/canvas";
 import { buildImageToolbarTools } from "./canvas-image-toolbar-tools";
 import { CanvasGridSplitPicker } from "./canvas-grid-split-picker";
+import { CanvasImageTemporaryURL } from "./canvas-image-temporary-url";
+import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
+import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 
 type CanvasNodeToolbarProps = {
     node: CanvasNodeData | null;
@@ -33,6 +36,7 @@ type CanvasNodeToolbarProps = {
     onAnnotate: (node: CanvasNodeData) => void;
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
+    onUploadToUguu: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
     onSaveAsset: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
@@ -61,6 +65,7 @@ type CanvasNodeToolbarProps = {
     onToggleLocked: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
     workspaceMode?: CanvasWorkspaceMode;
+    readOnly?: boolean;
 };
 
 type CanvasAssetCategory = NonNullable<NonNullable<CanvasNodeData["metadata"]>["assetCategory"]>;
@@ -95,6 +100,7 @@ export function CanvasNodeToolbar({
     onAnnotate,
     onGenerateImage,
     onUpload,
+    onUploadToUguu,
     onDownload,
     onSaveAsset,
     onMaskEdit,
@@ -123,6 +129,7 @@ export function CanvasNodeToolbar({
     onToggleLocked,
     onDelete,
     workspaceMode = "professional",
+    readOnly = false,
 }: CanvasNodeToolbarProps) {
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [containerWidth, setContainerWidth] = useState(1000);
@@ -330,7 +337,18 @@ export function CanvasNodeToolbar({
     // Image nodes use a deliberately small, stable action hierarchy. Keep the
     // underlying handlers/tool definitions intact, but only expose the actions
     // that belong to the four image workflows in the primary dock.
-    const imagePrimaryTools = primary.filter((tool) => tool.id === "maskEdit");
+    const imagePrimaryTools: ToolbarTool[] = [
+        {
+            id: "image-local-upload",
+            label: hasImage ? "替换图片" : "上传本地图片",
+            icon: <Upload className="size-3.5" />,
+            group: "primary",
+            order: 0,
+            disabled: Boolean(readOnly || node.metadata?.locked || node.metadata?.fileUpload === "uploading" || node.metadata?.status === "loading"),
+            onClick: () => onUpload(node),
+        },
+        ...primary.filter((tool) => tool.id === "maskEdit"),
+    ];
     const portraitTools = compact ? [] : isImage ? inGroup("portrait").filter((tool) => tool.id === "emotion") : inGroup("portrait");
     const viewpointLightingTools = compact ? [] : isImage ? [...inGroup("viewpoint"), ...inGroup("lighting")].filter((tool) => tool.id === "angle" || tool.id === "lighting") : [...inGroup("viewpoint"), ...inGroup("lighting")];
     const panoramaTools = compact || isImage ? [] : inGroup("panorama");
@@ -341,10 +359,35 @@ export function CanvasNodeToolbar({
           : inGroup("process");
     const workspaceTools = narrow ? [] : inGroup("workspace");
     const utilityTools = inGroup("utility");
-    const imageSettingsTools = isImage ? allTools.filter((tool) => tool.id === "replace" || tool.id === "resize" || tool.id === "node-lock") : [];
+    const imageSettingsTools = isImage ? allTools.filter((tool) => tool.id === "resize" || tool.id === "node-lock") : [];
+    const imageActionTools: ToolbarTool[] = isImage
+        ? [
+              {
+                  id: "image-info",
+                  label: "图片信息",
+                  icon: <Info className="size-3.5" />,
+                  group: "utility",
+                  order: 10,
+                  onClick: () => onInfo(node),
+              },
+              {
+                  id: "image-uguu-upload",
+                  label: "上传图床",
+                  icon: <UploadCloud className="size-3.5" />,
+                  group: "utility",
+                  order: 20,
+                  onClick: () => onUploadToUguu(node),
+              },
+          ]
+        : [];
     const processMenuLabel = compact ? "工具" : isVideo ? "提取素材" : isImage ? "图片工具" : isAudio ? "音频处理" : "文本调整";
-    const videoProcessingTools = registryToolbarTools.filter((tool) => tool.id === "trimRegenerate" || tool.id === "cropVideo" || tool.id === "depthCapture");
+    const videoUploadTool = registryToolbarTools.find((tool) => tool.id === "uploadVideo");
+    const videoProcessingTools = [
+        ...registryToolbarTools.filter((tool) => tool.id === "trimRegenerate" || tool.id === "cropVideo" || tool.id === "depthCapture"),
+        ...(narrow ? inGroup("workspace") : []),
+    ];
     const videoAudioTool = registryToolbarTools.find((tool) => tool.id === "extractAudio");
+    const videoSubtitleTool = registryToolbarTools.find((tool) => tool.id === "subtitles");
     const videoKeyframeTool = registryToolbarTools.find((tool) => tool.id === "extractFrames");
     const videoKeyframeTools: ToolbarTool[] = videoKeyframeTool
         ? [
@@ -395,11 +438,16 @@ export function CanvasNodeToolbar({
             <div role="toolbar" aria-label="节点快捷工具" className="flex h-10 max-w-full items-center gap-0.5 overflow-visible rounded-[var(--dock-radius-tight)] px-1.5 backdrop-blur-2xl" style={{ ...dockStyle, border: 0 }}>
                 {isVideo ? (
                     <>
+                        {videoUploadTool ? <NodeDockToolButton tool={{ ...videoUploadTool, disabled: Boolean(readOnly || node.metadata?.locked || node.metadata?.fileUpload === "uploading" || node.metadata?.status === "loading") }} /> : null}
                         {videoProcessingTools.length ? <NodeDockMenuButton menuId="video-processing" label="视频处理" icon={null} tools={videoProcessingTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} placement="bottomLeft" /> : null}
                         {videoAudioTool ? <NodeDockToolButton tool={videoAudioTool} showTooltip={false} /> : null}
+                        {videoSubtitleTool ? <NodeDockToolButton tool={videoSubtitleTool} showTooltip={false} /> : null}
                         {videoKeyframeTools.length ? (
                             <NodeDockMenuButton menuId="video-keyframes" label="关键帧截取" icon={<Images className="size-3.5" />} tools={videoKeyframeTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} placement="bottomLeft" />
                         ) : null}
+                        {workspaceTools.map((tool) => (
+                            <NodeDockToolButton key={tool.id} tool={tool} />
+                        ))}
                         {videoGlobalTools.length ? <span aria-hidden className="aceternity-dock-separator mx-1 h-5 w-px shrink-0" /> : null}
                         {videoGlobalTools.map((tool) => (
                             <NodeDockToolButton key={tool.id} tool={tool} iconOnly />
@@ -429,6 +477,10 @@ export function CanvasNodeToolbar({
                             />
                         ) : null}
                         {imageSettingsTools.length ? <NodeDockMenuButton menuId="image-settings" label="图片设置" icon={<Settings2 className="size-3.5" />} tools={imageSettingsTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} /> : null}
+                        {imageActionTools.length ? <span aria-hidden className="aceternity-dock-separator mx-1 h-5 w-px shrink-0" /> : null}
+                        {imageActionTools.map((tool) => (
+                            <NodeDockToolButton key={tool.id} tool={tool} showTooltip={false} />
+                        ))}
                         {workspaceTools.length ? <span aria-hidden className="aceternity-dock-separator mx-1 h-5 w-px shrink-0" /> : null}
                         {workspaceTools.map((tool) => (
                             <NodeDockToolButton key={tool.id} tool={tool} />
@@ -640,6 +692,7 @@ export function CanvasNodeInfoModal({
     const [assetCategory, setAssetCategory] = useState<CanvasAssetCategory>("other");
     const imageBytes = node?.type === CanvasNodeType.Image && node.metadata?.content ? getDataUrlByteSize(node.metadata.content) : 0;
     const batchCount = node?.type === CanvasNodeType.Image ? node.metadata?.batchChildIds?.length || 0 : 0;
+    const temporaryImageResourceId = !readOnly && isLocalRuntimeMode() && node?.type === CanvasNodeType.Image ? ownedResourceIdFromMediaRef(node.metadata?.storageKey, node.metadata?.content) : "";
     const nodeTypeLabel =
         node?.type === CanvasNodeType.Text
             ? "文本"
@@ -718,6 +771,8 @@ export function CanvasNodeInfoModal({
                                 {imageBytes ? <InfoRow label="图片大小" value={formatBytes(imageBytes)} /> : null}
                             </div>
                         </section>
+
+                        {temporaryImageResourceId && open ? <CanvasImageTemporaryURL key={temporaryImageResourceId} resourceId={temporaryImageResourceId} /> : null}
 
                         {node.type === CanvasNodeType.Image ? (
                             <section className="canvas-node-inspector-section">
@@ -815,7 +870,7 @@ export function CanvasNodeInfoModal({
                                         { code: node.metadata.generationErrorCode || node.metadata.taskErrorCode, message: node.metadata.errorDetails },
                                         { taskId: node.metadata.taskId, model: node.metadata.model, createdAt: node.metadata.taskCreatedAt, stage: node.metadata.taskStage },
                                     )}
-                                    context={{ taskId: node.metadata.taskId, model: node.metadata.model, createdAt: node.metadata.taskCreatedAt, stage: node.metadata.taskStage }}
+                                    context={{ taskId: node.metadata.taskId, model: node.metadata.model, createdAt: node.metadata.taskCreatedAt, stage: node.metadata.taskStage, providerRequestId: node.metadata.taskProviderRequestId, failureDiagnostics: node.metadata.taskFailureDiagnostics, errorSummary: node.metadata.generationErrorSummary, completedAt: node.metadata.taskCompletedAt, updatedAt: node.metadata.taskUpdatedAt }}
                                 />
                             </section>
                         ) : null}

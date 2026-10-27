@@ -1,12 +1,16 @@
 import { type ReactNode } from "react";
+import type { SeedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
 import { Switch } from "@/components/ui/base/switch";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceRatioOptions } from "@/lib/seedance-video";
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
+import { isEggfansSeedanceProtocol, normalizeEggfansReferenceMode } from "@/lib/eggfans-seedance";
+import { faceMaskGridOptions, isGridFaceMaskMode, isJiasuSdModel, jiasuModelSupportsServerFace, normalizeJiasuFaceMaskMode } from "@/lib/jiasu-face-mask";
+import { isEggfansSd2DModel, normalizeSd2FaceMaskMode } from "@/lib/eggfans-sd2-face-mask";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, videoDimensionsForRatioAndResolution, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
-import { modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { hasAutomaticVideoAudio, isSeedance25Model, modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const sizeOptions = [
@@ -19,21 +23,27 @@ const sizeOptions = [
 ];
 
 type VideoSettingsPanelProps = {
+    taskConstraints?: SeedanceSettingsConstraints;
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoArkPrivateAssetUpload", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoArkPrivateAssetUpload" | "videoEggfansReferenceMode" | "videoNativeFace" | "videoJiasuFaceMode" | "videoJiasuFaceMask" | "videoSd2FaceMask", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[292px] space-y-3" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[292px] space-y-3", taskConstraints }: VideoSettingsPanelProps) {
     const profile = modelCapabilityConfigFor(config, config.model).video!;
-    if (resolveModelRequestConfig(config, config.model).interfaceType === "volcengine-jimeng-video") {
-		return <JiMengVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    const interfaceType = resolveModelRequestConfig(config, config.model).interfaceType;
+    if (interfaceType === "volcengine-jimeng-video") {
+        return <JiMengVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
     if (isSeedanceVideoConfig(config)) {
-		return <SeedanceVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+        return <SeedanceVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} taskConstraints={taskConstraints} />;
     }
+    // 阿里系中转网关：图生视频时**输出比例跟随首帧参考图**（官方文档 + 2026-10-12 实测：
+    // 参考图 2304x1728(4:3) → 产出 1108x832(4:3)，请求里的 ratio 不生效）。
+    // 面板上方的 W×H 是按「比例 + 分辨率」换算出的参考值，必须说明，否则会被当成上游没按设置走。
+    const ratioFollowsFirstFrame = interfaceType === "wan-task-gateway-video";
 
     const seconds = normalizeVideoDuration(config.videoSeconds);
     const resolution = resolveVideoResolutionValue(profile, config.vquality);
@@ -41,8 +51,11 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const dimensions = videoDimensionsForRatioAndResolution(ratio, resolution);
     const sizeSupported = profile.ratios.length > 0;
     const configuredResolutions = profile.resolutions.map((value) => ({ value, label: formatVideoResolutionLabel(value) }));
-    const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
+    const automaticAudio = hasAutomaticVideoAudio(resolveModelRequestConfig(config, config.model).interfaceType);
+    const generateAudio = automaticAudio || boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
+    const isEggfansSd2 = resolveModelRequestConfig(config, config.model).interfaceType === "eggfans-sd2-video";
+    const isJiasu = resolveModelRequestConfig(config, config.model).interfaceType === "jiasu-video";
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -78,14 +91,45 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </button>
                         ))}
                     </div>
+                    {ratioFollowsFirstFrame ? <p className="text-[var(--fs-label)] leading-snug opacity-70">
+                        接参考图时为「图生视频」：输出比例跟随首帧参考图，分辨率只控制总像素（上方尺寸为换算参考）。
+                    </p> : null}
                 </SettingGroup> : null}
+                {isJiasu ? <JiasuVideoReferenceSettings config={config} theme={theme} onConfigChange={onConfigChange} /> : null}
+                {isEggfansSd2DModel(isEggfansSd2 ? "eggfans-sd2-video" : undefined, config.model) ? <SettingGroup title="本地参考图处理" color={theme.node.muted}><SwitchRow label="自动人脸遮罩" checked={normalizeSd2FaceMaskMode(config.videoSd2FaceMask) !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoSd2FaceMask", enabled ? "grid" : "off")} /><FaceMaskDensityControl mode={normalizeSd2FaceMaskMode(config.videoSd2FaceMask)} theme={theme} onChange={(value) => onConfigChange("videoSd2FaceMask", value)} /><div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>在节点“人脸遮罩”中预览或框选，处理后再上传。本地遮罩与服务器“过人脸”开关独立。</div></SettingGroup> : null}
                 <SettingGroup title="秒数" color={theme.node.muted}>
 					<VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
                 </SettingGroup>
-                {profile.generateAudio.supported || profile.watermark.supported ? <SettingGroup title="输出" color={theme.node.muted}><div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>{profile.generateAudio.supported ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}{profile.watermark.supported ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}</div></SettingGroup> : null}
+                {profile.generateAudio.supported || profile.watermark.supported || isEggfansSd2 ? <SettingGroup title="输出" color={theme.node.muted}><div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>{automaticAudio ? <div className="py-2 text-xs">同步声音已开启（渠道默认）</div> : profile.generateAudio.supported ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}{profile.watermark.supported ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}{isEggfansSd2 ? <SwitchRow label="过人脸" checked={config.videoNativeFace === "true"} theme={theme} onChange={(checked) => onConfigChange("videoNativeFace", checked ? "true" : "false")} /> : null}</div></SettingGroup> : null}
             </div>
         </ImageSettingsTheme>
     );
+}
+
+export function JiasuVideoReferenceSettings({ config, onConfigChange, theme }: Pick<VideoSettingsPanelProps, "config" | "onConfigChange" | "theme">) {
+    if (resolveModelRequestConfig(config, config.model).interfaceType !== "jiasu-video") return null;
+    const supportsServerFace = jiasuModelSupportsServerFace(config.model);
+    const faceMode = config.videoJiasuFaceMode || "default";
+    const faceOptions = supportsServerFace
+        ? [{ value: "default", label: "服务端默认" }, { value: "off", label: "保持原图" }, { value: "light", label: "轻度处理" }, { value: "heavy", label: "素描处理" }]
+        : [{ value: "default", label: "服务端默认" }];
+    return <div className="space-y-3">
+        <SettingGroup title="人脸处理" color={theme.node.muted}>
+            <div className="grid grid-cols-2 gap-1.5">{faceOptions.map((item) => <OptionPill key={item.value} selected={faceMode === item.value || (!supportsServerFace && faceMode === "off")} theme={theme} onClick={() => onConfigChange("videoJiasuFaceMode", item.value)}>{item.label}</OptionPill>)}</div>
+            {!supportsServerFace ? <div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>当前模型不接受 face 参数。需要处理人脸时，请开启下方“自动人脸遮罩”；先在本地处理参考图，再上传处理后的图片并提交 URL。</div> : null}
+        </SettingGroup>
+        {isJiasuSdModel("jiasu-video", config.model) ? <SettingGroup title="本地参考图处理" color={theme.node.muted}><SwitchRow label="自动人脸遮罩" checked={normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask) !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoJiasuFaceMask", enabled ? "grid" : "off")} /><FaceMaskDensityControl mode={normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask)} theme={theme} onChange={(value) => onConfigChange("videoJiasuFaceMask", value)} /><div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>自动检测参考图并处理后上传；画布节点支持预览和手动框选。</div></SettingGroup> : null}
+    </div>;
+}
+
+function FaceMaskDensityControl({ mode, theme, onChange }: { mode: string; theme: CanvasTheme; onChange(value: string): void }) {
+    if (!isGridFaceMaskMode(mode)) return null;
+    return <div className="space-y-1.5">
+        <div className="text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>网格密度</div>
+        <div role="group" aria-label="网格密度" className="grid grid-cols-3 gap-1.5">
+            {faceMaskGridOptions.map((option) => <OptionPill key={option.value} selected={mode === option.value} theme={theme} onClick={() => onChange(option.value)}>{option.label}</OptionPill>)}
+        </div>
+    </div>;
 }
 
 function JiMengVideoSettingsPanel({ config, profile, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig }) {
@@ -96,31 +140,43 @@ function JiMengVideoSettingsPanel({ config, profile, onConfigChange, theme, show
                 {showTitle ? <div className="text-sm font-semibold">视频设置</div> : null}
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-1.5">
-                {profile.ratios.map((value) => <OptionPill key={value} selected={config.size === value} theme={theme} onClick={() => onConfigChange("size", value)}>{value}</OptionPill>)}
+                        {profile.ratios.map((value) => (
+                            <OptionPill key={value} selected={config.size === value} theme={theme} onClick={() => onConfigChange("size", value)}>
+                                {value}
+                            </OptionPill>
+                        ))}
                     </div>
                 </SettingGroup>
                 <SettingGroup title="秒数" color={theme.node.muted}>
-					<VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
+                    <VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
                 </SettingGroup>
             </div>
         </ImageSettingsTheme>
     );
 }
 
-function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig }) {
+function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, showTitle, className, taskConstraints }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig }) {
     const model = modelOptionName(config.model || config.videoModel);
     const resolution = normalizeSeedanceResolution(config.vquality, model);
-    const ratio = normalizeSeedanceRatio(config.size);
+    const ratio = taskConstraints?.ratioLabel ? "adaptive" : normalizeSeedanceRatio(config.size);
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
     const useArkPrivateAssets = boolConfig(config.videoArkPrivateAssetUpload, true);
     const isArkSeedance = isVolcengineArkVideoProtocol(resolveModelRequestConfig(config, config.model).interfaceType);
+    const isEggfansSeedance = isEggfansSeedanceProtocol(resolveModelRequestConfig(config, config.model).interfaceType);
+    const isMintsSeedance = resolveModelRequestConfig(config, config.model).interfaceType === "mints-seedance-video";
+    const eggfansReferenceMode = normalizeEggfansReferenceMode(config.videoEggfansReferenceMode);
 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-sm font-semibold">视频设置</div> : null}
+                {isSeedance25Model(model) ? (
+                    <p className="text-xs leading-relaxed" style={{ color: theme.node.muted }}>
+                        首尾帧和延长模式的比例跟随素材；编辑模式还会跟随原视频时长。需要自由设置时，请选择参考生成。
+                    </p>
+                ) : null}
                 <SettingGroup title="分辨率" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-1.5">
                         {profile.resolutions.map((value) => {
@@ -135,28 +191,29 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                 </SettingGroup>
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-1.5">
-                        {profile.ratios.map((value) => {
-                            const item = { value, label: value };
+                        {(taskConstraints?.ratioLabel ? ["adaptive"] : profile.ratios).map((value) => {
+                            const item = { value, label: taskConstraints?.ratioLabel || value };
                             return (
-                            <button
-                                key={item.value}
-                                type="button"
-                                className="flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[var(--fs-tiny)] font-medium leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1"
-                                style={{ background: ratio === item.value ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onClick={() => onConfigChange("size", item.value)}
-                            >
-                                <span className="grid h-4 place-items-center">
-                                    <SizePreview width={ratioPreview(item.value).width} height={ratioPreview(item.value).height} color={theme.node.text} />
-                                </span>
-                                <span className="whitespace-nowrap">{item.label}</span>
-                            </button>
+                                <button
+                                    key={item.value}
+                                    type="button"
+                                    disabled={Boolean(taskConstraints?.ratioLabel)}
+                                    className="flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[var(--fs-tiny)] font-medium leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1"
+                                    style={{ background: ratio === item.value ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={() => onConfigChange("size", item.value)}
+                                >
+                                    <span className="grid h-4 place-items-center">
+                                        <SizePreview width={ratioPreview(item.value).width} height={ratioPreview(item.value).height} color={theme.node.text} />
+                                    </span>
+                                    <span className="whitespace-nowrap">{item.label}</span>
+                                </button>
                             );
                         })}
                     </div>
                 </SettingGroup>
                 <SettingGroup title="时长" color={theme.node.muted}>
-					<VideoDurationControl profile={profile} value={duration} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
+                    {taskConstraints?.durationLocked ? <p className="text-sm">随原视频</p> : <VideoDurationControl profile={profile} value={duration} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />}
                 </SettingGroup>
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>
@@ -164,10 +221,17 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                         {profile.watermark.supported ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}
                     </div>
                 </SettingGroup>
-                {isArkSeedance ? (
-                    <SettingGroup title="参考图" color={theme.node.muted}>
+                {isMintsSeedance ? <SettingGroup title="自动资产绑定" color={theme.node.muted}><div className="rounded-md p-2 text-[var(--fs-tiny)] leading-5" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>生成时自动上传 Uguu，绑定 Mints 资产并等待就绪后以 URI 提交。已绑定素材自动复用，失效链接自动更新。</div></SettingGroup> : isArkSeedance || isEggfansSeedance ? (
+                    <SettingGroup title="参考素材" color={theme.node.muted}>
                         <div className="rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>
-                            <SwitchRow label="自动同步可信素材（确认拥有使用权）" checked={useArkPrivateAssets} theme={theme} onChange={(checked) => onConfigChange("videoArkPrivateAssetUpload", String(checked))} />
+                            {isEggfansSeedance ? (
+                                <>
+                                    <SwitchRow label="使用资产 URI" checked={eggfansReferenceMode === "uri"} theme={theme} onChange={(checked) => onConfigChange("videoEggfansReferenceMode", checked ? "uri" : "url")} />
+                                    <div className="pb-1.5 text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>
+                                        URI 会同步私域资产库；关闭后使用自动刷新的公网 URL。
+                                    </div>
+                                </>
+                            ) : <SwitchRow label="自动同步可信素材（确认拥有使用权）" checked={useArkPrivateAssets} theme={theme} onChange={(checked) => onConfigChange("videoArkPrivateAssetUpload", String(checked))} />}
                         </div>
                     </SettingGroup>
                 ) : null}
@@ -191,7 +255,8 @@ export function videoSizeLabel(value: string) {
 }
 
 export function videoSecondsLabel(value: string) {
-    return `${normalizeVideoDuration(value)}s`;
+    const normalized = normalizeVideoDuration(value);
+    return normalized === "-1" ? "自动" : `${normalized}s`;
 }
 
 export function normalizeVideoSizeValue(value: string) {
@@ -202,7 +267,15 @@ export function normalizeVideoSizeValue(value: string) {
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
-        <button type="button" disabled={disabled} aria-pressed={selected} className="h-8 cursor-pointer whitespace-nowrap rounded-md px-1 text-[var(--fs-label)] font-medium leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
+        <button
+            type="button"
+            disabled={disabled}
+            aria-pressed={selected}
+            className="h-8 cursor-pointer whitespace-nowrap rounded-md px-1 text-[var(--fs-label)] font-medium leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 disabled:cursor-not-allowed disabled:opacity-35"
+            style={{ background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={onClick}
+        >
             {children}
         </button>
     );
@@ -254,7 +327,9 @@ function DurationInput({ value, min, max, theme, onChange }: { value: number; mi
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
             />
-            <span className="shrink-0 px-1.5" style={{ color: theme.node.muted }}>秒</span>
+            <span className="shrink-0 px-1.5" style={{ color: theme.node.muted }}>
+                秒
+            </span>
         </label>
     );
 }
@@ -265,37 +340,56 @@ function VideoDurationControl({ profile, value, theme, disabled, onChange }: { p
         const max = Math.max(min, profile.duration.max || min);
         const step = Math.max(1, profile.duration.step || 1);
         const normalized = normalizeDurationValue(value, profile.duration.default, min, max, step);
-		return <DurationRangeControl value={normalized} min={min} max={max} step={step} theme={theme} onChange={(next) => { if (!disabled?.(next)) onChange(next); }} />;
-    }
-
-    const options = videoDurationOptions(profile);
-    return <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(options.length, 4)}, minmax(0, 1fr))` }}>
-		{options.map((option) => <OptionPill key={option} selected={normalizedNumber(value) === option} disabled={disabled?.(option)} theme={theme} onClick={() => onChange(option)}>{option}s</OptionPill>)}
-    </div>;
-}
-
-function DurationRangeControl({ value, min, max, step, theme, onChange }: { value: number; min: number; max: number; step: number; theme: CanvasTheme; onChange: (value: number) => void }) {
-    return <div className="space-y-1.5">
-        <div className="flex min-w-0 items-center gap-2">
-            <input
-                type="range"
+        return (
+            <DurationRangeControl
+                value={normalized}
                 min={min}
                 max={max}
                 step={step}
-                value={value}
-                aria-label="视频时长（秒）"
-                className="video-duration-range h-8 min-w-0 flex-1"
-                style={{ accentColor: theme.accent.primary }}
-                onChange={(event) => onChange(Number(event.target.value))}
-                onMouseDown={(event) => event.stopPropagation()}
+                theme={theme}
+                onChange={(next) => {
+                    if (!disabled?.(next)) onChange(next);
+                }}
             />
-            <DurationInput value={value} min={min} max={max} theme={theme} onChange={onChange} />
+        );
+    }
+
+    const options = videoDurationOptions(profile);
+    return (
+        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(options.length, 4)}, minmax(0, 1fr))` }}>
+            {options.map((option) => (
+                <OptionPill key={option} selected={normalizedNumber(value) === option} disabled={disabled?.(option)} theme={theme} onClick={() => onChange(option)}>
+                    {option === -1 ? "自动" : `${option}s`}
+                </OptionPill>
+            ))}
         </div>
-        <div className="flex justify-between px-0.5 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
-            <span>{min}s</span>
-            <span>{max}s</span>
+    );
+}
+
+function DurationRangeControl({ value, min, max, step, theme, onChange }: { value: number; min: number; max: number; step: number; theme: CanvasTheme; onChange: (value: number) => void }) {
+    return (
+        <div className="space-y-1.5">
+            <div className="flex min-w-0 items-center gap-2">
+                <input
+                    type="range"
+                    min={min}
+                    max={max}
+                    step={step}
+                    value={value}
+                    aria-label="视频时长（秒）"
+                    className="video-duration-range h-8 min-w-0 flex-1"
+                    style={{ accentColor: theme.accent.primary }}
+                    onChange={(event) => onChange(Number(event.target.value))}
+                    onMouseDown={(event) => event.stopPropagation()}
+                />
+                <DurationInput value={value} min={min} max={max} theme={theme} onChange={onChange} />
+            </div>
+            <div className="flex justify-between px-0.5 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
+                <span>{min}s</span>
+                <span>{max}s</span>
+            </div>
         </div>
-    </div>;
+    );
 }
 
 function normalizeDurationValue(value: number, fallback: number, min: number, max: number, step: number) {
@@ -327,14 +421,14 @@ function ratioPreview(ratio: string) {
     return { width: 16, height: 9 };
 }
 
-function SwitchRow({ label, checked, theme, onChange }: { label: string; checked: boolean; theme: CanvasTheme; onChange: (checked: boolean) => void }) {
+function SwitchRow({ label, checked, disabled, theme, onChange }: { label: string; checked: boolean; disabled?: boolean; theme: CanvasTheme; onChange: (checked: boolean) => void }) {
     return (
         <div className="flex h-8 items-center justify-between gap-2">
             <span className="min-w-0 whitespace-nowrap text-[var(--fs-label)]" style={{ color: theme.node.text }}>
                 {label}
             </span>
             <span className="shrink-0" onMouseDown={(event) => event.stopPropagation()}>
-                <Switch size="sm" checked={checked} onChange={onChange} />
+                <Switch size="sm" checked={checked} disabled={disabled} aria-label={label} onChange={onChange} />
             </span>
         </div>
     );

@@ -1,7 +1,8 @@
 import { getMediaBlob } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { getResourceUpstreamUrl, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import { getResourceUpstreamUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile, uploadResourceToUguu } from "@/services/api/resources";
 import { modelOptionName } from "@/stores/use-config-store";
+import { sdVideoImageReferenceLimit } from "@/lib/model-capabilities";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -25,8 +26,7 @@ type EggfansTaskResponse = Record<string, unknown> & {
     state?: string;
 };
 
-const MAX_IMAGES_DEFAULT = 30;
-const MAX_IMAGES_BD = 9;
+const MAX_IMAGES_DEFAULT = 10;
 const MAX_VIDEOS = 10;
 const MAX_AUDIOS = 10;
 
@@ -73,6 +73,7 @@ export async function createEggfansSd2VideoTask(
         duration,
         resolution: "720p",
         aspect_ratio: eggfansAspectRatio(config.size),
+        ...(config.videoNativeFace === "true" && (imageUrls.length || videoUrls.length || firstImageUrl) ? { native_face: true } : {}),
         ...(imageUrls.length ? { image_refs: imageUrls } : {}),
         ...(videoUrls.length ? { video_refs: videoUrls } : {}),
         ...(audioUrls.length ? { audio_refs: audioUrls } : {}),
@@ -118,7 +119,7 @@ export async function pollEggfansSd2VideoTask(
 }
 
 export function eggfansImageLimit(model: string) {
-    return /^sd-2\.5-(?:b|d)$/i.test(model.trim()) ? MAX_IMAGES_BD : MAX_IMAGES_DEFAULT;
+    return sdVideoImageReferenceLimit("eggfans-sd2-video", model) ?? MAX_IMAGES_DEFAULT;
 }
 
 export function eggfansAspectRatio(value: string) {
@@ -156,8 +157,9 @@ export function isEggfansPublicHttpsUrl(value: string) {
 async function resolveEggfansMediaUrl(media: EggfansMedia, kind: "image" | "video" | "audio", options?: RequestOptions) {
     const resourceKey = media.storageKey?.startsWith("resource:") ? media.storageKey : "";
     const directUrl = media.url || media.dataUrl || "";
-    if (resourceKey) return getResourceUpstreamUrl(resourceKey, options);
+    if (resourceKey) return kind === "image" ? uploadResourceToUguu(resourceIdFromStorageKey(resourceKey), options) : getResourceUpstreamUrl(resourceKey, options);
     if (isEggfansPublicHttpsUrl(directUrl)) return directUrl;
+    if (/^asset:\/\//i.test(directUrl) && !media.storageKey) throw new Error("EggFans SD2 不支持私域资产 URI，请使用原始图片、视频或音频");
     if (/^https?:\/\//i.test(directUrl)) throw new Error("EggFans 参考素材只接受公网 HTTPS URL");
 
     let blob = media.storageKey ? await getMediaBlob(media.storageKey) : null;
@@ -172,7 +174,7 @@ async function resolveEggfansMediaUrl(media: EggfansMedia, kind: "image" | "vide
         fileName: media.name,
         idempotencyKey: media.storageKey || `eggfans-sd2:${kind}:${media.id || media.name || "media"}`,
     });
-    return getResourceUpstreamUrl(resourceStorageKey(resource.id), options);
+    return kind === "image" ? uploadResourceToUguu(resource.id, options) : getResourceUpstreamUrl(resourceStorageKey(resource.id), options);
 }
 
 function taskIdFrom(payload: EggfansTaskResponse) {

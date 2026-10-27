@@ -59,13 +59,22 @@ func TestParseShowcaseMediaAcceptsStoredSnakeCase(t *testing.T) {
 	}
 }
 
+func TestSkillHas15SecondLimitDetectsExplicitVideoLimit(t *testing.T) {
+	if !skillHas15SecondLimit("镜头技能", "", "每段时长 4-15 秒，按短片段输出") {
+		t.Fatal("expected an explicit 4-15 second rule to be marked")
+	}
+	if skillHas15SecondLimit("普通技能", "", "建议每段时长 5 秒") {
+		t.Fatal("did not expect an unrelated 5 second rule to be marked")
+	}
+}
+
 func TestBuiltinSkillSeedContainsAllSkills(t *testing.T) {
-	var definitions []builtinSkillDefinition
-	if err := json.Unmarshal(builtinSkillsJSON, &definitions); err != nil {
+	definitions, err := builtinSkillDefinitions()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(definitions) != 33 {
-		t.Fatalf("builtin skill count = %d, want 33", len(definitions))
+	if len(definitions) != 34 {
+		t.Fatalf("builtin skill count = %d, want 34", len(definitions))
 	}
 	seen := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {

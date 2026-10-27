@@ -56,11 +56,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-beeftv-windo
 产物：
 
 ```text
-backend\cmd\desktop\build\bin\BeefTV.exe
+backend\cmd\desktop\build\bin\EggfansTV.exe
 backend\cmd\desktop\build\bin\plugin-packages\*.beeftv-plugin
 ```
 
-官方插件必须和 `BeefTV.exe` 放在同一目录下的 `plugin-packages\`。从开始菜单、快捷方式或资源管理器启动时，工作目录不一定是仓库或 exe 所在目录；应用按可执行文件位置查找官方插件，不依赖当前工作目录。
+官方插件必须和 `EggfansTV.exe` 放在同一目录下的 `plugin-packages\`。从开始菜单、快捷方式或资源管理器启动时，工作目录不一定是仓库或 exe 所在目录；应用按可执行文件位置查找官方插件，不依赖当前工作目录。
 
 ### 本机前提
 
@@ -70,6 +70,7 @@ backend\cmd\desktop\build\bin\plugin-packages\*.beeftv-plugin
 | --- | --- | --- |
 | Windows 10/11 amd64 | Wails Windows 目标 | [Wails CLI platforms](https://wails.io/docs/reference/cli) |
 | Go 1.25 或更新，且在 PATH（或 `BEEFTV_GO_DIR\bin\go.exe`） | 编译桌面后端；`backend/go.mod` 要求 1.25 | 仓库 `backend/go.mod` |
+| 可选：`BEEFTV_WAILS_BIN` | 使用已安装的 Wails v2.16.0 CLI，便于离线构建；未设置时由 Go 模块运行 CLI | Windows 发布脚本 |
 | Bun 在 PATH | `wails.json` 的 `bun install --frozen-lockfile` 与 `bun run build:desktop` | 仓库 `backend/cmd/desktop/wails.json` |
 | `CGO_ENABLED` 不能是 `0` | `gorm.io/driver/sqlite` 依赖 `github.com/mattn/go-sqlite3` | [go-sqlite3 README](https://github.com/mattn/go-sqlite3#windows) |
 | PATH 中的 `gcc`/`clang`，或可执行的 `CC` | 编译 go-sqlite3。Go 1.25 起 Windows CGO 需要支持 DWARF 5 的 GCC（binutils 2.37 或更新） | [go-sqlite3 Windows](https://github.com/mattn/go-sqlite3#windows)、[Go Minimum Requirements · cgo](https://go.dev/wiki/MinimumRequirements#cgo) |
@@ -84,11 +85,53 @@ backend\cmd\desktop\build\bin\plugin-packages\*.beeftv-plugin
 
 构建使用与 macOS 相同的 Wails 模块 `github.com/wailsapp/wails/v2/cmd/wails@v2.16.0`，并显式传入 `-platform windows/amd64`、`-webview2 download`。Wails 把生产二进制写到 `build/bin`。缺少 WebView2 时，下载策略会提示安装官方 bootstrapper。
 
-本脚本不生成 NSIS 安装包。Wails 的 `-nsis` 需要另装 NSIS，且默认安装脚本是否包含 `plugin-packages\` 未经本仓库验证。当前支持的发布形态是：把 `BeefTV.exe` 和旁边的 `plugin-packages\` 一起分发。
+Windows 图标使用 `web/public/eggfans-logo.png`，由 Wails 打包为 EXE 图标资源。普通 `go build` 不会生成该资源，不能用于替换正式桌面程序；发布脚本会检查最终 EXE，缺少图标时直接失败。
+
+Windows 正式 EXE 的前端通过 `bun run build:desktop` 使用 `desktop` 构建模式：模型配置保留各渠道已保存的 Base URL 和模型目录地址，以图标悬停或键盘聚焦显示，不能在该界面修改；隐藏新增渠道入口及火山 URI 资产库配置板块。已有渠道、Key、模型参数及资产库生成流程保持可用。Vite 本地开发、普通网页构建和 macOS 桌面构建保留可编辑界面。
+
+Windows 桌面版的后端出网请求会读取当前用户已启用的手动系统代理及绕过列表，代理地址或开关改变后会在后续请求中生效。显式配置的 `HTTP_PROXY` / `HTTPS_PROXY` 优先，`NO_PROXY` 继续生效；服务端入口不会自动读取桌面系统代理。系统代理仅提供出网通道，目标地址仍经过原有 SSRF 校验。仅配置 PAC 自动代理脚本的环境暂不支持自动解析，可使用手动代理或环境变量指定代理地址。
+
+此 PowerShell 脚本只生成主程序和插件，不调用 Wails 默认 NSIS 模板。需要完整便携包或单文件安装 EXE 时，继续使用下文的专用打包脚本。
+
+### Windows 完整便携包
+
+需要本地剪辑、媒体探测和离线语音转写时，不能只分发主程序和协议插件。使用 `scripts/package-eggfans-windows-portable.py`，显式传入已构建的 EXE、协议插件目录、本地工具目录、许可及微软运行库安装器目录和新的输出目录：
+
+```powershell
+python scripts/package-eggfans-windows-portable.py --version v1.6.9 --executable release/EggfansTV-v1.6.9.exe --plugins release/plugin-packages --tools .local/tools --notices .local/cache/portable-notices --output release/EggfansTV-v1.6.9-windows-amd64-full
+```
+
+打包器使用文件白名单，包含 FFmpeg、FFprobe、Whisper CLI、CPU 后端 DLL、多语言 base 模型、第三方许可和可选安装的 Visual C++ x64 运行库安装器。不会复制个人数据目录、开发工具、测试程序或其他项目文件。ZIP 内每个文件都验证 CRC 和 SHA-256，文件清单记录在 `manifest.json`。使用新输出目录，避免覆盖已有发布包。
+
+完整解压后可直接双击 `EggfansTV.exe`。Windows 启动时把可执行文件附近 `.local/tools/ffmpeg` 加入当前进程的 PATH，使 FFprobe 探测和视频转码也能找到包内工具，不依赖工作目录或系统安装的 FFmpeg，不修改系统 PATH。语音引擎从 `.local/tools/whisper` 加载；需要时可手动运行包内微软运行库安装器。WebView2 仍是系统运行环境，缺少时由 Wails 提示安装。
+
+包内 `run-eggfans-tv.cmd` 同时作为便携目录标识，因此双击 EXE 或启动器均把运行数据保存在该包 `.local/EggfansTV` 中。分发时只包含 `.local/tools`，不应包含运行后生成的 `.local/EggfansTV`。不要把完整便携包当成自动更新包上传，自动更新使用前述独立的更新包布局。
+
+### Windows 单文件安装 EXE
+
+外发应选择 `EggfansTV-vX.Y.Z-Setup-windows-x64.exe`。`EggfansTV-vX.Y.Z.exe` 只是主程序，不能作为完整安装包单独发送；缺少旁边的 `plugin-packages/` 会导致后端启动失败，也不会出现安装向导。
+
+外发时也可以只提供一个 Setup EXE。`scripts/build-eggfans-windows-installer.py` 使用已安装的 NSIS 3 编译器，将验收后的完整便携包及微软 WebView2 x64 离线安装程序嵌入同一个安装文件，不需要用户手动解压、复制插件或媒体工具：
+
+```powershell
+python scripts/build-eggfans-windows-installer.py --payload release/EggfansTV-v1.6.9-windows-amd64-full --webview2 .local/cache/windows-setup-prerequisites/MicrosoftEdgeWebView2RuntimeInstallerX64.exe --output release/EggfansTV-v1.6.9-Setup-windows-x64.exe
+```
+
+输入的便携包必须包含有效的 `manifest.json`，构建器逐项核对大小和 SHA-256，只嵌入白名单中的文件。WebView2 离线安装程序应从微软官方分发地址取得，并先验证 Microsoft Authenticode 签名；Visual C++ x64 运行库安装器来自便携包。安装脚本为 `scripts/windows-installer/eggfans-tv.nsi`，不会调用默认 Wails NSIS 模板。
+
+便携包与安装包构建器均为随包的 Whisper CLI 设置 UTF-8 进程清单，保留原有权限声明及其他资源，并重新计算文件哈希。这样中文安装目录、音频文件名、模型路径和转写结果路径不会被 Windows 默认代码页错误转换。此处理只作用于发布包副本，不修改本机工具源文件。
+
+安装器支持 Windows 10/11 x64，默认在安装包旁边创建 `Eggfans TV` 目录，用户可以修改位置；已有安装可沿用原位置。为当前用户创建开始菜单入口，可选桌面快捷方式，并注册系统卸载项。安装时检查 Visual C++ x64/OpenMP 及 WebView2，已有运行环境会跳过，缺少时运行包内微软离线安装器；Visual C++ 安装可能要求管理员授权。
+
+安装后的软件继续把配置、画布、项目和素材写入安装目录 `.local/EggfansTV`。安装和卸载都不触及该目录；卸载仅按编译时的文件清单删除程序、插件、工具、快捷方式和本应用卸载项，保留用户运行后产生的数据。升级前应退出软件。安装后仍需用户在模型配置中填写自己的 API Key。
 
 在非 Windows 主机交叉编译出来的 exe，不能当作 Windows 验收通过。
 
 ## 启动目录与数据目录
+
+Windows 用户请双击项目根目录的 `一键启动_EggfansTV.bat` 启动桌面软件。根目录的 `.command` 文件是 macOS 专用脚本，不适用于 Windows；`run-eggfans-tv.cmd` 是该启动器调用的 Windows 命令行入口。
+
+项目内启动器优先使用 `release/EggfansTV-v1.6.9.exe` 和旁边的 `plugin-packages/`；不存在时依次回退到 `release/EggfansTV.exe` 和构建目录。启动器仍显式使用项目 `.local/EggfansTV` 保存配置与素材。
 
 桌面进程默认数据目录来自 Go 的 `os.UserConfigDir()`，再拼 `BeefTV`：
 
@@ -97,7 +140,7 @@ backend\cmd\desktop\build\bin\plugin-packages\*.beeftv-plugin
 | Windows | `%AppData%\BeefTV`（Roaming） |
 | macOS | `~/Library/Application Support/BeefTV` |
 
-其中包含 SQLite、本地资源和迁移备份。隔离调试时设置 `CANVAS_DESKTOP_DATA_DIR`。`CANVAS_BACKEND_DATA_DIR` 只作用于 `cmd/server`，不会改桌面数据目录。
+其中包含 SQLite、本地资源和迁移备份。隔离调试时设置 `CANVAS_DESKTOP_DATA_DIR`，或启动桌面程序时传入 `--data-dir=/绝对路径/独立测试目录`；启动参数优先于环境变量，拒绝相对路径和文件系统根目录。`CANVAS_BACKEND_DATA_DIR` 只作用于 `cmd/server`，不会改桌面数据目录。
 
 官方插件源目录是安装包内的只读输入；启动后会复制到数据目录下的 `plugin-packages\`。源目录找不到时，桌面后端无法完成启动。
 
@@ -195,13 +238,17 @@ export BEEFTV_UPDATER_PUBLIC_KEY="$(tr -d '[:space:]' < /path/to/beeftv-updater.
 BeefTV-vX.Y.Z-darwin-arm64.zip
 BeefTV-vX.Y.Z-darwin-amd64.zip
 BeefTV-vX.Y.Z-windows-amd64.zip
+BeefTV-vX.Y.Z-linux-amd64.zip
 desktop-update.json
 ```
+
+Actions 中的 `desktop-*` 临时安装包保留 7 天，用于发布任务之间传递文件及短期排查。正式 GitHub Release 和 Cloudflare R2 下载文件不受此期限影响。清理历史临时包前，应确认对应发布任务成功，且对应版本的平台安装包和更新清单齐全；未确认发布成功的包和升级验证报告保留。
 
 zip 里的布局：
 
 - macOS：`BeefTV.app/...`，保留可执行权限；内部安全符号链接会被解成普通文件，不会写成 zip 符号链接项。
 - Windows：根目录的 `BeefTV.exe` 和 `plugin-packages/*.beeftv-plugin`。
+- Linux x64：`BeefTV-linux/` 内包含 `BeefTV`、`cli/beeftv`、`agent-host/` 和 `plugin-packages/`。在 Ubuntu 24.04 原生构建，使用 GTK3 和 WebKitGTK 4.1；安装依赖和启动方法见 [Linux 安装说明](linux-install.md)。更新和回滚替换整个程序目录，用户数据留在配置目录。
 
 从 v1.5.7 起，更新清单和安装包托管在 Cloudflare R2：
 
@@ -209,7 +256,9 @@ zip 里的布局：
 https://updates.beefapi.com/beeftv/desktop-update.json
 ```
 
-流水线先建 draft，三个平台构建任务把包保存为 Actions 产物。收齐后生成签名清单，先将版本包和版本清单写入 R2 不可变路径并从公开域名读回校验。之后发布 GitHub Release，最后原子替换 CF 的最新清单。失败或缺包不会激活 CF 更新源。GitHub 同时保留同一份签名清单，供旧客户端迁移。
+流水线先建 draft，四个平台构建任务把包保存为 Actions 产物。收齐后生成签名清单，先将版本包和版本清单写入 R2 不可变路径并从公开域名读回校验。之后发布 GitHub Release，最后原子替换 CF 的最新清单。失败或缺包不会激活 CF 更新源。GitHub 同时保留同一份签名清单，供旧客户端迁移。
+
+Linux 发布任务会从最终 ZIP 解压执行随包 CLI，并在 Xvfb 中启动桌面程序，确认本地后端和可见窗口。PR 的 `Linux desktop package checks` 提前执行同一构建与启动检查，不发布版本，也不调用付费模型。
 
 v1.5.6 及以前的更新器仍内置 GitHub 清单地址。如果旧客户端无法连接 GitHub，需要先手动安装 v1.5.7 或更高版本；远端清单无法改写尚未更新的程序。完成这一次迁移后，检查及下载更新均使用 CF 地址。
 
@@ -235,7 +284,7 @@ v1.5.6 及以前的更新器仍内置 GitHub 清单地址。如果旧客户端�
 - 缺少密钥或公私钥不匹配
 - 标签或 Release 已经存在（包括 draft）
 - 新版本不高于已经发布的稳定版本
-- 三个系统包还没齐就签名
+- 四个平台包还没齐就签名
 
 Apple 公证不在这条工作流里。macOS 作业沿用现有脚本的 ad hoc 签名。Windows 作业安装 MSYS2 UCRT64 GCC，并核对 binutils ≥ 2.37，以符合 Go 1.25 的 DWARF 5 要求；不要用 Chocolatey mingw 或旧版 TDM-GCC。
 
@@ -255,16 +304,17 @@ go run ./cmd/update-release sign \
   --changelog ../CHANGELOG.md \
   --private-key /path/to/beeftv-updater.private \
   --expect-public-key "$(tr -d '[:space:]' < /path/to/beeftv-updater.public)" \
-  --require-platforms darwin-arm64,darwin-amd64,windows-amd64 \
+  --require-platforms darwin-arm64,darwin-amd64,windows-amd64,linux-amd64 \
   --asset darwin-arm64=/tmp/BeefTV-vX.Y.Z-darwin-arm64.zip \
   --asset darwin-amd64=/tmp/BeefTV-vX.Y.Z-darwin-amd64.zip \
   --asset windows-amd64=/tmp/BeefTV-vX.Y.Z-windows-amd64.zip \
+  --asset linux-amd64=/tmp/BeefTV-vX.Y.Z-linux-amd64.zip \
   --output /tmp/desktop-update.json
 ```
 
 ### 回滚
 
-客户端在退出前校验并把更新准备到程序所在磁盘；无写入权限、磁盘空间不足或签名错误时保留当前运行的应用。替换/启动失败会尝试恢复旧程序。程序旁的 `.beeftv-update-*` 目录保留旧程序和 `result.json` 恢复记录，确认新版本正常后才手动清理。已启动的新进程不会自动降级，以免把迁移后的数据库交给旧程序；恢复旧程序时需另行确认数据库兼容或还原匹配的数据备份。
+客户端在退出前校验并把更新准备到程序所在磁盘；无写入权限、磁盘空间不足或签名错误时保留当前运行的应用。替换/启动失败会尝试恢复旧程序。程序旁的 `.beeftv-update-*` 目录暂存旧程序和恢复记录；本地后端启动、界面挂载、素材与画布缓存成功加载，且本地工作区与两类资源列表读取成功后，客户端自动清理同一安装位置已成功升级的目录（包括旧版本遗留目录）。失败、回滚、记录不完整或含额外文件的目录继续保留。Windows 升级锁随句柄关闭删除；macOS 保留零字节 `.BeefTV.update.lock`，防止仍使用旧版锁协议的助手并发替换应用，它不存储升级包或旧程序。清理失败不阻塞使用，下次启动重试。已启动的新进程不会自动降级，以免把迁移后的数据库交给旧程序；恢复旧程序时需另行确认数据库兼容或还原匹配的数据备份。
 
 已经发布的版本不能收回。已经更新成功的用户，不会因为删除 GitHub Release 而回到旧包。
 
@@ -278,3 +328,6 @@ go run ./cmd/update-release sign \
 如果某个 draft 失败且从未公开：确认没有用户能下到它之后，可以删除该 draft 和对应 tag，再对同一 `VERSION` 重试。已经公开的 tag 不要复用。
 
 `/releases/latest` 指向最近一次发布的正式版，按发布时间而不是按最大版本号。只按时间顺序发布递增的稳定版本。
+# 真实生成门禁
+
+每次发版先完成 [六路径、两轮真实客户端测试](./real-generation-release.md)，提交对应版本的脱敏验收记录。发布工作流在创建 draft 前检查记录与当前源码绑定，不允许只凭单元测试或健康检查发布。

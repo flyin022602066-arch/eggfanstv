@@ -78,6 +78,27 @@ func TestNormalizeEggfansCatalogURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeJiasuCatalogURL(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{name: "pricing page", raw: "https://www.gway.dev/pricing", want: "https://www.gway.dev/api/pricing?surface=plaza", ok: true},
+		{name: "legacy pricing page", raw: "https://ai.jiasuapi.com/pricing/", want: "https://www.gway.dev/api/pricing?surface=plaza", ok: true},
+		{name: "other host", raw: "https://models.example.com/pricing", want: "https://models.example.com/pricing", ok: true},
+		{name: "relative path", raw: "/pricing", want: "/pricing", ok: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := normalizeJiasuCatalogURL(test.raw)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("normalizeJiasuCatalogURL(%q) = %q, %v; want %q, %v", test.raw, got, ok, test.want, test.ok)
+			}
+		})
+	}
+}
+
 func newModelCatalogTestService(t *testing.T) (*Service, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

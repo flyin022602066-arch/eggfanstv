@@ -1,10 +1,28 @@
-import type { SelectionBox, ViewportTransform } from "@/types/canvas";
+import type { ConnectionHandle, Position, SelectionBox, ViewportTransform } from "@/types/canvas";
 
 export const CANVAS_VIEWPORT_PREVIEW_EVENT = "canvas:viewport-preview";
 export const CANVAS_GRAPHICS_VIEWPORT_PREVIEW_EVENT = "canvas:graphics-viewport-preview";
 export const CANVAS_SELECTION_PREVIEW_EVENT = "canvas:selection-preview";
 export const CANVAS_NODE_DRAG_PREVIEW_EVENT = "canvas:node-drag-preview";
 export const CANVAS_NODE_GEOMETRY_PREVIEW_EVENT = "canvas:node-geometry-preview";
+export const CANVAS_CONNECTION_PREVIEW_EVENT = "canvas:connection-preview";
+
+export type CanvasConnectionPreview = {
+    handle: ConnectionHandle;
+    mouseWorld: Position;
+    targetNodeId: string | null;
+    targetHandleId?: string;
+};
+
+export function applyCanvasConnectionPreview(container: HTMLDivElement | null, preview: CanvasConnectionPreview | null) {
+    container?.dispatchEvent(new CustomEvent<CanvasConnectionPreview | null>(CANVAS_CONNECTION_PREVIEW_EVENT, { detail: preview }));
+}
+
+export function subscribeCanvasConnectionPreview(container: HTMLDivElement, listener: (preview: CanvasConnectionPreview | null) => void) {
+    const handlePreview = (event: Event) => listener((event as CustomEvent<CanvasConnectionPreview | null>).detail);
+    container.addEventListener(CANVAS_CONNECTION_PREVIEW_EVENT, handlePreview);
+    return () => container.removeEventListener(CANVAS_CONNECTION_PREVIEW_EVENT, handlePreview);
+}
 
 export type CanvasNodeDragPreview = {
     x: number;

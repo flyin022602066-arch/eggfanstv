@@ -1,5 +1,8 @@
+import { nanoid } from "nanoid";
+
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type StoryboardRow } from "@/types/canvas";
+import type { DirectorScene } from "@/types/director";
 
 const COPY_TITLE_SUFFIX = /^(.*)_copy(\d+)$/i;
 
@@ -49,6 +52,8 @@ function copyStoryboardRow(row: StoryboardRow, idMap: ReadonlyMap<string, string
 // 副本只能继承内容和用户引用，运行中任务、批次及指向源生成结果的关系必须隔离。
 export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyMap<string, string>): CanvasNodeMetadata {
     const metadata = resetGenerationTaskMetadata(node.metadata, node.metadata?.content ? "success" : "idle");
+    // 提交标记绑定原任务和节点；副本携带它会被普通保存当作未确认生成结果过滤。
+    delete metadata.generationEffectKeys;
     delete metadata.generationBatches;
     delete metadata.batchRootId;
     delete metadata.batchChildIds;
@@ -75,6 +80,7 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     metadata.directorPreviewNodeId = remapOwnedNodeId(node.metadata?.directorPreviewNodeId, idMap);
     metadata.directorDepthNodeId = remapOwnedNodeId(node.metadata?.directorDepthNodeId, idMap);
     metadata.directorNormalNodeId = remapOwnedNodeId(node.metadata?.directorNormalNodeId, idMap);
+    metadata.directorClayVideoNodeId = remapOwnedNodeId(node.metadata?.directorClayVideoNodeId, idMap);
 
     const characterViewNodeIds = node.metadata?.characterViewNodeIds;
     const copiedCharacterViewNodeIds = characterViewNodeIds ? {
@@ -97,4 +103,30 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
         referenceNodeIds: remapReferenceIds(node.metadata.storyboard.referenceNodeIds, idMap) || [],
     } : undefined;
     return metadata;
+}
+
+// Scene-local objects may retain their ids, but each copied card owns a deep
+// scene snapshot and fresh shot identities. Output nodes belong to the copy only.
+export function isolateCopiedDirectorScenes(nodes: CanvasNodeData[], sourceScenes: DirectorScene[], idMap: ReadonlyMap<string, string>) {
+    const scenes: DirectorScene[] = [];
+    const copiedNodes = nodes.map((node) => {
+        if (!node.metadata?.directorSceneId) return node;
+        const source = sourceScenes.find((scene) => scene.id === node.metadata?.directorSceneId);
+        if (!source) return { ...node, metadata: { ...node.metadata, directorSceneId: undefined, directorShotId: undefined, directorCoverStorageKey: undefined, directorCoverUrl: undefined, directorCoverSceneUpdatedAt: undefined } };
+        const copy = structuredClone(source);
+        const shotIds = new Map(copy.shots.map((shot) => [shot.id, nanoid()]));
+        copy.id = nanoid();
+        copy.createdAt = copy.updatedAt = new Date().toISOString();
+        copy.shots = copy.shots.map((shot) => ({
+            ...shot,
+            id: shotIds.get(shot.id)!,
+            previewNodeId: remapOwnedNodeId(shot.previewNodeId, idMap),
+            depthNodeId: remapOwnedNodeId(shot.depthNodeId, idMap),
+            normalNodeId: remapOwnedNodeId(shot.normalNodeId, idMap),
+        }));
+        copy.activeShotId = shotIds.get(source.activeShotId) || copy.shots[0]?.id || "";
+        scenes.push(copy);
+        return { ...node, metadata: { ...node.metadata, directorSceneId: copy.id, directorShotId: shotIds.get(node.metadata.directorShotId || "") || copy.activeShotId } };
+    });
+    return { nodes: copiedNodes, scenes };
 }

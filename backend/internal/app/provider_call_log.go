@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -28,6 +29,15 @@ func (s *Service) enrichAPICallLogFailureSummary(log *model.ApiCallLog, response
 	if log.Status != model.ApiCallStatusFailed {
 		return
 	}
+	if log.StatusCode == 0 && len(responseBody) == 0 && log.ErrorCode != "" {
+		failure := generation.ClassifyText(log.Error)
+		if failure.Category == generation.CategoryUnknown {
+			failure = generation.ClassifyText(log.ErrorCode)
+		}
+		log.ErrorCode = failure.ErrorCode()
+		log.Error = failure.UserMessage()
+		return
+	}
 	failure := classifyProviderHTTP(providerHTTPError{StatusCode: log.StatusCode, Body: string(responseBody)})
 	// Persist only normalized diagnostics; provider messages may echo credentials or input.
 	log.ErrorCode = firstNonEmpty(failure.ProviderCode, failure.ErrorCode())
@@ -36,6 +46,11 @@ func (s *Service) enrichAPICallLogFailureSummary(log *model.ApiCallLog, response
 
 func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[string]any) {
 	nestedTaskID := ""
+	if log.Capability == "audio" && log.Path == "/suno/submit/music" && log.Status == model.ApiCallStatusSucceeded {
+		if id, ok := payload["data"].(string); ok && strings.TrimSpace(id) != "" {
+			log.ProviderRequestID = strings.TrimSpace(id)
+		}
+	}
 	if data, ok := payload["data"].(map[string]any); ok {
 		if log.Capability == "video" && strings.Contains(log.Path, "/v1/video/generations") {
 			if extracted, err := firstJSONString(data, "task_id", "taskId"); err == nil {
@@ -169,7 +184,7 @@ func providerRequestIDFromPath(path string) string {
 		if part == "" || part == "content" || part == "download" {
 			continue
 		}
-		if index > 0 && (parts[index-1] == "videos" || parts[index-1] == "tasks") {
+		if index > 0 && (parts[index-1] == "videos" || parts[index-1] == "tasks" || (parts[index-1] == "fetch" && index > 1 && parts[index-2] == "suno")) {
 			return part
 		}
 		break

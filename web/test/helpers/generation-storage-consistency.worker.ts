@@ -1,13 +1,15 @@
 import localforage from "localforage";
+import { spyOn } from "bun:test";
 
 import { getActiveUserScope, setActiveUserScope } from "../../src/lib/user-scope";
 
 type InstanceHook = (storeName: string, key: string, value: unknown) => Promise<void> | void;
 
-type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race";
+type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race" | "generation-commit-queue-race" | "generation-commit-queue-race-corrupted" | "copied-video-save";
 
 function installStorageHarness() {
     const originalCreateInstance = localforage.createInstance.bind(localforage);
+    const originalReady = localforage.ready.bind(localforage);
     const originalGetItem = localforage.getItem.bind(localforage);
     const originalSetItem = localforage.setItem.bind(localforage);
     const originalRemoveItem = localforage.removeItem.bind(localforage);
@@ -32,6 +34,7 @@ function installStorageHarness() {
         return values;
     };
 
+    localforage.ready = (async () => undefined) as typeof localforage.ready;
     localforage.getItem = (async (key: string) => defaultValues.get(key) ?? null) as typeof localforage.getItem;
     localforage.setItem = (async (key: string, value: unknown) => {
         defaultValues.set(key, value);
@@ -44,6 +47,7 @@ function installStorageHarness() {
         const storeName = options.storeName || "default";
         const values = storeValues(storeName);
         return {
+            ready: async () => undefined,
             getItem: async (key: string) => values.get(key) ?? null,
             setItem: async (key: string, value: unknown) => {
                 values.set(key, value);
@@ -123,6 +127,7 @@ function installStorageHarness() {
         realSetTimeout,
         restore() {
             localforage.createInstance = originalCreateInstance as typeof localforage.createInstance;
+            localforage.ready = originalReady;
             localforage.getItem = originalGetItem;
             localforage.setItem = originalSetItem;
             localforage.removeItem = originalRemoveItem;
@@ -392,16 +397,181 @@ async function runMediaCommitRace(mediaType: "video" | "audio") {
     }
 }
 
+async function runGenerationCommitQueueRace(options: { corrupted: boolean } = { corrupted: false }) {
+    const previousScope = getActiveUserScope();
+    const harness = installStorageHarness();
+    const scope = options.corrupted ? "generation-commit-queue-race-corrupted" : "generation-commit-queue-race";
+    const projectId = "canvas-generation-commit-queue-race";
+    const nodeId = "text-node-queue-race";
+    const effectKey = `attach-node:task-text-queue-race:${nodeId}:0`;
+    const healedContent = "真人写实版提示词";
+    // corrupted 变体复刻已被写坏的节点：带着已确认的 effect stamp，但内容为空、状态仍是生成中。
+    const baseNode = {
+        id: nodeId,
+        type: "text",
+        title: "文本节点 1",
+        createdAt: "2026-10-12T08:46:09.772Z",
+        updatedAt: "2026-10-12T08:46:09.772Z",
+        position: { x: 0, y: 0 },
+        width: 350,
+        height: 350,
+        metadata: {
+            content: "",
+            status: "loading",
+            taskId: "task-text-queue-race",
+            fontSize: 14,
+            ...(options.corrupted ? { taskStatus: "succeeded", taskProgress: 100, generationEffectKeys: [effectKey] } : {}),
+        },
+    };
+    const canvasProject = {
+        id: projectId,
+        revision: 0,
+        title: "未命名项目",
+        createdAt: "2026-10-12T08:00:00.000Z",
+        updatedAt: "2026-10-12T08:00:00.000Z",
+        nodes: [baseNode],
+        connections: [],
+        chatSessions: [],
+        activeChatId: null,
+        backgroundMode: "dots",
+        showImageInfo: false,
+        viewport: { x: 0, y: 0, k: 1 },
+        directorScenes: [],
+    };
+    let injectedStaleSnapshot = false;
+
+    try {
+        setActiveUserScope(scope);
+        const { scopedStorageKey } = await import("../../src/lib/user-scope");
+        const { parseCanvasStorageDocument } = await import("../../src/lib/canvas/canvas-storage-revision");
+        // 先把「已经存在磁盘上」的画布写进 durable，再导入 store —— 与真实启动（先读库、后水合）一致。
+        const durableStoreKey = scopedStorageKey("infinite-canvas:canvas_store", scope);
+        await localforage.setItem(
+            durableStoreKey,
+            JSON.stringify({
+                state: { projects: [canvasProject] },
+                version: 0,
+                storageRevision: 5,
+                tombstones: { projects: {}, nodes: {}, connections: {}, sessions: {}, messages: {} },
+            }),
+        );
+        const { useCanvasStore, CANVAS_STORE_KEY, pendingCanvasStorePersistence } = await import("../../src/stores/canvas/use-canvas-store");
+        const { persistCanvasGenerationEffect } = await import("../../src/services/canvas-generation-consumer");
+        if (CANVAS_STORE_KEY !== "infinite-canvas:canvas_store") throw new Error("canvas store key changed");
+
+        // 等 store 水合结束，拿到与磁盘一致的项目快照。
+        for (let attempt = 0; attempt < 50 && !useCanvasStore.getState().hydrated; attempt += 1) {
+            await new Promise<void>((resolve) => harness.realSetTimeout(resolve, 0));
+        }
+        const hydratedProject = useCanvasStore.getState().projects.find((project) => project.id === projectId);
+        const hydratedNode = hydratedProject?.nodes.find((node) => node.id === nodeId);
+        if (!hydratedProject || !hydratedNode) throw new Error("store hydration did not pick up the seeded canvas");
+        const previousNode = hydratedNode;
+
+        // 生成提交写盘时，普通保存队列恰好抓到提交前的快照（真实场景里是提交结果还没送回 store、
+        // 而 React 刚把「绑定任务」的 setNodes 写进 store）。这里在「带生成结果的提交落盘」
+        // 的同一步注入这份旧快照，模拟提交与普通保存队列的真实交错。
+        const originalSetItem = localforage.setItem.bind(localforage);
+        localforage.setItem = (async (key: string, value: unknown) => {
+            const result = await originalSetItem(key, value);
+            if (!injectedStaleSnapshot && typeof value === "string" && key.includes("canvas_store") && value.includes(healedContent)) {
+                injectedStaleSnapshot = true;
+                useCanvasStore.setState((state) => ({
+                    projects: state.projects.map((project) => (project.id === projectId ? { ...project, nodes: [previousNode] } : project)),
+                }));
+            }
+            return result;
+        }) as typeof localforage.setItem;
+
+        let effectError: string | null = null;
+        await persistCanvasGenerationEffect({
+            projectId,
+            effectKey,
+            previousNodes: [previousNode],
+            nodes: [{ ...previousNode, metadata: { ...previousNode.metadata, content: healedContent, status: "success", generationEffectKeys: [effectKey] } }],
+            signal: new AbortController().signal,
+        } as never).catch((error: unknown) => {
+            effectError = error instanceof Error ? error.message : String(error);
+            return undefined;
+        });
+
+        const queuedContent = (pendingCanvasStorePersistence(scope)?.projects || []).find((project) => project.id === projectId)?.nodes?.[0]?.metadata?.content ?? null;
+        const durable = parseCanvasStorageDocument(await localforage.getItem<string>(durableStoreKey));
+        const durableNode = durable.state.projects.find((project) => project.id === projectId)?.nodes.find((node) => node.id === nodeId);
+        const liveNode = (useCanvasStore.getState().projects.find((project) => project.id === projectId)?.nodes || []).find((node) => node.id === nodeId);
+        return {
+            injectedStaleSnapshot,
+            effectError,
+            queuedContent,
+            durableContent: durableNode?.metadata?.content ?? null,
+            durableStatus: durableNode?.metadata?.status ?? null,
+            durableKeys: durableNode?.metadata?.generationEffectKeys?.length ?? 0,
+            liveContent: liveNode?.metadata?.content ?? null,
+            liveStatus: liveNode?.metadata?.status ?? null,
+        };
+    } finally {
+        setActiveUserScope(previousScope);
+        harness.restore();
+    }
+}
+
+async function runCopiedVideoSave() {
+    const harness = installStorageHarness();
+    const { http } = await import("../../src/services/api/request");
+    const put = spyOn(http, "put").mockImplementation(async (_url, body) => {
+        const { project } = body as { project: { id: string; title: string; createdAt: string; updatedAt: string } };
+        return { project } as never;
+    });
+    const scope = "copied-video-save";
+    setActiveUserScope(scope);
+    try {
+        const { useCanvasStore, CANVAS_STORE_KEY, recordCanvasStorageDocument, flushCanvasStorePersistence, withCanvasStorePersistenceSuppressed } = await import("../../src/stores/canvas/use-canvas-store");
+        const { parseCanvasStorageDocument, serializeCanvasStorageDocument } = await import("../../src/lib/canvas/canvas-storage-revision");
+        const { localForageStorageForScope } = await import("../../src/lib/localforage-storage");
+        const { isolateCopiedNodeMetadata } = await import("../../src/lib/canvas/canvas-node-copy");
+        const { persistCanvasGenerationEffect } = await import("../../src/services/canvas-generation-consumer");
+        const { CanvasNodeType } = await import("../../src/types/canvas");
+        await useCanvasStore.persist.rehydrate();
+        const source = { id: "source", type: CanvasNodeType.Video, title: "480P", position: { x: 0, y: 0 }, width: 340, height: 240, metadata: { content: "video-480p", taskId: "old-task", generationEffectKeys: ["attach-node:old-task:source:0"] } };
+        const project = { id: "copy-project", title: "copy", nodes: [source], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "dots" as const, showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [], createdAt: "2026-10-01", updatedAt: "2026-10-01" };
+        const storage = localForageStorageForScope(scope);
+        const document = parseCanvasStorageDocument(null, [project]);
+        await storage.setItem(CANVAS_STORE_KEY, serializeCanvasStorageDocument(document));
+        recordCanvasStorageDocument(scope, document);
+        withCanvasStorePersistenceSuppressed(() => useCanvasStore.setState({ projects: [project] }));
+        const copy = { ...source, id: "copy", metadata: isolateCopiedNodeMetadata(source, new Map([[source.id, "copy"]])) };
+        const previousNodes = [source, copy];
+        useCanvasStore.getState().updateProject(project.id, { nodes: previousNodes });
+        await flushCanvasStorePersistence();
+        const saved = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
+        const copiedIds = saved.state.projects[0].nodes.map((node) => node.id);
+        const effectKey = "attach-node:new-task:copy:0";
+        const completed = { ...copy, metadata: { ...copy.metadata, content: "video-720p", taskId: "new-task", generationEffectKeys: [effectKey] } };
+        // Only the backend transport is stubbed; storage and generation reconciliation are real.
+        const persisted = await persistCanvasGenerationEffect({ projectId: project.id, previousNodes, nodes: [source, completed], effectKey });
+        return { copiedIds, completedIds: persisted.nodes.map((node) => node.id), content: persisted.nodes.find((node) => node.id === "copy")?.metadata?.content, sourceKeys: persisted.nodes[0].metadata?.generationEffectKeys, copyKeys: persisted.nodes.find((node) => node.id === "copy")?.metadata?.generationEffectKeys };
+    } finally {
+        put.mockRestore();
+        harness.restore();
+    }
+}
+
 self.onmessage = async (event: MessageEvent<Scenario>) => {
     try {
         const result =
-            event.data === "image-cleanup"
+            event.data === "copied-video-save"
+                ? await runCopiedVideoSave()
+                : event.data === "image-cleanup"
                 ? await runImageCleanup()
                 : event.data === "scope-cleanup-switch"
                   ? await runScopeCleanupAfterSwitch()
                   : event.data === "scope-cleanup-late-canvas-reference"
                     ? await runScopeCleanupAfterLateCanvasReference()
-                    : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
+                    : event.data === "generation-commit-queue-race"
+                      ? await runGenerationCommitQueueRace()
+                      : event.data === "generation-commit-queue-race-corrupted"
+                        ? await runGenerationCommitQueueRace({ corrupted: true })
+                        : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
         self.postMessage({ ok: true, result });
     } catch (error) {
         self.postMessage({ ok: false, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });

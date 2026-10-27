@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/bootstrap"
 )
 
 // This catches desktop-shell regressions where Wails opens before the local
@@ -119,6 +121,24 @@ func TestDefaultDataDirHonorsExplicitDesktopOverride(t *testing.T) {
 	}
 }
 
+func TestDefaultDataDirLaunchArgumentUsesIsolatedProfile(t *testing.T) {
+	original := os.Args
+	t.Cleanup(func() { os.Args = original })
+	want := filepath.Join(t.TempDir(), "isolated profile")
+	t.Setenv("CANVAS_DESKTOP_DATA_DIR", filepath.Join(t.TempDir(), "other-profile"))
+	os.Args = []string{"BeefTV", "--data-dir=" + want}
+	got, err := defaultDataDir()
+	if err != nil || got != want {
+		t.Fatalf("isolated profile: got %q, err %v", got, err)
+	}
+	for _, invalid := range []string{"", "relative", string(filepath.Separator)} {
+		os.Args = []string{"BeefTV", "--data-dir=" + invalid}
+		if _, err := defaultDataDir(); err == nil {
+			t.Fatalf("accepted unsafe profile %q", invalid)
+		}
+	}
+}
+
 func TestDesktopStartupHookStartsRuntimeBeforeFrontendBootstrap(t *testing.T) {
 	app := newDesktopApp(t.TempDir())
 	app.startup(context.Background())
@@ -148,7 +168,7 @@ func TestDesktopAppBoundMethodsStayTiny(t *testing.T) {
 		names = append(names, typ.Method(i).Name)
 	}
 	sort.Strings(names)
-	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "DownloadUpdate", "InstallUpdate", "RuntimeConfig", "SaveOwnedArtifact", "SaveOwnedMedia", "UpdateStatus"}) {
+	if !reflect.DeepEqual(names, []string{"AbortOwnedArtifact", "AppendOwnedArtifact", "BeginOwnedArtifact", "CheckForUpdate", "ChooseStorageDirectory", "CleanupPreviousStorage", "ConfirmUpdateStartup", "DownloadUpdate", "InstallUpdate", "MigrateStorage", "OpenBeefTVGitHub", "OpenBeefTVWebsite", "OpenBeefTVX", "ReferenceStorageSettings", "RuntimeConfig", "SaveOwnedArtifact", "SaveOwnedMedia", "SaveReferenceStorage", "StorageSettings", "UpdateStatus", "UploadReferenceMedia"}) {
 		t.Fatalf("bound methods = %v", names)
 	}
 }
@@ -165,6 +185,40 @@ func TestSaveOwnedMediaCancelReturnsNoError(t *testing.T) {
 	saved, err := app.SaveOwnedMedia("clip.mp4", "owned-id")
 	if err != nil || saved || copied {
 		t.Fatalf("cancelled save = saved:%v err:%v copied:%v", saved, err, copied)
+	}
+}
+
+func TestMediaSaveDialogSuppliesDefaultFileType(t *testing.T) {
+	for _, ext := range []string{"mp4", "png", "jpg", "webp", "mov", "wav", "m4a", "zip", "glb"} {
+		for _, platform := range []string{"windows", "darwin"} {
+			t.Run(platform+"/"+ext, func(t *testing.T) {
+				name := "中文素材_20261001." + ext
+				options := mediaSaveDialogOptions(name, platform)
+				if options.DefaultFilename != name || options.Title != "保存文件" || len(options.Filters) != 1 || options.Filters[0].Pattern != "*."+ext || options.Filters[0].DisplayName == "" {
+					t.Fatalf("save dialog must supply the actual format as its default filter: %+v", options)
+				}
+			})
+		}
+	}
+	for _, tc := range []struct{ input, name, pattern string }{
+		{`../clip:name.MP4`, "clip_name.MP4", "*.MP4"},
+		{"a.b.mp4", "a.b.mp4", "*.mp4"},
+		{strings.Repeat("好", 100) + ".mp4", strings.Repeat("好", 58) + ".mp4", "*.mp4"},
+	} {
+		options := mediaSaveDialogOptions(bootstrap.SanitizeSaveFileName(tc.input), "windows")
+		if options.DefaultFilename != tc.name || len(options.Filters) != 1 || options.Filters[0].Pattern != tc.pattern {
+			t.Fatalf("sanitized %q: %+v", tc.input, options)
+		}
+	}
+	options := mediaSaveDialogOptions("未命名文件", "windows")
+	if len(options.Filters) != 0 {
+		t.Fatalf("must not invent a format for an extensionless artifact: %+v", options)
+	}
+	for _, platform := range []string{"linux"} {
+		options := mediaSaveDialogOptions("clip.mp4", platform)
+		if options.DefaultFilename != "clip.mp4" || len(options.Filters) != 0 {
+			t.Fatalf("must preserve the existing %s dialog options: %+v", platform, options)
+		}
 	}
 }
 

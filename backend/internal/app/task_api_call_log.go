@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -83,6 +85,27 @@ func (s *Service) ensureFailedProviderAttemptLogged(task model.Task, taskErr err
 		Error:             truncateRunes(s.UserFacingErrorMessage(taskErr), 2_000),
 		StartedAt:         startedAt,
 		CreatedAt:         now,
+	}
+	var avatar eggfansAvatarRequestError
+	if errors.As(taskErr, &avatar) {
+		callLog.Capability = "asset"
+		callLog.Operation = avatar.Operation
+		callLog.RequestKind = eggfansAvatarRequestKindPrefix + avatar.Operation
+		callLog.APIFormat = "eggfans-avatar"
+		callLog.Method = avatar.Method
+		callLog.Path = avatar.Path
+		callLog.Model = avatar.RoutingModel
+		callLog.ProviderRequestID = ""
+		callLog.ErrorCode = taskFailureErrorCode(taskErr)
+		if errors.As(taskErr, &httpErr) {
+			callLog.ResponseBody = SanitizeAPICallPayload([]byte(httpErr.Body), "application/json")
+		}
+		var input canvasGenerationInput
+		if json.Unmarshal([]byte(decodedTask.InputJSON), &input) == nil {
+			if upstream, parseErr := url.Parse(input.Config.BaseURL); parseErr == nil && upstream.Host != "" {
+				callLog.UpstreamURL = upstream.Scheme + "://" + upstream.Host + avatar.Path
+			}
+		}
 	}
 	if err := s.LogAPICall(callLog); err != nil {
 		log.Printf("provider attempt log write failed: task_id=%s error=%v", task.ID, err)

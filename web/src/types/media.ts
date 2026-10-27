@@ -1,4 +1,5 @@
 export type ReferenceVideo = {
+    arkAssetId?: string;
     id: string;
     name: string;
     type: string;
@@ -11,6 +12,7 @@ export type ReferenceVideo = {
 };
 
 export type ReferenceAudio = {
+    arkAssetId?: string;
     id: string;
     name: string;
     type: string;

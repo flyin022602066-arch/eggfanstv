@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"infinite-canvas/backend/internal/app"
 
@@ -491,7 +492,7 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *app.Service) {
 			if value, present := c.GetQuery("folderId"); present {
 				folderID = &value
 			}
-			assets, pageErr := svc.ProjectAssetsPage(user.ID, c.Param("id"), page, pageSize, c.Query("category"), c.Query("mediaType"), c.Query("status"), folderID, c.Query("q"))
+			assets, pageErr := svc.ProjectAssetsPage(user.ID, c.Param("id"), page, pageSize, c.Query("category"), c.Query("mediaType"), c.Query("status"), folderID, c.Query("q"), c.Query("unitId"))
 			if pageErr != nil {
 				failService(c, pageErr)
 				return
@@ -975,6 +976,20 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *app.Service) {
 			return
 		}
 		ok(c, gin.H{"asset": asset})
+	})
+	r.GET("/projects/:id/chapter-apply-receipts", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		taskIDs := strings.Split(c.Query("taskIds"), ",")
+		receipts, err := svc.ChapterApplyReceipts(user.ID, c.Param("id"), taskIDs)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"receipts": receipts})
 	})
 }
 

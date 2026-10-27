@@ -5,11 +5,17 @@
   "pages": [
     "local-development",
     "http-api",
+    "storyboard-operations",
     "code-map",
     "backend-database",
     "task-runtime-stability",
     "generation-errors",
-    "system-update",
-    "desktop-updater"
+    "suno-music",
+    "mints-seedance",
+    "seedance-task-constraints",
+    "video-model-contracts",
+    "desktop-updater",
+    "desktop-account",
+    "depth-video-runtime"
   ]
 }

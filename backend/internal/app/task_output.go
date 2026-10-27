@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	"infinite-canvas/backend/internal/generation"
@@ -52,6 +53,7 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		ProviderCancelledAt:       task.ProviderCancelledAt,
 		Error:                     safePersistedFailureMessage(task.Error),
 		ErrorCode:                 errorCode,
+		FailureDiagnostics:        generation.SanitizeTaskDiagnostics(task.FailureDiagnostics),
 		PreviewURL:                previewURL,
 		PreviewKind:               previewKind,
 		PreviewPosterURL:          previewPosterURL,
@@ -69,6 +71,7 @@ func taskClientContext(raw string) *TaskClientContext {
 	var input struct {
 		Metadata struct {
 			Source          string `json:"source"`
+			SceneID         string `json:"sceneId"`
 			NodeID          string `json:"nodeId"`
 			ConversationID  string `json:"conversationId"`
 			MessageID       string `json:"messageId"`
@@ -87,6 +90,11 @@ func taskClientContext(raw string) *TaskClientContext {
 	}
 	metadata := input.Metadata
 	context := &TaskClientContext{NodeID: metadata.NodeID}
+	if metadata.Source == "director-panorama" && metadata.SceneID != "" {
+		context.Source = metadata.Source
+		context.SceneID = metadata.SceneID
+		return context
+	}
 	if metadata.Source == "create-page" && metadata.ConversationID != "" && metadata.MessageID != "" {
 		context.ConversationID = metadata.ConversationID
 		context.MessageID = metadata.MessageID
@@ -218,6 +226,7 @@ func truncateRunes(value string, limit int) string {
 }
 
 func taskForOutput(task model.Task) *model.Task {
+	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(task.FailureDiagnostics)
 	task.InputJSON = publicTaskInputJSON(task.InputJSON)
 	// 普通任务接口只暴露前台模型身份；渠道模型和供应线路属于管理员内部信息。
 	task.LogicalModelRevisionID = ""
@@ -247,6 +256,26 @@ func publicTaskInputJSON(raw string) string {
 		return ""
 	}
 	public := map[string]any{}
+	// Only expose the parameters needed for result comparison and paid retry
+	// confirmation. Never expose credentials, headers, media URLs or bytes.
+	if input["mode"] == "video" {
+		config, _ := input["config"].(map[string]any)
+		counts := func(key string) int { items, _ := input[key].([]any); return len(items) }
+		parameters := map[string]any{"imageCount": counts("referenceImages"), "videoCount": counts("referenceVideos"), "audioCount": counts("referenceAudios")}
+		for _, key := range []string{"model", "size"} {
+			if value, ok := config[key].(string); ok {
+				parameters[key] = value
+			}
+		}
+		base, _ := config["baseUrl"].(string)
+		u, _ := url.Parse(base)
+		host := ""
+		if u != nil {
+			host = strings.ToLower(u.Hostname())
+		}
+		parameters["affectedChannel"] = config["credentialRef"] == "beefapi-enterprise" || host == "beeftv.app" || host == "enterprise.beefapi.com" || host == "whatstoken.ai" || host == "www.whatstoken.ai"
+		public["videoParameters"] = parameters
+	}
 	// 任务完成后仍需依靠这些非敏感 ID 恢复项目产物归属；密钥等配置继续被过滤。
 	for _, key := range []string{"mode", "metadata", "workflowStepId", "domainProjectId", "assetVersionId", "resourceId", "mediaType", "role"} {
 		if value, ok := input[key]; ok {

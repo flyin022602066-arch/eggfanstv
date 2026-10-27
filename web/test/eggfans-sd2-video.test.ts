@@ -1,18 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import axios from "axios";
+import sd2Preset from "../../backend/internal/providerpreset/catalog/eggfans-sd2.v1.json";
 
-import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
+import { defaultModelCapabilityConfig, modelCapabilityConfigFor, type ModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { defaultProtocolForModel, inferProtocolCapabilityFromModel } from "../src/lib/model-protocols";
 import { createEggfansSd2VideoTask, eggfansAspectRatio, eggfansImageLimit, isEggfansPublicHttpsUrl, pollEggfansSd2VideoTask } from "../src/services/api/video-provider-eggfans-sd2";
 import type { VideoProviderDeps } from "../src/services/api/video-provider-deps";
 import { videoResponseTools } from "../src/services/api/video-response";
 import { createVideoTransport } from "../src/services/api/video-transport";
+import { fetchChannelModels } from "../src/services/api/image-models";
+import { http } from "../src/services/api/request";
 import { buildApiUrl, createModelChannel, defaultBaseUrlForChannelInterface, defaultConfig, normalizeConfigSnapshot, resolveModelRequestConfig, type AiConfig } from "../src/stores/use-config-store";
 
 const originalAxiosRequest = axios.request;
+const originalHttpPost = http.post;
 
 afterEach(() => {
     axios.request = originalAxiosRequest;
+    http.post = originalHttpPost;
 });
 
 function configForEggfans(model = "sd-2.5-C", input: Partial<AiConfig> = {}) {
@@ -68,14 +73,128 @@ function providerDeps(config: ReturnType<typeof import("../src/stores/use-config
 }
 
 describe("EggFans SD2 video protocol", () => {
+    test("every SD2 2.5 variant submits all thirty reference images", async () => {
+        const images = Array.from({ length: 30 }, (_, index) => ({ id: `image-${index}`, name: `reference-${index}`, type: "image/png", dataUrl: "", url: `https://cdn.example/${index}.png` }));
+        for (const model of sd2Preset.models.map((profile) => profile.model)) {
+            const config = resolveModelRequestConfig(configForEggfans(model), `eggfans-sd2::${model}`);
+            const { calls, deps } = providerDeps(config);
+            await createEggfansSd2VideoTask(deps, config, model, "scene", images, [], [], { videoEditOperation: "reference_to_video" });
+            expect(calls).toHaveLength(1);
+            expect((calls[0].body as { image_refs: string[] }).image_refs).toEqual(images.map((image) => image.url));
+        }
+    });
+
+    test("submits boolean native_face when enabled for every SD2 model", async () => {
+        for (const model of sd2Preset.models.map((profile) => profile.model)) {
+            for (const enabled of [true, false]) {
+                const config = resolveModelRequestConfig(configForEggfans(model, { videoNativeFace: String(enabled) }), `eggfans-sd2::${model}`);
+                const { calls, deps } = providerDeps(config);
+                await createEggfansSd2VideoTask(deps, config, model, "scene", [{ id: "image", name: "reference", type: "image/png", dataUrl: "", url: "https://cdn.example/ref.png" }], [], []);
+                expect(calls).toHaveLength(1);
+                if (enabled) expect(calls[0].body).toHaveProperty("native_face", true);
+                else expect(calls[0].body).not.toHaveProperty("native_face");
+            }
+        }
+    });
+
+    test("native face requires image, video or first frame and is omitted for text, audio and last frame only", async () => {
+        const config = resolveModelRequestConfig(configForEggfans("sd-2.5-D", { videoNativeFace: "true" }), "eggfans-sd2::sd-2.5-D");
+        const image = { id: "frame", name: "frame", type: "image/png", dataUrl: "", url: "https://cdn.example/frame.png" };
+        for (const item of [
+            { images: [], videos: [], audios: [], options: {}, want: false },
+            { images: [], videos: [], audios: [{ id: "audio", name: "audio", type: "audio/mpeg", url: "https://cdn.example/audio.mp3" }], options: {}, want: false },
+            { images: [], videos: [{ id: "video", name: "video", type: "video/mp4", url: "https://cdn.example/video.mp4" }], audios: [], options: {}, want: true },
+            { images: [image], videos: [], audios: [], options: { videoStartFrameNodeId: "frame" }, want: true },
+            { images: [image], videos: [], audios: [], options: { videoEndFrameNodeId: "frame" }, want: false },
+        ]) {
+            const { calls, deps } = providerDeps(config);
+            await createEggfansSd2VideoTask(deps, config, "sd-2.5-D", "scene", item.images, item.videos, item.audios, item.options);
+            if (item.want) expect(calls[0].body).toHaveProperty("native_face", true);
+            else expect(calls[0].body).not.toHaveProperty("native_face");
+            expect(calls[0].body).not.toHaveProperty("face");
+        }
+    });
+
+    test("uploads local image resources before submitting their temporary URLs to SD2", async () => {
+        const uploads: Array<{ path: string; timeout?: number; signal?: AbortSignal }> = [];
+        http.post = (async (path: string, _body: unknown, options: { timeout?: number; signal?: AbortSignal }) => {
+            uploads.push({ path, ...options });
+            return { url: "https://h.uguu.se/reference.png" };
+        }) as typeof http.post;
+        const config = configForEggfans("sd-2.5-E");
+        const { calls, deps } = providerDeps(config);
+        const controller = new AbortController();
+        await createEggfansSd2VideoTask(deps, config as never, "sd-2.5-E", "scene", [{ id: "local-image", name: "角色.png", type: "image/png", dataUrl: "", storageKey: "resource:local-image" }], [], [], { signal: controller.signal, videoEditOperation: "reference_to_video" });
+        expect(uploads).toEqual([{ path: "/resources/local-image/temporary-image-url", timeout: 125_000, signal: controller.signal }]);
+        expect(calls[0].body).toMatchObject({ image_refs: ["https://h.uguu.se/reference.png"] });
+    });
+
+    test("does not submit a model request when temporary image hosting fails", async () => {
+        http.post = (async () => { throw new Error("Uguu 图片上传失败"); }) as typeof http.post;
+        const config = configForEggfans();
+        const { calls, deps } = providerDeps(config);
+        await expect(createEggfansSd2VideoTask(deps, config as never, "sd-2.5-C", "scene", [{ id: "local-image", name: "image.png", type: "image/png", dataUrl: "", storageKey: "resource:local-image" }], [], [])).rejects.toThrow("Uguu 图片上传失败");
+        expect(calls).toEqual([]);
+    });
+
+    test("ignores private asset IDs and stale preview URLs for owned SD2 images", async () => {
+        const uploads: string[] = [];
+        http.post = (async (path: string) => {
+            uploads.push(path);
+            return { url: "https://h.uguu.se/refreshed.png" };
+        }) as typeof http.post;
+        const config = configForEggfans();
+        const { calls, deps } = providerDeps(config);
+        await createEggfansSd2VideoTask(deps, config as never, "sd-2.5-C", "@图片1", [{ id: "local-image", name: "image.png", type: "image/png", dataUrl: "", url: "asset://seedance-only", arkAssetId: "seedance-only", storageKey: "resource:local-image" }], [], [], { videoEditOperation: "reference_to_video" });
+        expect(uploads).toEqual(["/resources/local-image/temporary-image-url"]);
+        expect(calls).toEqual([{ method: "POST", url: "https://vip.eggfans.asia/v1/videos", body: { model: "sd-2.5-C", prompt: "@图片1", duration: 6, resolution: "720p", aspect_ratio: "16:9", image_refs: ["https://h.uguu.se/refreshed.png"] } }]);
+    });
+
+    test("rejects URI-only references without contacting the private library or SD2", async () => {
+        const uploads: string[] = [];
+        http.post = (async (path: string) => { uploads.push(path); throw new Error("unexpected upload"); }) as typeof http.post;
+        const config = configForEggfans();
+        const { calls, deps } = providerDeps(config);
+        await expect(createEggfansSd2VideoTask(deps, config as never, "sd-2.5-C", "scene", [{ id: "private", name: "image.png", type: "image/png", dataUrl: "", url: "asset://private-image" }], [], [])).rejects.toThrow("SD2 不支持私域资产 URI");
+        expect(uploads).toEqual([]);
+        expect(calls).toEqual([]);
+    });
+
+    test("exposes every built-in SD2 model as a video option while preserving the current selection", async () => {
+        const existing = createModelChannel({ id: "existing", models: ["existing-video"], apiKey: "synthetic-test-key", modelProfiles: [{ model: "existing-video", capability: "video", protocol: "newapi" }] });
+        const sd2 = createModelChannel({
+            id: sd2Preset.id,
+            name: sd2Preset.displayName,
+            baseUrl: sd2Preset.baseUrl,
+            presetVersion: sd2Preset.presetVersion,
+            models: sd2Preset.models.map((profile) => profile.model),
+            modelProfiles: sd2Preset.models.map((profile) => ({ model: profile.model, capability: "video", protocol: "eggfans-sd2-video", capabilityConfig: profile.capabilityConfig as ModelCapabilityConfig })),
+        });
+        const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [existing, sd2], videoModel: "existing::existing-video" } }).config;
+        expect(config.videoModel).toBe("existing::existing-video");
+        expect(config.channels.find((channel) => channel.id === "existing")?.apiKey).toBe(existing.apiKey);
+        expect(config.videoModels).toContain("existing::existing-video");
+        for (const model of sd2.models) {
+            const option = `${sd2.id}::${model}`;
+            expect(config.videoModels).toContain(option);
+            expect(config.textModels).not.toContain(option);
+            expect(modelCapabilityConfigFor(config, option).video).toMatchObject({ duration: { min: 4, max: 30 }, resolutions: ["720p"], references: { maxImages: 30, maxVideos: 10, maxAudios: 10 } });
+            expect(resolveModelRequestConfig(config, option)).toMatchObject({ baseUrl: sd2.baseUrl, interfaceType: "eggfans-sd2-video", model });
+        }
+        axios.request = (async () => { throw new Error("SD2 has no remote models endpoint"); }) as typeof axios.request;
+        const catalog = await fetchChannelModels(sd2, true);
+        expect(catalog.models).toEqual(sd2.models);
+        expect(catalog.catalog.every((item) => item.modelType === "video")).toBe(true);
+    });
+
     test("infers the protocol and video capability for SD2 model IDs", () => {
         expect(inferProtocolCapabilityFromModel("sd-2.5-C")).toBe("video");
         expect(defaultProtocolForModel("sd-2.5-C")).toBe("eggfans-sd2-video");
-        expect(eggfansImageLimit("sd-2.5-B")).toBe(9);
-        expect(eggfansImageLimit("sd-2.5-D")).toBe(9);
+        expect(eggfansImageLimit("sd-2.5-B")).toBe(30);
+        expect(eggfansImageLimit("sd-2.5-D")).toBe(30);
         expect(eggfansImageLimit("sd-2.5-C")).toBe(30);
         expect(defaultModelCapabilityConfig("eggfans-sd2-video", "sd-2.5-B").video).toMatchObject({
-            references: { maxImages: 9, maxVideos: 10, maxAudios: 10 },
+            references: { maxImages: 30, maxVideos: 10, maxAudios: 10 },
             duration: { min: 4, max: 30 },
             resolutions: ["720p"],
         });
@@ -164,7 +283,7 @@ describe("EggFans SD2 video protocol", () => {
 
         const image = (id: string) => ({ id, name: `${id}.png`, type: "image/png", dataUrl: "", url: `https://cdn.example/${id}.png` });
         const bdConfig = configForEggfans("sd-2.5-B");
-        await expect(createEggfansSd2VideoTask(providerDeps(bdConfig).deps, bdConfig as never, "sd-2.5-B", "prompt", Array.from({ length: 10 }, (_, index) => image(String(index))), [], [])).rejects.toThrow("最多支持 9 张");
+        await expect(createEggfansSd2VideoTask(providerDeps(bdConfig).deps, bdConfig as never, "sd-2.5-B", "prompt", Array.from({ length: 31 }, (_, index) => image(String(index))), [], [])).rejects.toThrow("最多支持 30 张");
 
         const frameConfig = configForEggfans();
         await expect(createEggfansSd2VideoTask(providerDeps(frameConfig).deps, frameConfig as never, "sd-2.5-C", "prompt", [image("start"), image("ref")], [], [], { videoStartFrameNodeId: "start" })).rejects.toThrow("不能与图片、视频或音频参考素材同时使用");

@@ -10,6 +10,30 @@ import (
 
 const providerStateSchemaVersion = 1
 
+var currentGwayVideoModels = map[string]struct{}{
+	"minimax-h3":            {},
+	"seedance-2.5-g4-m1-官转": {},
+	"wan3.0-超限":             {},
+	"seedance2.0-g2-o1":     {},
+	"seedance2.0":           {},
+	"seedance2.0-g2-o2":     {},
+	"seedance-2.0-fast-G3":  {},
+	"seedance2.0-g5-v":      {},
+	"seedance2.0-g5-v2":     {},
+	"seedance-2.5-g2-2":     {},
+	"seedance2.5":           {},
+	"seedance2.0-g4-官转":     {},
+	"seedance-2.0-mini-G3":  {},
+	"seedance-2.5-g4-m-官转":  {},
+	"seedance-2.5-g4-官转":    {},
+	"seedance-2.5-g5-L":     {},
+	"seedance-2.5-G1":       {},
+	"seedance-2.5-g2-1":     {},
+	"seedance-2.5-g2-c1":    {},
+	"seedance2.0-g2-m1":     {},
+	"seedance-2.5-g5-v2":    {},
+}
+
 type ConfigHealth string
 
 const (
@@ -20,10 +44,11 @@ const (
 )
 
 type ProviderStateDocument struct {
-	SchemaVersion  int            `json:"schemaVersion"`
-	Revision       int64          `json:"revision"`
-	PresetVersions map[string]int `json:"presetVersions"`
-	Config         map[string]any `json:"config"`
+	SchemaVersion                 int            `json:"schemaVersion"`
+	Revision                      int64          `json:"revision"`
+	PresetVersions                map[string]int `json:"presetVersions"`
+	Config                        map[string]any `json:"config"`
+	AssistantDefaultAuthorization string         `json:"assistantDefaultAuthorization,omitempty"`
 }
 
 type EffectiveModelConfig struct {
@@ -93,11 +118,31 @@ func mergeBuiltinProviderPresets(config map[string]any) (map[string]any, error) 
 	mergedChannels := make([]any, 0, len(order))
 	for _, id := range order {
 		if channel := channels[id]; channel != nil {
-			mergedChannels = append(mergedChannels, channel)
+			mergedChannels = append(mergedChannels, overlayHostedBeefAPIVideoProfiles(channel))
 		}
 	}
 	result["channels"] = mergedChannels
+	normalizeEggfansSeedanceChannels(result)
+	normalizeJiasuVideoChannels(result)
 	return result, nil
+}
+
+func normalizeJiasuVideoChannels(config map[string]any) {
+	channels, _ := config["channels"].([]any)
+	for _, raw := range channels {
+		channel, ok := raw.(map[string]any)
+		if !ok || channel["id"] != "jiasu-video" && channel["interfaceType"] != "jiasu-video" {
+			continue
+		}
+		baseURL, _ := channel["baseUrl"].(string)
+		if strings.EqualFold(strings.TrimRight(strings.TrimSpace(baseURL), "/"), "https://ai.jiasuapi.com") {
+			channel["baseUrl"] = "https://www.gway.dev"
+		}
+		catalogURL, _ := channel["catalogUrl"].(string)
+		if strings.EqualFold(strings.TrimRight(strings.TrimSpace(catalogURL), "/"), "https://ai.jiasuapi.com/pricing") {
+			channel["catalogUrl"] = "https://www.gway.dev/pricing"
+		}
+	}
 }
 
 func migrateLegacyTopLevelModels(config map[string]any, channels map[string]map[string]any) {
@@ -156,6 +201,77 @@ func hasNonEmptyModels(value any) bool {
 	return false
 }
 
+func overlayHostedBeefAPIVideoProfiles(channel map[string]any) map[string]any {
+	baseURL, _ := channel["baseUrl"].(string)
+	profiles, _ := channel["modelProfiles"].([]any)
+	seen := map[string]bool{}
+	next := make([]any, 0, len(profiles))
+	for _, raw := range profiles {
+		profile, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		model, _ := profile["model"].(string)
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		seen[model] = true
+		if capability, protocol, ok := providerpreset.HostedBeefAPIVideoProfile(baseURL, model); ok {
+			overlaid := cloneProfileMap(profile)
+			overlaid["capability"] = capability
+			overlaid["protocol"] = protocol
+			next = append(next, overlaid)
+			continue
+		}
+		next = append(next, profile)
+	}
+	for _, model := range channelModelIDs(channel["models"]) {
+		if seen[model] {
+			continue
+		}
+		capability, protocol, ok := providerpreset.HostedBeefAPIVideoProfile(baseURL, model)
+		if !ok {
+			continue
+		}
+		next = append(next, map[string]any{"model": model, "capability": capability, "protocol": protocol})
+	}
+	channel["modelProfiles"] = next
+	return channel
+}
+
+func cloneProfileMap(profile map[string]any) map[string]any {
+	cloned := make(map[string]any, len(profile))
+	for key, value := range profile {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func channelModelIDs(value any) []string {
+	switch items := value.(type) {
+	case []string:
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			if model := strings.TrimSpace(item); model != "" {
+				ids = append(ids, model)
+			}
+		}
+		return ids
+	case []any:
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			model, _ := item.(string)
+			if model = strings.TrimSpace(model); model != "" {
+				ids = append(ids, model)
+			}
+		}
+		return ids
+	default:
+		return nil
+	}
+}
+
 func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any) (map[string]any, error) {
 	models := make([]string, 0, len(preset.Models))
 	profiles := make([]any, 0, len(preset.Models))
@@ -178,6 +294,9 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 			if !ok || model == "" {
 				continue
 			}
+			if preset.ID == "jiasu-video" && !gwayModelAllowedDuringMigration(local, model) {
+				continue
+			}
 			if _, managed := presetModels[model]; !managed && !containsString(models, model) {
 				models = append(models, model)
 			}
@@ -190,6 +309,22 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 				continue
 			}
 			model, _ := profile["model"].(string)
+			if preset.ID == "jiasu-video" && !containsString(models, model) {
+				continue
+			}
+			if preset.ID == "mints-seedance" {
+				for _, candidate := range profiles {
+					managed := candidate.(map[string]any)
+					if managed["model"] != model {
+						continue
+					}
+					for _, key := range []string{"defaultOptions", "displayName", "capabilityConfig"} {
+						if value, exists := profile[key]; exists {
+							managed[key] = value
+						}
+					}
+				}
+			}
 			if _, managed := presetModels[model]; model != "" && !managed {
 				profiles = append(profiles, profile)
 			}
@@ -209,7 +344,26 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 			result[key] = value
 		}
 	}
+	if preset.ID == "beefapi" {
+		base, _ := local["baseUrl"].(string)
+		if base == "https://enterprise.beefapi.com" || base == "https://beeftv.app" {
+			result["baseUrl"] = base
+		} else if key, _ := local["apiKey"].(string); base == "" && key != "" {
+			// Pre-brand manual credentials without an origin were issued by BeefAPI.
+			result["baseUrl"] = "https://enterprise.beefapi.com"
+		}
+	}
 	return result, nil
+}
+
+func gwayModelAllowedDuringMigration(local map[string]any, model string) bool {
+	if _, ok := currentGwayVideoModels[strings.TrimSpace(model)]; ok {
+		return true
+	}
+	// Once the Gway catalog has been saved at the current preset version, the
+	// saved model list is authoritative and may contain newly published IDs.
+	version, _ := local["presetVersion"].(float64)
+	return version >= 3
 }
 
 func isLegacyBeefAPIDefault(preset providerpreset.ChannelPreset, key string, value any) bool {

@@ -4,9 +4,11 @@ title: 本地后端代码地图
 
 # 本地后端代码地图
 
-BeefTV 是单用户、本地优先的桌面应用。项目、画布、素材、任务和 Agent 状态落到本地 SQLite 与工作区目录；模型生成仍可通过 Provider/Protocol 适配器访问外部 API。
+BeefTV 是单用户、本地优先的桌面应用。项目、画布、素材和任务落到本地 SQLite 与工作区目录；模型生成仍可通过 Provider/Protocol 适配器访问外部 API。旧内置 Agent 已从产品运行面退场，其历史运行/偏好/记忆数据仍保留在本地数据库。
 
 ## 运行链路
+
+模型服务设置由 `web/src/pages/settings/model-service-editor.tsx` 管理添加和编辑草稿；`model-service-presets.ts` 依据已启用的协议插件填写初始配置。`model-connection-test.ts` 通过正常后端生成任务验证结果。`internal/workspace/provider_config.go` 持有配置版本、保存冲突和文件读写，`internal/localcrypto` 统一工作区凭据加解密格式。
 
 ```text
 Wails / local dev
@@ -20,21 +22,70 @@ Wails / local dev
 
 ## 主要目录
 
+主角人脸预设由 `web/src/pages/projects/detail/project-character-face-presets-modal.tsx` 管理上传与角色绑定，`web/src/lib/project-character-face-presets.ts` 解析预设并生成身份约束，`project-character-media.ts` 在单张与批量角色生图前读取最新预设并提交参考图。`backend/internal/project/character_face_presets.go` 校验资源归属、角色绑定与项目范围，`projects.character_face_presets_json` 保存小型配置；数据库 v17 的追加列迁移与就绪检查位于 `database/local_schema_character_face_presets.go`，资源引用与删除保护仍由 `repository/resource_reference.go` 处理。
+
 | 边界 | 位置 | 职责 |
 | --- | --- | --- |
 | 组合根 | `backend/internal/bootstrap` | 打开本地数据、组合窄服务、启停 HTTP 与 worker |
-| 本地应用 | `backend/internal/localapp` | 定义 workspace/project/asset/task/generation/provider-config 端口 |
-| 任务域 | `backend/internal/task` | 本地任务命令、列表读模型和生命周期边界 |
-| 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、协议调度和失败归类 |
+| 本地应用 | `backend/internal/localapp` | 定义 workspace/project/asset/task/generation/provider-config 端口（旧 Agent 空端口已移除） |
+| 工作区 | `backend/internal/workspace` | 本地身份、模型配置快照；ZIP 导入导出不在此包 |
+| 任务域 | `backend/internal/task` | 本地任务命令、列表读模型、生命周期，以及本机 ffmpeg/转写/深度捕捉的准入 |
+| 生成结果交付 | `backend/internal/taskdelivery` | 第一段把生成 dataURL/字节写入本地资源并改写 ResultJSON；第二段在任务成功后物化素材。不发起新的上游生成 |
+| 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、registry 协议调度和失败归类 |
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |
+| 模型目录 | `backend/internal/modelcatalog` | 能力合同、渠道目录校验/解析/合并与 BeefAPI/WhatsToken overlay；出站 HTTP 仍走 outbound |
+| 协议插件 | `backend/internal/plugins` | registry、安装/启用和渠道设置用的 provider 能力目录；live 快照按 Runtime 隔离 |
+| Seedance 参考素材预上传 | `backend/internal/app/beefapi_seedance_preupload.go` | 仅内置 BeefAPI Seedance：本机后端把参考图片/视频/音频换成短期 HTTPS 链接后再提交 `/v1/videos`；本机文件在上传完成前保持本地引用 |
 | 数据 | `backend/internal/database`, `repository` | SQLite schema、迁移和持久化 |
+| 剪辑语义计划 | `backend/internal/editing` | 版本化时间线渲染计划：选择、顺序、空隙、裁剪、音量、字幕与输出宽高/帧率/采样率。不依赖 `internal/app`，不接受本地路径或 ffmpeg 参数 |
+| 视频预览与工具 | `backend/internal/playback`、`backend/internal/mediatools` | 按需 H.264 预览、单任务转码、用户预览缓存清理；播放和剪辑共用随包 FFmpeg 解析，显式路径优先于随包工具，最后查 PATH |
 | HTTP | `backend/internal/handler` | 本地 `/api` 合同、输入限制和响应封装 |
 | 企业连接 | `backend/internal/beefapi` | 设备授权、本机密钥和连接状态 |
-| 本机 MCP | `backend/internal/mcp` | 进程内 initialize / tools/list / tools/call |
+| 本机 MCP | `backend/cmd/beeftv` | `beeftv mcp serve` 使用官方 MCP SDK，经 `/api/ops` 访问本机工作区 |
 | 桌面更新发布 | `backend/cmd/update-release` | 生成更新密钥、打包 zip、签署 `desktop-update.json` |
 | 前端 | `web/src` | React 画布、项目、素材、模型配置与插件 UI |
 
 ## 硬边界
+
+### 工作流资产导入导出
+
+- `web/src/lib/asset-workflows.ts`：按稳定画布 ID 及资源关联识别工作流，收集当前文本和媒体快照。
+- `web/src/pages/assets/asset-transfer.ts`：资产包清单、原始文件打包、导入校验及目标设备资源重映射。
+- `backend/cmd/desktop/artifact_stream.go`：`BeginOwnedArtifact` 由保存对话框创建临时文件；`AppendOwnedArtifact` 按偏移校验最多 1MB 分块，完整写入后原子替换；`AbortOwnedArtifact` 与应用退出清理未完成文件。文件路径不由前端指定，单包最大 8GB。
+
+### Agent 小说改编
+
+- `backend/internal/skills/seed/novel-to-screenplay.md`：完整小说改编规则与画布交付约定，通过 `skills_seed.go` 内置并同步到技能库。
+- `backend/internal/app/cloud_agent_novel_script.go`：长篇文本分页、按集剧本合同与固定格式渲染；写入复用画布快照、审批、事件和撤销链路。
+- `web/src/services/skill-runtime.ts`：画布小说改编的已安装技能选择；对话面板持久保存本轮实际启用的技能。
+
+### Mints Seedance 自动参考
+
+- `backend/internal/app/provider_mints_seedance.go`：在视频提交前自动上传 Uguu、创建和轮询平台资产、持久化 URI 绑定。
+- `plugin-packages/mints-seedance`：独立原生视频协议，映射 `content[]` 和任务响应。
+- `web/src/pages/settings/mints-seedance-options.tsx`：该平台的资产组与高级生成参数编辑。
+- `web/src/services/api/generation-task.ts`：保留原始资源 ID，由后端按渠道绑定 URI，避免复用其他平台资产。
+
+### 中转网关协议与画布保存
+
+- `plugin-packages/wan-task-gateway`：万相与 HappyHorse 的声明式创建、轮询、素材角色及结果映射。
+- `backend/internal/app/model_capability.go`、`video_reference_constraints.go`：网关协议的模型族识别、时长、画幅和分辨率能力。
+- `web/src/lib/model-protocol-inference.ts`、`channel-adaptation.ts`：已启用协议的缺省推断与精确主机名适配；保留用户显式协议和其他渠道配置。
+- `backend/internal/generation/provider_error.go`、`web/src/lib/generation-error.ts`：模型授权、上游不可用与接口路径错误的归类。
+- `web/src/services/local-workspace-repository.ts`、`canvas-generation-consumer.ts`：按画布串行保存、版本冲突单次恢复和生成结果确认，保留缺失素材绑定修复。
+- `web/src/services/canvas-video-preview.ts`：静态封面复用与补建，不触发视频自动播放。
+
+### Suno 音乐工作区
+
+- `web/src/pages/music`：音乐导演台、音轨播放器、波形与任务队列。
+- `web/src/lib/suno-contract.ts`：26 个原生接口的字段、默认值与参数校验。
+- `web/src/services/api/suno.ts`、`web/src/services/suno-studio.ts`：渠道传输、响应解析、任务续查和本地素材保存。
+- `web/src/stores/use-suno-studio-store.ts`：按工作区隔离的草稿与任务持久化。
+- `web/src/components/canvas/canvas-suno-studio-entry.tsx`、`canvas-suno-studio-dialog.tsx`：画布文本/音频节点的导演台入口与弹窗。
+- `web/src/lib/canvas/canvas-suno-context.ts`、`web/src/pages/canvas/project.tsx`：解析直接连接的歌词/曲目来源，并回写 clip、task 与歌词结果。
+- `backend/internal/handler/suno_relay.go`：`/api/ai/custom` 下 Suno 路径、方法和参数的精确白名单。
+
+### 本地约束
 
 - 不提供登录、注册、计费、支付、公开分享或云存储路由。
 - 内置 BeefAPI 密钥保存在本机加密连接存储中；其他手动渠道密钥仍在本地模型配置中。密钥不进入画布快照或日志响应。

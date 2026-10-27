@@ -91,6 +91,7 @@ type GenerationRequest struct {
 	Quality         string                    `json:"quality,omitempty"`
 	GenerateAudio   bool                      `json:"generateAudio,omitempty"`
 	Watermark       bool                      `json:"watermark,omitempty"`
+	NativeFace      bool                      `json:"nativeFace,omitempty"`
 	ImageCount      int                       `json:"imageCount,omitempty"`
 	Operation       string                    `json:"operation,omitempty"`
 	Output          OutputOptions             `json:"output,omitempty"`

@@ -248,7 +248,7 @@ func blockedOutboundHeader(name string) bool {
 }
 
 func newOutboundTransport(resolveHost func(context.Context, string) ([]net.IP, error)) *http.Transport {
-	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	dialer := &net.Dialer{Timeout: 60 * time.Second, KeepAlive: 30 * time.Second}
 	return &http.Transport{
 		Proxy: outboundProxyFromEnvironment,
 		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
@@ -264,22 +264,97 @@ func newOutboundTransport(resolveHost func(context.Context, string) ([]net.IP, e
 			if err != nil {
 				return nil, err
 			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+			return dialValidatedAddresses(ctx, network, port, addresses, dialer.DialContext)
 		},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   20,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   15 * time.Second,
+		TLSHandshakeTimeout:   60 * time.Second,
 		ExpectContinueTimeout: time.Second,
 	}
+}
+
+// Race only the addresses already checked by the outbound policy. Resolving the
+// hostname again in net.Dialer would reopen the DNS-rebinding boundary. Stagger
+// attempts so a broken IPv6 route cannot hide a working IPv4 route.
+func dialValidatedAddresses(ctx context.Context, network, port string, addresses []net.IP, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	if len(addresses) == 0 {
+		return nil, errors.New("outbound host has no validated addresses")
+	}
+	ordered := []net.IP{addresses[0]}
+	// Put the other address family second, preserving order within each family.
+	firstV4 := addresses[0].To4() != nil
+	for _, opposite := range []bool{true, false} {
+		for _, ip := range addresses[1:] {
+			otherFamily := (ip.To4() != nil) != firstV4
+			if otherFamily == opposite {
+				ordered = append(ordered, ip)
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	results := make(chan result)
+	for i, ip := range ordered {
+		go func(delay time.Duration, ip net.IP) {
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					return
+				}
+			}
+			conn, err := dial(ctx, network, net.JoinHostPort(ip.String(), port))
+			select {
+			case results <- result{conn, err}:
+			case <-ctx.Done():
+				if conn != nil {
+					_ = conn.Close()
+				}
+			}
+		}(time.Duration(i)*250*time.Millisecond, ip)
+	}
+	var firstErr error
+	for range ordered {
+		select {
+		case r := <-results:
+			if r.err == nil {
+				return r.conn, nil
+			}
+			if firstErr == nil {
+				firstErr = r.err
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, firstErr
 }
 
 func outboundProxyFromEnvironment(req *http.Request) (*url.URL, error) {
 	if req == nil || req.URL == nil {
 		return nil, nil
 	}
-	return httpproxy.FromEnvironment().ProxyFunc()(req.URL)
+	environment := httpproxy.FromEnvironment()
+	if environment.HTTPProxy != "" || environment.HTTPSProxy != "" {
+		return environment.ProxyFunc()(req.URL)
+	}
+	config := desktopProxyConfig()
+	if !config.Enabled || systemProxyBypassed(req.URL, config.Bypass) {
+		return nil, nil
+	}
+	proxy, err := systemProxyURL(config.Server, req.URL.Scheme)
+	if err != nil || proxy == nil {
+		return proxy, err
+	}
+	return (&httpproxy.Config{HTTPProxy: proxy.String(), HTTPSProxy: proxy.String(), NoProxy: environment.NoProxy}).ProxyFunc()(req.URL)
 }
 
 func configuredProxyHost(host string) bool {
@@ -295,6 +370,19 @@ func configuredProxyHost(host string) bool {
 		parsed, err := url.Parse(raw)
 		if err == nil && normalizeOutboundHost(parsed.Hostname()) == host {
 			return true
+		}
+	}
+	environment := httpproxy.FromEnvironment()
+	if environment.HTTPProxy != "" || environment.HTTPSProxy != "" {
+		return false
+	}
+	config := desktopProxyConfig()
+	if config.Enabled {
+		for _, scheme := range []string{"http", "https"} {
+			proxy, err := systemProxyURL(config.Server, scheme)
+			if err == nil && proxy != nil && normalizeOutboundHost(proxy.Hostname()) == host {
+				return true
+			}
 		}
 	}
 	return false

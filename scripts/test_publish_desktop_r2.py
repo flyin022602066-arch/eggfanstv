@@ -109,14 +109,31 @@ class PublicationTests(unittest.TestCase):
         path.write_text(json.dumps({"payload": base64.b64encode(json.dumps(payload).encode()).decode(), "signature": "fixture"}))
         return path
 
+    def test_installers_are_required_before_any_write_and_read_back_before_activation(self):
+        manifest = self.manifest()
+        with self.assertRaisesRegex(release.PublishError, 'Installer missing'):
+            self.publisher.stage(manifest, self.root, with_installers=True)
+        self.assertEqual(self.store.writes, [])
+        names = ['darwin-arm64.dmg', 'darwin-amd64.dmg', 'windows-amd64-setup.exe', 'linux-amd64.deb']
+        for name in names:
+            (self.root / ('BeefTV-v1.5.7-' + name)).write_bytes(name.encode())
+        self.publisher.stage(manifest, self.root, with_installers=True)
+        self.assertNotIn(release.LATEST, self.store.objects)
+        key = release.PREFIX + '/v1.5.7/BeefTV-v1.5.7-linux-amd64.deb'
+        self.assertEqual(self.store.objects[key], b'linux-amd64.deb')
+        self.store.objects[key] = b'corrupt'
+        with self.assertRaises(release.PublishError):
+            self.publisher.activate(manifest, self.root)
+        self.assertNotIn(release.LATEST, self.store.objects)
+
     def test_complete_stage_does_not_activate_and_retries_are_idempotent(self):
         manifest = self.manifest()
         self.publisher.stage(manifest, self.root)
         self.assertNotIn(release.LATEST, self.store.objects)
-        self.assertEqual(len(self.store.writes), 4)
+        self.assertEqual(len(self.store.writes), len(release.PLATFORMS) + 1)
         self.assertTrue(all(agent == "BeefTV-Desktop-Updater/v1.5.7" for _, agent in self.public_requests))
         self.publisher.stage(manifest, self.root)
-        self.assertEqual(len(self.store.writes), 4)
+        self.assertEqual(len(self.store.writes), len(release.PLATFORMS) + 1)
         self.assertEqual(self.verify_command.call_args.args[0], ["/tmp/update-release", "verify", "--envelope", str(manifest)])
 
     def test_public_readback_uses_updater_user_agent_instead_of_urllib_default(self):
@@ -131,7 +148,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_incomplete_platform_set_cannot_activate(self):
         manifest = self.manifest(omit="windows-amd64")
-        with self.assertRaisesRegex(release.PublishError, "three"):
+        with self.assertRaisesRegex(release.PublishError, "four"):
             self.publisher.activate(manifest)
         self.assertFalse(self.store.writes)
 

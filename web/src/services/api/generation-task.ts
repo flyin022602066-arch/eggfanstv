@@ -3,17 +3,26 @@ import { resolveReferenceMediaDuration } from "@/lib/reference-media-metadata";
 import { getImageBlob } from "@/services/image-storage";
 import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask, type CreateTaskInput } from "@/services/api/task-center";
-import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { hasAutomaticVideoAudio, modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { geminiNanoBananaThinkingLevel } from "@/lib/gemini-nano-banana";
 import { grokImagePromptLimitError } from "@/lib/grok-image-prompt-limit";
 import { resolveGenerationWorkflowExecution, type GenerationWorkflowExecution } from "@/lib/generation-workflow-execution";
 import { isArkPlanBaseUrl } from "@/lib/seedance-video";
-import { resolveVideoOperation } from "@/lib/model-selection";
+import { isEggfansSeedanceProtocol } from "@/lib/eggfans-seedance";
+import { isJiasuSdModel, normalizeJiasuFaceMaskMode, type JiasuFaceMaskOverrides } from "@/lib/jiasu-face-mask";
+import { normalizeSd2FaceMaskMode, usesSd2LocalFaceMask } from "@/lib/eggfans-sd2-face-mask";
+import { prepareJiasuFaceMaskedImage } from "@/services/jiasu-face-mask";
+import { portraitGenerationError, resolveVideoOperation } from "@/lib/model-selection";
 import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { buildBackendToolRequests, type ResponseFunctionTool, type ResponseInputMessage, type ToolChoice, type ToolResponseResult } from "@/services/api/image";
 import { assertAgentExchangeBudget } from "@/lib/canvas/agent-context-budget";
 import { assertVideoCapability } from "@/services/api/video-validation";
+import { canvasSunoBody, isSunoModel } from "@/lib/suno-generation";
+import { ApiError } from "@/services/api/request";
+import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
+import { isReferenceHTTPSLink, type ResolveReferenceLinks, type ReferenceLinkRequest } from "./reference-link-replacement";
 
 export { logicalModelIDForConfig };
 
@@ -24,6 +33,8 @@ export type BackendGenerationResult = {
     images?: Array<{ dataUrl: string; url?: string; storageKey?: string; width?: number; height?: number; bytes?: number; mimeType?: string }>;
     video?: { dataUrl: string; url?: string; storageKey?: string; previewUrl?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string };
     audio?: { dataUrl: string; url?: string; storageKey?: string; durationMs?: number; bytes?: number; mimeType?: string; format?: string };
+    audios?: Array<{ dataUrl?: string; url?: string; storageKey?: string; mimeType?: string; clipId?: string; title?: string }>;
+    providerTaskId?: string;
     text?: string;
     toolCalls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string }; thoughtSignature?: string }>;
     reasoning?: string;
@@ -43,12 +54,14 @@ type BackendGenerationTaskOptions = {
     metadata?: Record<string, unknown>;
     onTaskUpdate?: (task: GenerationTask) => void;
     onTextDelta?: (text: string) => void;
+    resolveReferenceLinks?: ResolveReferenceLinks;
     streamText?: boolean;
     enableThinking?: boolean;
     clientOperationId?: string;
     retryOf?: string;
     retryContextsByBatchIndex?: Array<{ retryOf: string; attemptGroupId: string; clientOperationId: string }>;
     attemptGroupId?: string;
+    expectedScope?: import("@/lib/user-scope-guard").CapturedUserScope;
 };
 
 export type GenerationTaskDependencies = {
@@ -91,17 +104,19 @@ export async function runBackendGenerationTask(
         clientOperationId,
         retryOf,
         attemptGroupId,
+        expectedScope = captureUserScope(),
+        resolveReferenceLinks,
     }: BackendGenerationTaskOptions,
     dependencies: GenerationTaskDependencies = defaultDependencies,
 ) {
     throwIfAborted(signal);
     assertClientPromptLimit(mode, prompt, config, metadata);
     assertBackendRuntimeConfigured(config, mode);
-    const prepared = await prepareGenerationReferences({ config, mode, referenceImages, referenceVideos, referenceAudios, mask });
+    const prepared = await prepareGenerationReferences({ config, mode, referenceImages, referenceVideos, referenceAudios, mask, metadata, signal });
     throwIfAborted(signal);
     assertPreparedVideoCapability(mode, config, prepared);
     return createAndWaitGenerationTask(
-        { projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId },
+        { projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId, expectedScope, resolveReferenceLinks },
         prepared,
         dependencies,
     );
@@ -246,12 +261,37 @@ async function prepareGenerationReferences({
     referenceVideos = [],
     referenceAudios = [],
     mask,
-}: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask">): Promise<PreparedGenerationReferences> {
+    metadata,
+    signal,
+}: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask" | "metadata" | "signal">): Promise<PreparedGenerationReferences> {
+    const portraitError = mode === "video" ? portraitGenerationError(config, config.model, config.vquality) : "";
+    if (portraitError) throw new Error(portraitError);
     // asset:// 仅视频生成可用；Agent Plan Seedream 与 Seedance 共用 /api/plan/v3，不能按 BaseURL 误判。
-    const preferArkAssetUrl = mode === "video" && usesArkVideoAssetReference(config);
-    const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl)));
-    const preparedVideos = await Promise.all(referenceVideos.map(prepareBackendMediaReference));
-    const preparedAudios = await Promise.all(referenceAudios.map(prepareBackendMediaReference));
+    const eggfansSeedance = mode === "video" && isEggfansSeedanceProtocol(resolveModelRequestConfig(config, config.model).interfaceType);
+    const eggfansUsesURL = eggfansSeedance && config.videoEggfansReferenceMode === "url";
+    const urlOnly = mode === "video" && resolveModelRequestConfig(config, config.model).interfaceType === "jiasu-video";
+    const preferArkAssetUrl = mode === "video" && !eggfansUsesURL && usesArkVideoAssetReference(config);
+    const mintsSeedance = mode === "video" && resolveModelRequestConfig(config, config.model).interfaceType === "mints-seedance-video";
+    const preferOwnedResource = (eggfansSeedance && !eggfansUsesURL) || mintsSeedance;
+    const protocol = resolveModelRequestConfig(config, config.model).interfaceType;
+    const sd2LocalMask = mode === "video" && usesSd2LocalFaceMask(protocol, config.model, config.videoSd2FaceMask);
+    const jiasuLocalMask = mode === "video" && isJiasuSdModel(protocol, config.model) && normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask) !== "off";
+    if (sd2LocalMask || jiasuLocalMask) {
+        const profile = modelCapabilityConfigFor(config, config.model).video;
+        if (profile) assertVideoCapability(profile, referenceImages, referenceVideos, referenceAudios, config.videoSeconds, { deferResourceMetadataToBackend: true });
+        const overrides = (sd2LocalMask ? metadata?.sd2FaceMasks : metadata?.jiasuFaceMasks) as JiasuFaceMaskOverrides | undefined;
+        const maskMode = sd2LocalMask ? normalizeSd2FaceMaskMode(config.videoSd2FaceMask) : normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask);
+        const transformed: ReferenceImage[] = [];
+        for (const image of referenceImages) {
+            throwIfAborted(signal);
+            const override = overrides?.[image.id] || Object.values(overrides || {}).find((candidate) => candidate.storageKey && candidate.storageKey === image.storageKey);
+            transformed.push(await prepareJiasuFaceMaskedImage(image, maskMode, override, signal, sd2LocalMask ? "eggfans-sd2" : "jiasu"));
+        }
+        referenceImages = transformed;
+    }
+    const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl, preferOwnedResource, eggfansUsesURL || urlOnly, mode === "video")));
+    const preparedVideos = await Promise.all(referenceVideos.map((media) => prepareBackendMediaReference(media, preferArkAssetUrl, preferOwnedResource, eggfansUsesURL || urlOnly)));
+    const preparedAudios = await Promise.all(referenceAudios.map((media) => prepareBackendMediaReference(media, preferArkAssetUrl, preferOwnedResource, eggfansUsesURL || urlOnly)));
     const preparedMask = mask ? await prepareBackendImageReference(mask, false) : undefined;
     return { referenceImages: preparedImages, referenceVideos: preparedVideos, referenceAudios: preparedAudios, mask: preparedMask };
 }
@@ -260,7 +300,9 @@ async function prepareGenerationReferences({
 // 跳过可信素材上传同步（适合已录入方舟素材 ID 的素材，例如被授权的真人像素材）。
 function usesArkVideoAssetReference(config: AiConfig) {
     const interfaceType = resolveModelRequestConfig(config, config.model).interfaceType;
+    if (interfaceType === "eggfans-sd2-video" || interfaceType === "jiasu-video" || interfaceType === "mints-seedance-video") return false;
     if (interfaceType === "volcengine-ark-video" || interfaceType === "volcengine-ark-agent-plan-video") return true;
+    if (isEggfansSeedanceProtocol(interfaceType)) return true;
     if (interfaceType === "volcengine-ark-image" || interfaceType === "volcengine-ark-agent-plan-image") return false;
     return isArkPlanBaseUrl(config.baseUrl || "");
 }
@@ -268,12 +310,51 @@ function usesArkVideoAssetReference(config: AiConfig) {
 async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
     const task = await createBackendGenerationTask(options, prepared, dependencies);
     const { signal, onTaskUpdate, onTextDelta } = options;
-    const completed = await dependencies.waitTask(task.id, { signal, initialTask: task, onTaskUpdate, onTextDelta });
+    const completed = await dependencies.waitTask(task.id, { signal, initialTask: task, onTaskUpdate, onTextDelta, expectedScope: options.expectedScope });
     return parseBackendGenerationResult(completed);
 }
 
 async function createBackendGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
-    const task = await dependencies.createTask(backendGenerationTaskInput(options, prepared));
+    const expectedScope = options.expectedScope ?? captureUserScope();
+    const submit = () => {
+        throwIfAborted(options.signal);
+        assertUserScope(expectedScope);
+        return dependencies.createTask(backendGenerationTaskInput(options, prepared), { expectedScope });
+    };
+    let task: GenerationTask;
+    try {
+        task = await submit();
+    } catch (error) {
+        // Only this admission error guarantees that no task/upstream submission exists.
+        if (!(error instanceof ApiError) || error.reason !== "reference_media_requires_url" || !options.resolveReferenceLinks) throw error;
+        const groups = ["referenceImages", "referenceVideos", "referenceAudios"] as const;
+        const labels = ["参考图片", "参考视频", "参考音频"];
+        const references: ReferenceLinkRequest[] = [];
+        groups.forEach((group, kind) => prepared[group].forEach((media, index) => {
+            if (media.storageKey || !isReferenceHTTPSLink(media.url || "")) references.push({ key: `${group}:${index}`, label: `${labels[kind]} ${index + 1}`, name: media.name, resourceID: resourceIdFromStorageKey(media.storageKey) || undefined });
+        }));
+        if (prepared.mask && (prepared.mask.storageKey || !isReferenceHTTPSLink(prepared.mask.url || ""))) references.push({ key: "mask:0", label: "遮罩", name: prepared.mask.name, resourceID: resourceIdFromStorageKey(prepared.mask.storageKey) || undefined });
+        if (!references.length) throw error;
+        const links = await options.resolveReferenceLinks(references, options.signal);
+        throwIfAborted(options.signal);
+        assertUserScope(expectedScope);
+        if (!links) throw error;
+        for (const reference of references) {
+            if (!isReferenceHTTPSLink(links[reference.key] || "")) throw new Error(`${reference.label}需要有效的 HTTPS 链接`);
+        }
+        const replace = <T extends { id?: string; name?: string; url?: string }>(items: T[], group: string): T[] =>
+            items.map((media, index) => {
+                const url = links[`${group}:${index}`];
+                // The dialog requests an online address for the same reference asset.
+                return url ? { ...media, storageKey: undefined, dataUrl: "", url: url.trim() } : media;
+            });
+        prepared.referenceImages = replace(prepared.referenceImages, "referenceImages");
+        prepared.referenceVideos = replace(prepared.referenceVideos, "referenceVideos");
+        prepared.referenceAudios = replace(prepared.referenceAudios, "referenceAudios");
+        if (prepared.mask) prepared.mask = replace([prepared.mask], "mask")[0];
+        assertPreparedVideoCapability(options.mode, options.config, prepared);
+        task = await submit();
+    }
     options.onTaskUpdate?.(task);
     return task;
 }
@@ -314,7 +395,7 @@ function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepa
             mode,
             prompt,
             ...(workflow ? { execution: workflowPublicExecution(workflow) } : {}),
-            config: backendProviderConfig(config, mode),
+            config: backendProviderConfig(config, mode, prompt),
             capabilityOptions: logicalModelId ? logicalCapabilityOptions(config, mode) : undefined,
             textHistory: options.textHistory,
             ...(mode === "text" ? { textOptions: { stream: options.streamText !== false, thinking: options.enableThinking === true } } : {}),
@@ -344,10 +425,14 @@ function generationMetadata(config: AiConfig, metadata?: Record<string, unknown>
     return { ...metadata, providerOptions: { ...existing, [protocol]: { ...defaults, ...namespace } } };
 }
 
-async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAudio) {
+async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAudio, preferArkAssetUrl = false, preferOwnedResource = false, rejectPrivateAssetURI = false) {
+    if (preferOwnedResource && resourceIdFromStorageKey(media.storageKey)) return backendMediaReference(media, { storageKey: media.storageKey });
+    if (preferArkAssetUrl && media.arkAssetId) return backendMediaReference(media, { url: `asset://${media.arkAssetId}` });
     media = await resolveReferenceMediaDuration(media);
     if (resourceIdFromStorageKey(media.storageKey)) return backendMediaReference(media, { storageKey: media.storageKey });
     const url = media.url || "";
+    if (rejectPrivateAssetURI && /^asset:\/\//i.test(url)) throw new Error("当前视频渠道的 URL 模式不接受私域资产 URI，请提供原始素材");
+    if (/^asset:\/\/[A-Za-z0-9_-]+$/.test(url)) return backendMediaReference(media, { url });
     if (/^https?:\/\//i.test(url)) return backendMediaReference(media, { url });
     let blob: Blob | null = null;
     if (media.storageKey) blob = await getMediaBlob(media.storageKey);
@@ -362,12 +447,23 @@ async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAud
     }
 }
 
-async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false) {
+async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false, preferOwnedResource = false, rejectPrivateAssetURI = false, preserveTemporaryOriginal = false) {
+    if (preferOwnedResource && resourceIdFromStorageKey(image.storageKey)) return backendImageReference(image, { storageKey: image.storageKey });
     if (preferArkAssetUrl && image.arkAssetId) return backendImageReference(image, { url: `asset://${image.arkAssetId}` });
     if (resourceIdFromStorageKey(image.storageKey)) return backendImageReference(image, { storageKey: image.storageKey });
     const sourceUrl = image.url || image.dataUrl;
-    if (/^https?:\/\//i.test(sourceUrl)) return backendImageReference(image, { url: sourceUrl });
-    const blob = image.storageKey ? await getImageBlob(image.storageKey) : sourceUrl ? await (await fetch(sourceUrl)).blob() : null;
+    if (rejectPrivateAssetURI && /^asset:\/\//i.test(sourceUrl)) throw new Error("当前视频渠道的 URL 模式不接受私域资产 URI，请提供原始素材");
+    let original: Blob | null = null;
+    if (preserveTemporaryOriginal && /^https:\/\/(?:[^/]+\.)?uguu\.se\//i.test(sourceUrl)) {
+        original = image.storageKey ? await getImageBlob(image.storageKey) : null;
+        if (!original && /^(?:data:|blob:)/i.test(image.dataUrl)) {
+            const response = await fetch(image.dataUrl);
+            if (!response.ok) throw new Error("读取本地参考图片失败，请重新上传后再生成");
+            original = await response.blob();
+        }
+    }
+    if (!original && /^https?:\/\//i.test(sourceUrl)) return backendImageReference(image, { url: sourceUrl });
+    const blob = original || (image.storageKey ? await getImageBlob(image.storageKey) : sourceUrl ? await (await fetch(sourceUrl)).blob() : null);
     if (!blob) throw new Error("参考图片尚未保存，请重新上传后再生成");
     try {
         const resource = await uploadResourceFile(blob, "image", { fileName: image.name });
@@ -406,26 +502,31 @@ function backendMediaReference<T extends ReferenceVideo | ReferenceAudio>(media:
     } as T;
 }
 
-export function backendProviderConfig(config: AiConfig, mode: BackendGenerationMode = "image") {
+export function backendProviderConfig(config: AiConfig, mode: BackendGenerationMode = "image", prompt = "") {
     const requestConfig = resolveModelRequestConfig(config, config.model);
     const workflow = resolveGenerationWorkflowExecution(config, mode);
     if (workflow) return workflowProviderConfig(config, requestConfig, workflow);
     const generationOptions = {
         size: config.size,
         quality: omittedImageQuality(config.quality),
+        ...(mode === "image" && requestConfig.interfaceType === "gemini-image" && geminiNanoBananaThinkingLevel(requestConfig.model, config.imageThinkingLevel) ? { imageThinkingLevel: config.imageThinkingLevel } : {}),
         transparentBackground: config.transparentBackground,
         count: config.count,
         videoSeconds: config.videoSeconds,
         vquality: config.vquality,
-        videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
-        videoArkPrivateAssetUpload: config.videoArkPrivateAssetUpload,
+        videoGenerateAudio: mode === "video" && hasAutomaticVideoAudio(requestConfig.interfaceType) ? "true" : config.videoGenerateAudio == null ? undefined : String(config.videoGenerateAudio),
+        videoWatermark: config.videoWatermark == null ? undefined : String(config.videoWatermark),
+        videoArkPrivateAssetUpload: config.videoArkPrivateAssetUpload == null ? undefined : String(config.videoArkPrivateAssetUpload),
+        videoEggfansReferenceMode: config.videoEggfansReferenceMode,
+        ...(mode === "video" && requestConfig.interfaceType === "eggfans-sd2-video" ? { face: config.videoNativeFace === "true" } : {}),
+        ...(mode === "video" && requestConfig.interfaceType === "jiasu-video" ? { videoJiasuFaceMode: config.videoJiasuFaceMode } : {}),
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,
         audioPitch: config.audioPitch,
         audioVolume: config.audioVolume,
         audioInstructions: config.audioInstructions,
+        ...(mode === "audio" && isSunoModel(requestConfig.model) ? { audioSunoParams: JSON.stringify(canvasSunoBody({ ...config, model: requestConfig.model }, prompt)) } : {}),
         systemPrompt: config.systemPrompt,
     };
     if (logicalModelIDForConfig(config)) return generationOptions;
@@ -434,12 +535,16 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
         apiFormat: requestConfig.apiFormat,
         interfaceType: requestConfig.interfaceType,
         baseUrl: requestConfig.baseUrl,
+        referenceAssetOrigin: requestConfig.referenceAssetOrigin,
         apiKey: requestConfig.credentialRef ? "" : requestConfig.apiKey,
         secretKey: requestConfig.credentialRef ? "" : requestConfig.secretKey,
+        headers: requestConfig.headers,
         credentialRef: requestConfig.credentialRef,
         model: requestConfig.model,
+        ...(requestConfig.interfaceType === "jiasu-video" || (mode === "audio" && isSunoModel(requestConfig.model)) ? { headers: requestConfig.headers } : {}),
         ...generationOptions,
         capabilityConfig: modelCapabilityConfigFor(config, requestConfig.model),
+        videoCapabilitiesVersion: resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === requestConfig.model)?.videoCapabilitiesVersion,
         systemPrompt: config.systemPrompt,
     };
 }
@@ -465,6 +570,7 @@ function workflowProviderConfig(config: AiConfig, requestConfig: ReturnType<type
         videoGenerateAudio: config.videoGenerateAudio,
         videoWatermark: config.videoWatermark,
         videoArkPrivateAssetUpload: config.videoArkPrivateAssetUpload,
+        videoEggfansReferenceMode: config.videoEggfansReferenceMode,
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,
@@ -479,6 +585,7 @@ function workflowProviderConfig(config: AiConfig, requestConfig: ReturnType<type
         runningHubWalletApiKey: "",
         runningHubUploadApiKey: runningHubActive ? config.runningHub.uploadApiKey || "" : "",
         capabilityConfig: modelCapabilityConfigFor(config, requestConfig.model),
+        videoCapabilitiesVersion: resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === requestConfig.model)?.videoCapabilitiesVersion,
         systemPrompt: config.systemPrompt,
     };
 }

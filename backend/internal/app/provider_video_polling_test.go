@@ -2,11 +2,15 @@ package app
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,6 +73,37 @@ func TestVideoPollStopsImmediatelyOnAuthenticationError(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestVideoPollRecoversFromTracedConnectionFailure(t *testing.T) {
+	for _, phase := range []string{"connect", "tls", "response"} {
+		t.Run(phase, func(t *testing.T) {
+			attempts := 0
+			result, err := runVideoPollLoop(context.Background(), "original-task", fastVideoPollPolicy(), func(context.Context) (videoPollOutcome, error) {
+				attempts++
+				if attempts == 1 {
+					return videoPollOutcome{}, providerTransportError{Kind: "poll", Phase: phase, Cause: errors.New("connection reset by peer")}
+				}
+				return videoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video"}}, nil
+			})
+			if err != nil || attempts != 2 || result["mode"] != "video" {
+				t.Fatalf("poll did not recover: attempts=%d result=%v err=%v", attempts, result, err)
+			}
+		})
+	}
+}
+
+func TestVideoPollDoesNotRetryCreateOrInvalidCertificate(t *testing.T) {
+	for _, failure := range []error{
+		providerTransportError{Kind: "create", Cause: errors.New("connection reset by peer")},
+		providerTransportError{Kind: "poll", Cause: x509.UnknownAuthorityError{}},
+		providerTransportError{Kind: "poll", Cause: x509.HostnameError{Certificate: &x509.Certificate{}, Host: "wrong.example"}},
+		providerTransportError{Kind: "poll", Cause: context.Canceled},
+	} {
+		if retry, _ := retryableVideoPollError(context.Background(), failure); retry {
+			t.Fatalf("permanent or create error retried: %T", failure)
+		}
 	}
 }
 
@@ -263,4 +298,78 @@ func fastVideoPollPolicy() videoPollPolicy {
 
 func runVideoTaskForTest(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
 	return runVideoTaskWithPolicy(ctx, input, fastVideoPollPolicy())
+}
+
+func TestEggfansSeedanceVideoUsesNativeTaskRoute(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	var createBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v3/contents/generations/tasks":
+			if request.Method != http.MethodPost {
+				t.Fatalf("create method = %s, want POST", request.Method)
+			}
+			if err := json.NewDecoder(request.Body).Decode(&createBody); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"data":{"task_id":"task-native"}}`))
+		case "/api/v3/contents/generations/tasks/task-native":
+			if request.Method != http.MethodGet {
+				t.Fatalf("poll method = %s, want GET", request.Method)
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"data":{"status":"succeeded","content":{"video_url":"http://` + request.Host + `/result.mp4"}}}`))
+		case "/result.mp4":
+			writer.Header().Set("Content-Type", "video/mp4")
+			_, _ = writer.Write([]byte("mock-video"))
+		default:
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	result, err := runVideoTaskForTest(context.Background(), canvasGenerationInput{
+		Mode:   "video",
+		Prompt: "a native seedance task",
+		Config: providerConfig{
+			BaseURL:       server.URL,
+			APIKey:        "test-key",
+			Model:         "doubao-seedance-2-5-260628",
+			InterfaceType: "eggfans-seedance-video",
+			Size:          "9:16",
+			VQuality:      "720p",
+			VideoSeconds:  "27",
+		},
+		ReferenceImages: []providerMedia{{URL: "https://example.com/reference.png"}},
+	})
+	if err != nil {
+		t.Fatalf("run video task: %v", err)
+	}
+	if result["mode"] != "video" {
+		t.Fatalf("result mode = %#v, want video", result["mode"])
+	}
+	if createBody["model"] != "doubao-seedance-2-5-260628" {
+		t.Fatalf("model = %#v", createBody["model"])
+	}
+	content, ok := createBody["content"].([]interface{})
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %#v, want text and image entries", createBody["content"])
+	}
+	if _, exists := createBody["image_urls"]; exists {
+		t.Fatal("native request contains legacy image_urls")
+	}
+	if _, exists := createBody["aspect_ratio"]; exists {
+		t.Fatal("native request contains legacy aspect_ratio")
+	}
+	if _, exists := createBody["seconds"]; exists {
+		t.Fatal("native request contains legacy seconds")
+	}
+	if createBody["ratio"] != "9:16" || createBody["resolution"] != "720p" || createBody["duration"] != float64(27) {
+		t.Fatalf("native options = ratio=%#v resolution=%#v duration=%#v", createBody["ratio"], createBody["resolution"], createBody["duration"])
+	}
+	if !strings.Contains(fmt.Sprint(content[0]), "native seedance task") {
+		t.Fatalf("prompt missing from content: %#v", content[0])
+	}
 }

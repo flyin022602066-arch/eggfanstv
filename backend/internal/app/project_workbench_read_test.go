@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -248,7 +249,7 @@ func TestProjectAssetsPagePaginatesAndReturnsFacets(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := service.ProjectAssetsPage("user-1", project.ID, 2, 2, "prop", "image", "", nil, "")
+	page, err := service.ProjectAssetsPage("user-1", project.ID, 2, 2, "prop", "image", "", nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,5 +278,110 @@ func TestProjectAssetCandidatesPageSearchesNamesWithinFilters(t *testing.T) {
 	}
 	if page.Total != 1 || len(page.Candidates) != 1 || page.Candidates[0].ID != "candidate-1" {
 		t.Fatalf("unexpected candidate search result: %+v", page)
+	}
+}
+
+func TestProjectAssetsPageFiltersEpisodesFromExtractionAndHistoricalShotBindings(t *testing.T) {
+	service, db := newProjectWorkbenchReadTestService(t)
+	project := seedWorkbenchProject(t, db)
+	for _, item := range []any{
+		&model.ProjectUnit{ID: "episode-1", ProjectID: project.ID, Title: "第一集"},
+		&model.ProjectUnit{ID: "episode-2", ProjectID: project.ID, Title: "第二集"},
+		&model.ProjectUnit{ID: "other-episode", ProjectID: "other-project", Title: "其他项目"},
+		&model.Shot{ID: "shot-2", ProjectID: project.ID, UnitID: "episode-2"},
+		&model.Shot{ID: "other-shot", ProjectID: "other-project", UnitID: "other-episode"},
+	} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, category := range []model.AssetCategory{model.AssetCategoryProp, model.AssetCategoryEnvironment, model.AssetCategoryProp, model.AssetCategoryMaterial} {
+		id := fmt.Sprintf("episode-asset-%d", index)
+		for _, item := range []any{
+			&model.Asset{ID: id, UserID: "user-1", Title: id, Category: category, Kind: "image"},
+			&model.ProjectAssetLink{ID: "link-" + id, ProjectID: project.ID, AssetID: id, FolderID: "folder-" + fmt.Sprint(index%2)},
+			&model.AssetVersion{ID: id + "-old", AssetID: id, Version: 1},
+		} {
+			if err := db.Create(item).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, item := range []any{
+		&model.ProjectAssetCandidate{ID: "extract-shared", ProjectID: project.ID, UnitID: "episode-1", ResolvedAssetID: "episode-asset-0", Status: "confirmed"},
+		&model.ProjectAssetCandidate{ID: "extract-scene", ProjectID: project.ID, UnitID: "episode-1", ResolvedAssetID: "episode-asset-1", Status: "confirmed"},
+		&model.ProjectAssetCandidate{ID: "extract-duplicate", ProjectID: project.ID, UnitID: "episode-1", ResolvedAssetID: "episode-asset-1", Status: "confirmed"},
+		&model.ShotAssetReference{ID: "ref-shared", ShotID: "shot-2", AssetVersionID: "episode-asset-0-old", Status: "linked"},
+		&model.ProjectAssetCandidate{ID: "extract-shot-only", ProjectID: project.ID, ShotID: "shot-2", ResolvedAssetID: "episode-asset-2", Status: "confirmed"},
+		&model.ShotAssetReference{ID: "other-ref", ShotID: "other-shot", AssetVersionID: "episode-asset-3-old", Status: "linked"},
+		&model.ProjectAssetCandidate{ID: "other-extract", ProjectID: "other-project", UnitID: "other-episode", ResolvedAssetID: "episode-asset-3", Status: "confirmed"},
+		&model.ProjectAssetCandidate{ID: "pending-extract", ProjectID: project.ID, UnitID: "episode-2", ResolvedAssetID: "episode-asset-3", Status: "pending_confirmation"},
+	} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, scope := range []struct {
+		unitID string
+		ids    []string
+	}{
+		{"episode-1", []string{"episode-asset-0", "episode-asset-1"}},
+		{"episode-2", []string{"episode-asset-0", "episode-asset-2"}},
+		{"__unassigned__", []string{"episode-asset-3"}},
+		{"other-episode", nil},
+	} {
+		t.Run(scope.unitID, func(t *testing.T) {
+			page, err := service.ProjectAssetsPage("user-1", project.ID, 1, 80, "", "", "", nil, "", scope.unitID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if page.Total != int64(len(scope.ids)) || len(page.Assets) != len(scope.ids) {
+				t.Fatalf("scope %s assets = %+v", scope.unitID, page)
+			}
+			ids := make(map[string]bool)
+			for _, asset := range page.Assets {
+				ids[asset.ID] = true
+				if asset.ID == "episode-asset-0" && (len(asset.UnitIDs) != 2 || !slices.Contains(asset.UnitIDs, "episode-1") || !slices.Contains(asset.UnitIDs, "episode-2")) {
+					t.Fatalf("shared asset lost episode links: %+v", asset)
+				}
+			}
+			for _, id := range scope.ids {
+				if !ids[id] {
+					t.Fatalf("missing asset %s", id)
+				}
+			}
+			if page.UnitCounts["episode-1"] != 2 || page.UnitCounts["episode-2"] != 2 || page.UnitCounts[""] != 1 || page.UnitCounts["other-episode"] != 0 {
+				t.Fatalf("unexpected episode counts: %+v", page.UnitCounts)
+			}
+		})
+	}
+	folder := "folder-0"
+	page, err := service.ProjectAssetsPage("user-1", project.ID, 2, 1, "prop", "image", "", &folder, "episode-asset", "episode-2")
+	if err != nil || page.Total != 2 || len(page.Assets) != 1 || page.CategoryCounts["prop"] != 2 || page.FolderCounts["folder-0"] != 2 {
+		t.Fatalf("pagination/filter intersection = %+v, %v", page, err)
+	}
+	if _, err := service.ProjectAssetsPage("other-user", project.ID, 1, 80, "", "", "", nil, "", "episode-1"); err == nil {
+		t.Fatal("another user could read episode assets")
+	}
+}
+
+func TestProjectAssetCandidatesPageFiltersShotSourcesAndUnassigned(t *testing.T) {
+	service, db := newProjectWorkbenchReadTestService(t)
+	project := seedWorkbenchProject(t, db)
+	for _, item := range []any{
+		&model.ProjectUnit{ID: "episode", ProjectID: project.ID},
+		&model.Shot{ID: "shot", ProjectID: project.ID, UnitID: "episode"},
+		&model.ProjectAssetCandidate{ID: "shot-source", ProjectID: project.ID, ShotID: "shot", Status: "pending_confirmation"},
+		&model.ProjectAssetCandidate{ID: "unassigned", ProjectID: project.ID, Status: "pending_confirmation"},
+	} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, scope := range []struct{ unitID, candidateID string }{{"episode", "shot-source"}, {"__unassigned__", "unassigned"}} {
+		page, err := service.ProjectAssetCandidatesPage("user-1", project.ID, 1, 20, scope.unitID, "pending_confirmation", "", "")
+		if err != nil || page.Total != 1 || len(page.Candidates) != 1 || page.Candidates[0].ID != scope.candidateID {
+			t.Fatalf("scope %s = %+v, %v", scope.unitID, page, err)
+		}
 	}
 }

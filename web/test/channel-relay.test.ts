@@ -1,11 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
 
 import { channelRequest } from "../src/services/api/custom-channel-relay";
+import { apiClient } from "../src/services/api/request";
 import { MANAGED_BEEFAPI_CREDENTIAL_REF } from "../src/stores/use-config-store";
 
 const originalWindow = globalThis.window;
+const originalDesktopToken = apiClient.defaults.headers.common["X-Desktop-Token"];
 
 afterEach(() => {
+    if (originalDesktopToken === undefined) delete apiClient.defaults.headers.common["X-Desktop-Token"];
+    else apiClient.defaults.headers.common["X-Desktop-Token"] = originalDesktopToken;
     if (originalWindow) globalThis.window = originalWindow;
     else Reflect.deleteProperty(globalThis, "window");
 });
@@ -42,10 +46,12 @@ function expectBackendRelay(request: ReturnType<typeof channelRequest>, upstream
 
 test("Mac Wails ordinary custom channels call the configured upstream directly", () => {
     stubLocation({ protocol: "wails:" });
+    apiClient.defaults.headers.common["X-Desktop-Token"] = "synthetic-desktop-token";
     const request = channelRequest(ordinaryChannel, "https://api.example.com/v1/models", { Accept: "application/json" });
     expect(request.url).toBe("https://api.example.com/v1/models");
     expect(request.credentials).toBe("omit");
     expect(request.headers.authorization).toBe("Bearer user-key");
+    expect(request.headers["x-desktop-token"]).toBeUndefined();
     expect(request.headers["x-test"]).toBe("desktop");
     expect(request.headers["x-canvas-upstream-url"]).toBeUndefined();
 });
@@ -65,9 +71,11 @@ test("Mac Wails enterprise host without credentialRef is still backend-relayed",
 
 test("Windows Wails ordinary custom channels are backend-relayed for CORS", () => {
     stubLocation({ protocol: "http:", hostname: "wails.localhost" });
+    apiClient.defaults.headers.common["X-Desktop-Token"] = "synthetic-desktop-token";
     const request = channelRequest(ordinaryChannel, "https://api.example.com/v1/models", { Accept: "application/json" });
     expectBackendRelay(request, "https://api.example.com/v1/models", "https://api.example.com");
     expect(request.headers.authorization).toBe("Bearer user-key");
+    expect(request.headers["x-desktop-token"]).toBe("synthetic-desktop-token");
     expect(request.headers["x-test"]).toBeUndefined();
     expect(request.headers["x-canvas-upstream-headers"]).toBeTruthy();
 });

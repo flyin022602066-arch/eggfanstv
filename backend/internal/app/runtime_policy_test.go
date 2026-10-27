@@ -36,6 +36,59 @@ func TestDefaultVideoTaskTimeoutIsOneHour(t *testing.T) {
 	}
 }
 
+func TestJiasuVideoExecutionTimeoutIsTwoHours(t *testing.T) {
+	svc := &Service{}
+	policy := defaultRuntimePolicy().Task
+	for _, taskType := range []string{"canvas_video", "video_generate"} {
+		input, err := json.Marshal(canvasGenerationInput{Mode: "video", Config: providerConfig{BaseURL: "https://example.com", InterfaceType: "jiasu-video"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		task := model.Task{Type: taskType, InputJSON: string(input)}
+		if got := svc.taskExecutionTimeout(task, policy); got != 2*time.Hour {
+			t.Fatalf("%s Jiasu timeout = %s, want 2h", taskType, got)
+		}
+		longer := policy
+		longer.VideoTimeoutMinutes = 180
+		if got := svc.taskExecutionTimeout(task, longer); got != 3*time.Hour {
+			t.Fatalf("longer configured timeout = %s, want 3h", got)
+		}
+		task.Type = "canvas_image"
+		if got := svc.taskExecutionTimeout(task, policy); got != taskExecutionTimeoutWithPolicy(task.Type, policy) {
+			t.Fatal("Jiasu video timeout changed image execution")
+		}
+	}
+	for _, interfaceType := range []string{"eggfans-sd2-video", "mints-seedance-video"} {
+		input, _ := json.Marshal(canvasGenerationInput{Mode: "video", Config: providerConfig{BaseURL: "https://example.com", InterfaceType: interfaceType}})
+		if got := svc.taskExecutionTimeout(model.Task{Type: "canvas_video", InputJSON: string(input)}, policy); got != time.Hour {
+			t.Fatalf("%s timeout = %s, want 1h", interfaceType, got)
+		}
+	}
+}
+
+func TestJiasuVideoTimeoutUsesResolvedChannelProtocol(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+kernel.NewID()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ModelChannel{}, &model.ChannelModel{}); err != nil {
+		t.Fatal(err)
+	}
+	channel := model.ModelChannel{ID: "jiasu-system", UserID: "admin", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Jiasu", BaseURL: "https://example.com", APIKey: "synthetic-key", APIFormat: "openai"}
+	item := model.ChannelModel{ID: "jiasu-system-model", ChannelID: channel.ID, ModelKey: "sd-2.5-j2-V", Capability: "video", Protocol: model.ChannelInterfaceType("jiasu-video"), Enabled: true}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(canvasGenerationInput{Mode: "video", Config: providerConfig{ChannelID: channel.ID, Model: item.ModelKey}})
+	svc := New(repository.New(db), t.TempDir())
+	if got := svc.taskExecutionTimeout(model.Task{Type: "canvas_video", InputJSON: string(input)}, defaultRuntimePolicy().Task); got != 2*time.Hour {
+		t.Fatalf("resolved Jiasu timeout = %s, want 2h", got)
+	}
+}
+
 func TestProviderPollingDeadlineDefaultsToOneHour(t *testing.T) {
 	startedAt := time.Now()
 	deadline := providerPollingDeadline(context.Background())
@@ -130,6 +183,9 @@ func TestRuntimePolicyDefaultsAndSelfUseModeValidate(t *testing.T) {
 		t.Fatalf("default runtime policy error = %v", err)
 	}
 	selfUse := selfUseRuntimePolicy()
+	if got := taskExecutionTimeoutWithPolicy("canvas_video", selfUse.Task); got != time.Hour {
+		t.Fatalf("desktop video execution timeout = %s, want 1h", got)
+	}
 	if err := validateRuntimePolicy(selfUse); err != nil {
 		t.Fatalf("self-use runtime policy error = %v", err)
 	}

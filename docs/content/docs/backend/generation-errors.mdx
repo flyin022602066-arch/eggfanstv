@@ -11,6 +11,8 @@ description: 画布、任务中心和批量生成如何把上游失败变成可�
 
 ## 责任边界
 
+佳速和 Eggfans SD2 视频任务允许本地参考素材进入上传准备流程，不会因缺少在线链接而在入队前拒绝。提交生成前会校验 Uguu 临时链接；链接已失效时用原始本地资源重新上传，并持久化新链接供本次和后续任务使用。视频参考图同时带有 Uguu 链接与本地原图时，保留原图资源身份以便刷新；已有私域 URI 和其他渠道的参考规则不变。若仅剩失效链接且原图已丢失，则明确提示重新导入原图，不向上游提交失效素材，也不自动重复生成。
+
 | 位置 | 职责 |
 | --- | --- |
 | `backend/internal/generation` | 唯一后端归类器。`HTTPError.Error()` 和任务持久化走这里，正文先归类再变成用户文案。 |
@@ -25,9 +27,45 @@ description: 画布、任务中心和批量生成如何把上游失败变成可�
 
 参考素材在提交前按渠道能力配置校验数量、单文件大小、时长、宽高、宽高比和像素总量。链接地址的素材按单文件限制检查，不把文件体积加总成整次请求上限。能力配置来自企业目录或渠道保存值；已写明的 0、关闭项和生成模式列表保持原样，不会用官方缺省改写。本地图片缺少宽高时，会先读取文件头尺寸再校验。尺寸过小要调整尺寸或更换，不要裁切。错误说明指出素材序号和需要满足的范围。历史 OpenAI 配置和带供应商前缀的模型使用相同校验。已接单任务恢复时直接查询原任务，不再校验历史参考素材。
 
-上游返回的 `Duration must be between 1.8s and 30.2s` 属于参数错误，应提示调整参考素材，不能只显示“检查模型和参数”。`Height must be between 300px and 6000px`、宽高比、像素总量分别说明尺寸、宽高比和像素；整次请求过大与单个文件过大也要分开说。网关在 JSON 后附加的 `(request id: ...)` 不影响正文解析，请求编号单独保留供排查。任务卡片的标题和悬停说明只显示归类后的原因，不把原始 JSON 铺到主文案或 tooltip。
+上游返回的 `Duration must be between 1.8s and 30.2s` 属于参数错误，应提示调整参考素材，不能只显示“检查模型和参数”。`Height must be between 300px and 6000px`、宽高比、像素总量分别说明尺寸、宽高比和像素；整次请求过大与单个文件过大也要分开说。内置 BeefAPI Seedance 若参考素材未能上传，应提示暂时无法接收或重新提交。确认失败时，若已有可直接给使用者看的中文说明则保留该说明；无法判断的失败仍提示重新提交。不得自动再发一次生成请求。网关在 JSON 后附加的 `(request id: ...)` 不影响正文解析，请求编号单独保留供排查。任务卡片的标题和悬停说明只显示归类后的原因，不把原始 JSON 铺到主文案或 tooltip。
+
+Eggfans 视频接口明确返回 `content[1] 暂不支持 asset:// 素材引用，请传公网可访问的图片 URL` 时，应显示“当前视频接口不支持 asset:// 图片 URI”，并引导联系网关维护者开通私域资产引用或配置支持该 URI 的视频接口。取得资产 URI 与视频接口接受该 URI 是两个独立环节；此错误不能推断为图片未上传或尺寸、时长错误。该说明在任务持久化和前端回显后仍保留，请求回显不参与识别，明确的鉴权、权限和额度错误码仍优先。Eggfans Seedance 节点现支持手动切换 URL 模式；切换后会跳过私域资产库，使用自动检查并在失效时刷新的公网 URL。SD2 的 URL 参考流程保持独立。
 
 `video_submission_unknown` 表示接单结果待核对。画布、批量作品操作条和错误详情都应引导查看原任务；接单未知、超时和未修改的无效参数不能直接显示“重新生成”。
+
+连接与生成等待分别计时。出站 TCP 连接和 TLS 握手允许各等待 60 秒，并受任务上下文取消约束；视频任务整体等待保留运行策略配置。连接前失败显示具体阶段和“请求尚未发送”；发送后未收到有效响应则显示“提交未确认，尚未取得上游任务 ID”。只有任务自身的执行期限到期，才显示任务等待超时。创建请求不因连接或响应超时自动重发。无 HTTP 响应时，调用日志保留传输阶段和归类，不用空响应覆盖成未知错误。
+
+画布回读带 `errorCode` 的失败任务时，同类的连接阶段和提交状态说明仍应保留，不能被 `network` 等通用类目文案覆盖。明确的鉴权、权限或额度错误码仍优先于与其冲突的传输说明。
+
+生成成功后的素材入库、画布保存或结果回填失败，不属于模型参数错误。前端在成功任务的消费边界使用 `GenerationTaskResultSyncError`，保留原任务的成功状态，提示重新加载资源，不自动重新提交生成。本地工作区同样可以从任务记录重新加载结果。已有回填标记但缺少实际媒体内容的节点仍需修复，不能只根据幂等标记跳过。
+
+项目制作的生成按钮和重新生成共用同一提交流程。必填项校验失败时展开“生成补充”、定位字段，并在编辑器内保留具体原因；本地 API 拒绝提交时也显示具体错误。上次阶段失败不阻止用户修正参数后再次提交，提交中的同一镜头则防止重复点击。
+
+保存画布前按资源身份补齐缺失的本地素材绑定，并通过 `generated-assets` 将素材和画布一起提交，后端仍校验资源归属与就绪状态。回填结果在本地缓存提交后立即同步到编辑器；后端保存返回时使用最新节点与版本号，避免旧快照覆盖期间完成的其他结果或编辑。画布版本冲突仍会阻止覆盖，不能通过盲目提升版本号绕过。
+
+## Eggfans GPT 图片尺寸与格式排查
+
+Eggfans 的 GPT-image-2 与 GPT-image-2.5 生图接口使用 `POST /v1/images/generations`，JSON 的输出格式字段为 `format`（`png`、`jpeg` 或 `webp`）。宿主仅对 `api.eggfans.com` / `api.eggfans.org` 下 OpenAI Images 协议的这两个模型系列转换字段，其他渠道仍使用各自协议的 `output_format`。声明式插件、后端手写路径和前端直调路径保持一致。
+
+两类模型文档均列出 `size=3840x2160` 与 `2160x3840`。`quality=high` 表示质量，不能替代 `size`。GPT-image-2.5 另外支持 `xhigh` 与 `max`；只有其生图页注明超过 `2560x1440` 属实验能力，不应把这条限制套用到 GPT-image-2。
+
+图片编辑使用 `POST /v1/images/edits` 的 multipart 文件请求。参考图走 `image`，蒙版走 `mask`；蒙版必须与首张源图尺寸相同，透明区域表示编辑区域。生图字段转换不应用于编辑请求，也不改变源图或蒙版。
+
+这两个 Eggfans GPT 图片模型系列在文生图、参考图编辑和蒙版重绘中默认发送 `moderation=low`。前端直调、后端声明式插件和手写路径一致；插件明确配置的审核级别仍保留。该字段独立于 `quality`，不会改变画质、分辨率或参考素材，也不影响其他模型、渠道和视频请求。上游仍可能按自身规则拒绝内容，失败原因继续如实显示。
+
+检查尺寸问题时，对照已发送的 `size` 与入库原件的真实像素。格式字段修正本身不能证明上游稳定返回 4K；下载原件也不能把已返回的小尺寸图片变成真实 4K。
+
+参数依据：[GPT-image-2 生图](https://docs.eggfans.org/reference/v1/images/generations?leaf=c%3A1790764474964)、[GPT-image-2 编辑](https://docs.eggfans.org/reference/v1/images/edits?leaf=c%3A1790737398263)、[GPT-image-2.5 生图](https://docs.eggfans.org/reference/v1/images/generations?leaf=c%3A1790765112018)、[GPT-image-2.5 编辑](https://docs.eggfans.org/reference/v1/images/edits?leaf=c%3A1790765179104)。这些页面通过 `leaf` 区分模型专属参数，不能仅凭相同接口路径认定参数一致。
+
+## Gemini Nano Banana 图片分类与参数
+
+`gemini-nano-banana-2.1`（含 `-thinking`、`-nothinking` 后缀）属于图片生成和多图参考编辑模型。模型拉取和本地配置加载均将其归入图片能力，使用 `gemini-image` 协议；旧快照中误存的文本分类会自动修复，渠道地址、密钥和其他模型保留。
+
+图片节点可选择 1K、2K、4K 和文档列出的 14 种比例，包括 1:4、4:1、1:8、8:1。请求发往用户渠道的 `/v1beta/models/{model}:generateContent`；分辨率和比例分别放在 `generationConfig.imageConfig.imageSize` 与 `aspectRatio`。这些比例不使用 OpenAI 像素尺寸校验，界面换算尺寸仅作参考，真实像素以上游原件为准。
+
+“思考强度”的快速和深入分别发送 `generationConfig.thinkingConfig.thinkingLevel=minimal/high`；“模型默认”省略该配置，遵循模型本身及后缀。选择保存在节点元数据中，生成结果保留同一设置供再次生成。参考图以真实 MIME 和裸 base64 放入同一个 `contents[0].parts`；此接口不传 `thinkingBudget`、负向提示词、视频分辨率或蒙版参数，默认接收 base64 图片。
+
+参数依据：[Eggfans Gemini Nano Banana 2.1](https://docs.eggfans.org/reference/v1/v1beta/models/gemini-nano-banana-2.1%3AgenerateContent?leaf=c%3A1791529101208)。
 
 ## 类目矩阵
 
@@ -36,7 +74,7 @@ description: 画布、任务中心和批量生成如何把上游失败变成可�
 | 类目 | 典型信号 | 使用者下一步 | 自动重试 |
 | --- | --- | --- | --- |
 | `auth` | 401、invalid_api_key | 检查 API Key | 否 |
-| `permission` | 403、permission_denied | 检查渠道权限或换模型 | 否 |
+| `permission` | 403、permission_denied、model_not_allowed | 检查渠道权限或换模型 | 否 |
 | `quota_user` | insufficient_user_quota | 检查账号余额或联系管理员调整额度 | 否 |
 | `quota_unknown` | 402、insufficient_quota、余额/额度措辞 | 到渠道或供应商核对账单与额度 | 否 |
 | `quota_upstream` | arrearage、billing_hard_limit | 到供应商核对 | 否 |
@@ -45,6 +83,7 @@ description: 画布、任务中心和批量生成如何把上游失败变成可�
 | `moderation_reference` | 输入图片、视频、音频审核 | 检查并更换对应参考素材 | 原任务否；改素材后可新建 |
 | `moderation_output` | 输出审核 | 调整输入后新建 | 原任务否 |
 | `invalid_params` | 400/422、invalid_request、尺寸/格式 | 检查模型与参数 | 否 |
+| `local_storage` | 500 + `reason=local_storage_failed`，本地入队前读写失败 | 尚未提交生成；重启应用，仍失败则更新并联系支持 | 否 |
 | `context_too_long` | context_length、长度超出 | 缩短输入 | 否 |
 | `input_inaccessible` | url error、素材无法读取 | 检查素材 | 否 |
 | `input_too_large` | 413、too large | 压缩或更换素材 | 否 |

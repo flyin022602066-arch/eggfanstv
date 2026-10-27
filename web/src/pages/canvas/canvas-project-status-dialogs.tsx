@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
 import { TaskDetailItem } from "./canvas-project-feedback";
 import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
-import { formatTaskLog, type GenerationTask, type TaskLog } from "@/services/api/task-center";
+import { canRetrieveVideoResult, formatTaskLog, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { VideoPlayer } from "@/components/video-player";
 import { AppModal } from "@/components/ui/product/app-modal";
@@ -19,8 +19,11 @@ type CanvasProjectStatusDialogsProps = {
     task: GenerationTask | null;
     taskLogs: TaskLog[];
     taskLoading: boolean;
+    taskError?: boolean;
     onCloseTask: () => void;
     onCancelTask?: (task: GenerationTask) => void;
+    onRetrieveTask?: (task: GenerationTask) => void;
+    retrievingTaskId?: string | null;
     superResolveNode: CanvasNodeData | null;
     onCloseSuperResolve: () => void;
     onUseLocalUpscale: () => void;
@@ -31,7 +34,7 @@ type CanvasProjectStatusDialogsProps = {
     onConfirmClear: () => void;
 };
 
-export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading, superResolveNode, previewNode, clearConfirmOpen, onCloseTask, onCancelTask, onCloseSuperResolve, onUseLocalUpscale, onClosePreview, onCancelClear, onConfirmClear }: CanvasProjectStatusDialogsProps) {
+export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading, taskError, superResolveNode, previewNode, clearConfirmOpen, onCloseTask, onCancelTask, onRetrieveTask, retrievingTaskId, onCloseSuperResolve, onUseLocalUpscale, onClosePreview, onCancelClear, onConfirmClear }: CanvasProjectStatusDialogsProps) {
     const config = useEffectiveConfig();
     const previewSource = useResolvedPreviewSource(previewNode);
     return (
@@ -39,6 +42,7 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
             <Modal title="任务详情" open={Boolean(task)} footer={null} width="min(920px, calc(100vw - 32px))" onCancel={onCloseTask}>
                 {task ? (
                     <div className="space-y-4 text-sm">
+                        {taskError ? <p role="status">任务详情暂时无法刷新，正在重试。</p> : null}
                         <div className="grid grid-cols-2 gap-3 rounded-lg border p-3" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
                             <TaskDetailItem label="当前阶段" value={generationTaskStageLabel(task)} />
                             {generationTaskShowsProgress(task) ? <TaskDetailItem label="进度" value={`${task.progress ?? 0}%`} /> : null}
@@ -58,6 +62,13 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
                             </div>
                         </div>
                         <TaskGenerationParameters inputJson={task.inputJson} theme={theme} />
+                        {task.error ? <p role="status" className="whitespace-pre-wrap break-words">{task.error}</p> : null}
+                        {onRetrieveTask && canRetrieveVideoResult(task) ? (
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <p>查询原任务并取回视频，不会重新生成。</p>
+                                <Button loading={retrievingTaskId === task.id} onClick={() => onRetrieveTask(task)}>取回结果</Button>
+                            </div>
+                        ) : null}
                         {onCancelTask && (task.status === "queued" || task.status === "running") ? (
                             <div className="flex justify-end">
                                 <Button danger icon={<XCircle className="size-4" />} onClick={() => onCancelTask(task)}>

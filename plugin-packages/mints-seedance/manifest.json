@@ -1,0 +1,339 @@
+{
+  "apiVersion": "beeftv.plugin/v2",
+  "id": "mints-seedance",
+  "name": "Mints Seedance 自动资产绑定",
+  "version": "1.0.0",
+  "author": "Eggfans TV",
+  "description": "独立的 Mints Seedance 原生视频渠道，由宿主自动上传 Uguu、绑定平台资产并等待 Active。",
+  "documentation": "# Mints Seedance 自动资产绑定\n\n独立视频渠道 `mints-seedance-video`。Base URL、API Key 和模型 ID 在模型配置中修改。\n\n点击生成后，宿主从本地原始素材取得有效的 Uguu HTTPS 链接，再调用平台资产接口，等状态变成 Active 后用 `asset://` 提交视频。图片、视频、音频保持原生 `content[]` 对象及角色。URI 按用户、渠道、地址、Key 和素材组隔离缓存，原始资源不会被 URI 替换。\n\n文档来源：[素材和视频说明](https://tc1rz6i54l.apifox.cn/9242591m0)、[原生视频协议](https://tc1rz6i54l.apifox.cn/9371486m0)。\n\n---\n\n# Mints 接口合同\n\n文档 Base URL 为 `http://open.mints-id.com`，鉴权为 `Authorization: Bearer <平台 Key>`。如平台提供 HTTPS 地址，可在渠道配置中修改。不可使用其他渠道的 Key 或 URI。\n\n## 自动参考素材\n\n1. 视频任务创建阶段读取本地素材，检测已缓存 Uguu 链接的有效期和可访问性，失效时上传原始文件并更新链接。\n2. `POST /api/seedance/assets`，JSON 使用 `URL`、`AssetType`（Image/Video/Audio）、`Name`，可选 `GroupId`。未指定组时使用平台默认组，不额外调用其他平台的分组接口，不设置 Force。\n3. 保存 `Result.Id`，每 3 秒 `GET /api/seedance/assets/{Id}`。只有 `Result.Status=Active` 可生成 `asset://{Id}`；Processing 会等待，Failed 会停止视频提交。中断后继续查询已保存 ID。\n4. 将绑定保存到本地资源记录关联表。再次使用先核对平台状态，已失效/删除的资产重新绑定，其他渠道不读取这些 URI。原图仍用于预览和其他渠道。\n\n`asset_group_id` 可通过本渠道 providerOptions 指定已认证组。真人素材需用户在平台自行完成 H5 身份认证，自动素材上传不代替认证。\n\n## 视频\n\n`POST /api/v3/contents/generations/tasks`：`model`、`content[]`、`resolution`、`ratio`、`duration`（整数秒）、`generate_audio`、`watermark`。可选 `seed`、`service_tier`、`camera_fixed`、`draft` 从本渠道 providerOptions 读取。\n\n文本保持 `{type:\"text\",text:...}`；媒体保持 `{type:\"image_url\",image_url:{url:\"asset://...\"},role:\"reference_image\"}`，视频/音频对应 `video_url`/`audio_url` 对象和 `reference_video`/`reference_audio`。图片首尾帧角色保持不变，`@图片1` 等顺序不变。\n\n创建返回 `id`，轮询 `GET /api/v3/contents/generations/tasks/{id}`，只有 succeeded 才读取 `content.video_url`，失败显示平台错误；成功立即按媒体类型下载到本地。恢复任务沿用创建时 ID，不重新生成。视频 URL 有效 24 小时，Seedance 2.5 下载上限为 100 次。\n\n文档支持列表中的准确模型 ID 为 `doubao-seedance-2-0-260128`、`doubao-seedance-2-0-fast-260128`；另一个文档还列出 `doubao-seedance-2-0-mini-260615`。2.5 的准确 ID 须由平台确认，可手动修改，不将其他渠道的 ID 当作此平台已支持模型。\n\n<!-- BEEFTV_PLUGIN_MANIFEST_START -->\n## Manifest 完整接口定义\n\n以下 JSON 与插件包内实际 `manifest.json` 逐字段一致，覆盖插件身份、权限、配置、鉴权、参数、校验、创建、Agent、查询、取消、结果下载、响应和 Agent 响应映射。`documentation` 字段的值就是当前完整文档；为避免文档在自身内部无限递归，JSON 中仅用等义占位文本表示正文。\n\n```json\n{\n  \"apiVersion\": \"beeftv.plugin/v2\",\n  \"id\": \"mints-seedance\",\n  \"name\": \"Mints Seedance 自动资产绑定\",\n  \"version\": \"1.0.0\",\n  \"author\": \"Eggfans TV\",\n  \"description\": \"独立的 Mints Seedance 原生视频渠道，由宿主自动上传 Uguu、绑定平台资产并等待 Active。\",\n  \"documentation\": \"<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>\",\n  \"permissions\": [\n    \"generation.run\",\n    \"media.read\"\n  ],\n  \"configuration\": {\n    \"fields\": [\n      {\n        \"name\": \"apiKey\",\n        \"type\": \"secret\",\n        \"label\": \"Mints API Key\",\n        \"required\": true\n      }\n    ]\n  },\n  \"contributes\": {\n    \"providers\": [\n      {\n        \"id\": \"mints-seedance-video\",\n        \"label\": \"Mints Seedance（自动 URI）\",\n        \"capabilities\": [\n          \"video\"\n        ],\n        \"scopes\": [\n          \"admin.system-channel\",\n          \"user.custom-channel\",\n          \"canvas\",\n          \"creation\",\n          \"agent\"\n        ],\n        \"baseUrl\": \"http://open.mints-id.com\",\n        \"requiresPublicMediaUrls\": false,\n        \"auth\": {\n          \"type\": \"bearer\",\n          \"field\": \"apiKey\"\n        },\n        \"parameters\": [\n          {\n            \"name\": \"model\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"model\",\n            \"description\": \"平台提供的准确模型 ID，可在模型配置中修改。\"\n          },\n          {\n            \"name\": \"prompt\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"content[type=text].text\",\n            \"description\": \"提示词，保持 @参考序号。\"\n          },\n          {\n            \"name\": \"images\",\n            \"type\": \"media[]\",\n            \"mapping\": \"content[type=image_url]\",\n            \"description\": \"就绪的图片 URI，保留首尾帧或参考图角色。\"\n          },\n          {\n            \"name\": \"videos\",\n            \"type\": \"media[]\",\n            \"mapping\": \"content[type=video_url]\",\n            \"description\": \"就绪的视频 URI。\"\n          },\n          {\n            \"name\": \"audios\",\n            \"type\": \"media[]\",\n            \"mapping\": \"content[type=audio_url]\",\n            \"description\": \"就绪的音频 URI。\"\n          },\n          {\n            \"name\": \"aspectRatio\",\n            \"type\": \"string\",\n            \"mapping\": \"ratio\",\n            \"description\": \"输出宽高比。\"\n          },\n          {\n            \"name\": \"resolution\",\n            \"type\": \"string\",\n            \"mapping\": \"resolution\",\n            \"description\": \"输出分辨率。\"\n          },\n          {\n            \"name\": \"duration\",\n            \"type\": \"integer\",\n            \"mapping\": \"duration\",\n            \"description\": \"输出时长，整数秒。\"\n          },\n          {\n            \"name\": \"generateAudio\",\n            \"type\": \"boolean\",\n            \"mapping\": \"generate_audio\",\n            \"description\": \"生成声音。\"\n          },\n          {\n            \"name\": \"watermark\",\n            \"type\": \"boolean\",\n            \"mapping\": \"watermark\",\n            \"description\": \"输出水印。\"\n          },\n          {\n            \"name\": \"seed\",\n            \"type\": \"integer\",\n            \"mapping\": \"seed\",\n            \"description\": \"本渠道专属随机种子。\"\n          },\n          {\n            \"name\": \"camera_fixed\",\n            \"type\": \"boolean\",\n            \"mapping\": \"camera_fixed\",\n            \"description\": \"固定镜头。\"\n          },\n          {\n            \"name\": \"draft\",\n            \"type\": \"boolean\",\n            \"mapping\": \"draft\",\n            \"description\": \"草稿模式。\"\n          },\n          {\n            \"name\": \"service_tier\",\n            \"type\": \"string\",\n            \"mapping\": \"service_tier\",\n            \"description\": \"default 或 flex 服务等级。\"\n          }\n        ],\n        \"create\": {\n          \"method\": \"POST\",\n          \"path\": \"/api/v3/contents/generations/tasks\",\n          \"originPath\": true,\n          \"contentType\": \"application/json\",\n          \"body\": {\n            \"model\": {\n              \"$ref\": \"request.model\"\n            },\n            \"content\": {\n              \"$concatArrays\": [\n                [\n                  {\n                    \"type\": \"text\",\n                    \"text\": {\n                      \"$ref\": \"request.prompt\"\n                    }\n                  }\n                ],\n                {\n                  \"$map\": {\n                    \"from\": {\n                      \"$sortByOrder\": {\n                        \"$ref\": \"request.images\"\n                      }\n                    },\n                    \"as\": \"media\",\n                    \"in\": {\n                      \"type\": \"image_url\",\n                      \"image_url\": {\n                        \"url\": {\n                          \"$ref\": \"media.value\"\n                        }\n                      },\n                      \"role\": {\n                        \"$coalesce\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"reference_image\"\n                        ]\n                      }\n                    }\n                  }\n                },\n                {\n                  \"$map\": {\n                    \"from\": {\n                      \"$sortByOrder\": {\n                        \"$ref\": \"request.videos\"\n                      }\n                    },\n                    \"as\": \"media\",\n                    \"in\": {\n                      \"type\": \"video_url\",\n                      \"video_url\": {\n                        \"url\": {\n                          \"$ref\": \"media.value\"\n                        }\n                      },\n                      \"role\": {\n                        \"$coalesce\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"reference_video\"\n                        ]\n                      }\n                    }\n                  }\n                },\n                {\n                  \"$map\": {\n                    \"from\": {\n                      \"$sortByOrder\": {\n                        \"$ref\": \"request.audios\"\n                      }\n                    },\n                    \"as\": \"media\",\n                    \"in\": {\n                      \"type\": \"audio_url\",\n                      \"audio_url\": {\n                        \"url\": {\n                          \"$ref\": \"media.value\"\n                        }\n                      },\n                      \"role\": {\n                        \"$coalesce\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"reference_audio\"\n                        ]\n                      }\n                    }\n                  }\n                }\n              ]\n            },\n            \"ratio\": {\n              \"$coalesce\": [\n                {\n                  \"$ref\": \"request.aspectRatio\"\n                },\n                \"16:9\"\n              ]\n            },\n            \"resolution\": {\n              \"$coalesce\": [\n                {\n                  \"$ref\": \"request.resolution\"\n                },\n                \"720p\"\n              ]\n            },\n            \"duration\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$gt\": [\n                    {\n                      \"$ref\": \"request.duration\"\n                    },\n                    0\n                  ]\n                },\n                \"then\": {\n                  \"$ref\": \"request.duration\"\n                },\n                \"else\": 5\n              }\n            },\n            \"generate_audio\": {\n              \"$ref\": \"request.generateAudio\"\n            },\n            \"watermark\": {\n              \"$ref\": \"request.watermark\"\n            },\n            \"seed\": {\n              \"$omitEmpty\": {\n                \"$ref\": \"request.providerOptions.mints-seedance-video.seed\"\n              }\n            },\n            \"camera_fixed\": {\n              \"$omitEmpty\": {\n                \"$ref\": \"request.providerOptions.mints-seedance-video.camera_fixed\"\n              }\n            },\n            \"draft\": {\n              \"$omitEmpty\": {\n                \"$ref\": \"request.providerOptions.mints-seedance-video.draft\"\n              }\n            },\n            \"service_tier\": {\n              \"$omitEmpty\": {\n                \"$ref\": \"request.providerOptions.mints-seedance-video.service_tier\"\n              }\n            }\n          }\n        },\n        \"poll\": {\n          \"method\": \"GET\",\n          \"path\": \"/api/v3/contents/generations/tasks/{{taskId}}\",\n          \"originPath\": true\n        },\n        \"response\": {\n          \"taskId\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"taskId\"\n              },\n              {\n                \"$ref\": \"response.id\"\n              }\n            ]\n          },\n          \"status\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.status\"\n              },\n              \"pending\"\n            ]\n          },\n          \"message\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.error.message\"\n              },\n              {\n                \"$ref\": \"response.message\"\n              }\n            ]\n          },\n          \"videos\": {\n            \"$ref\": \"response.content.video_url\"\n          },\n          \"usage\": {\n            \"$ref\": \"response.usage\"\n          },\n          \"errorPaths\": [\n            \"error.code\"\n          ],\n          \"resultEphemeral\": true\n        }\n      }\n    ]\n  }\n}\n```\n<!-- BEEFTV_PLUGIN_MANIFEST_END -->\n",
+  "permissions": [
+    "generation.run",
+    "media.read"
+  ],
+  "configuration": {
+    "fields": [
+      {
+        "name": "apiKey",
+        "type": "secret",
+        "label": "Mints API Key",
+        "required": true
+      }
+    ]
+  },
+  "contributes": {
+    "providers": [
+      {
+        "id": "mints-seedance-video",
+        "label": "Mints Seedance（自动 URI）",
+        "capabilities": [
+          "video"
+        ],
+        "scopes": [
+          "admin.system-channel",
+          "user.custom-channel",
+          "canvas",
+          "creation",
+          "agent"
+        ],
+        "baseUrl": "http://open.mints-id.com",
+        "requiresPublicMediaUrls": false,
+        "auth": {
+          "type": "bearer",
+          "field": "apiKey"
+        },
+        "parameters": [
+          {
+            "name": "model",
+            "type": "string",
+            "required": true,
+            "mapping": "model",
+            "description": "平台提供的准确模型 ID，可在模型配置中修改。"
+          },
+          {
+            "name": "prompt",
+            "type": "string",
+            "required": true,
+            "mapping": "content[type=text].text",
+            "description": "提示词，保持 @参考序号。"
+          },
+          {
+            "name": "images",
+            "type": "media[]",
+            "mapping": "content[type=image_url]",
+            "description": "就绪的图片 URI，保留首尾帧或参考图角色。"
+          },
+          {
+            "name": "videos",
+            "type": "media[]",
+            "mapping": "content[type=video_url]",
+            "description": "就绪的视频 URI。"
+          },
+          {
+            "name": "audios",
+            "type": "media[]",
+            "mapping": "content[type=audio_url]",
+            "description": "就绪的音频 URI。"
+          },
+          {
+            "name": "aspectRatio",
+            "type": "string",
+            "mapping": "ratio",
+            "description": "输出宽高比。"
+          },
+          {
+            "name": "resolution",
+            "type": "string",
+            "mapping": "resolution",
+            "description": "输出分辨率。"
+          },
+          {
+            "name": "duration",
+            "type": "integer",
+            "mapping": "duration",
+            "description": "输出时长，整数秒。"
+          },
+          {
+            "name": "generateAudio",
+            "type": "boolean",
+            "mapping": "generate_audio",
+            "description": "生成声音。"
+          },
+          {
+            "name": "watermark",
+            "type": "boolean",
+            "mapping": "watermark",
+            "description": "输出水印。"
+          },
+          {
+            "name": "seed",
+            "type": "integer",
+            "mapping": "seed",
+            "description": "本渠道专属随机种子。"
+          },
+          {
+            "name": "camera_fixed",
+            "type": "boolean",
+            "mapping": "camera_fixed",
+            "description": "固定镜头。"
+          },
+          {
+            "name": "draft",
+            "type": "boolean",
+            "mapping": "draft",
+            "description": "草稿模式。"
+          },
+          {
+            "name": "service_tier",
+            "type": "string",
+            "mapping": "service_tier",
+            "description": "default 或 flex 服务等级。"
+          }
+        ],
+        "create": {
+          "method": "POST",
+          "path": "/api/v3/contents/generations/tasks",
+          "originPath": true,
+          "contentType": "application/json",
+          "body": {
+            "model": {
+              "$ref": "request.model"
+            },
+            "content": {
+              "$concatArrays": [
+                [
+                  {
+                    "type": "text",
+                    "text": {
+                      "$ref": "request.prompt"
+                    }
+                  }
+                ],
+                {
+                  "$map": {
+                    "from": {
+                      "$sortByOrder": {
+                        "$ref": "request.images"
+                      }
+                    },
+                    "as": "media",
+                    "in": {
+                      "type": "image_url",
+                      "image_url": {
+                        "url": {
+                          "$ref": "media.value"
+                        }
+                      },
+                      "role": {
+                        "$coalesce": [
+                          {
+                            "$ref": "media.role"
+                          },
+                          "reference_image"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$map": {
+                    "from": {
+                      "$sortByOrder": {
+                        "$ref": "request.videos"
+                      }
+                    },
+                    "as": "media",
+                    "in": {
+                      "type": "video_url",
+                      "video_url": {
+                        "url": {
+                          "$ref": "media.value"
+                        }
+                      },
+                      "role": {
+                        "$coalesce": [
+                          {
+                            "$ref": "media.role"
+                          },
+                          "reference_video"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$map": {
+                    "from": {
+                      "$sortByOrder": {
+                        "$ref": "request.audios"
+                      }
+                    },
+                    "as": "media",
+                    "in": {
+                      "type": "audio_url",
+                      "audio_url": {
+                        "url": {
+                          "$ref": "media.value"
+                        }
+                      },
+                      "role": {
+                        "$coalesce": [
+                          {
+                            "$ref": "media.role"
+                          },
+                          "reference_audio"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "ratio": {
+              "$coalesce": [
+                {
+                  "$ref": "request.aspectRatio"
+                },
+                "16:9"
+              ]
+            },
+            "resolution": {
+              "$coalesce": [
+                {
+                  "$ref": "request.resolution"
+                },
+                "720p"
+              ]
+            },
+            "duration": {
+              "$if": {
+                "condition": {
+                  "$gt": [
+                    {
+                      "$ref": "request.duration"
+                    },
+                    0
+                  ]
+                },
+                "then": {
+                  "$ref": "request.duration"
+                },
+                "else": 5
+              }
+            },
+            "generate_audio": {
+              "$ref": "request.generateAudio"
+            },
+            "watermark": {
+              "$ref": "request.watermark"
+            },
+            "seed": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.mints-seedance-video.seed"
+              }
+            },
+            "camera_fixed": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.mints-seedance-video.camera_fixed"
+              }
+            },
+            "draft": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.mints-seedance-video.draft"
+              }
+            },
+            "service_tier": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.mints-seedance-video.service_tier"
+              }
+            }
+          }
+        },
+        "poll": {
+          "method": "GET",
+          "path": "/api/v3/contents/generations/tasks/{{taskId}}",
+          "originPath": true
+        },
+        "response": {
+          "taskId": {
+            "$coalesce": [
+              {
+                "$ref": "taskId"
+              },
+              {
+                "$ref": "response.id"
+              }
+            ]
+          },
+          "status": {
+            "$coalesce": [
+              {
+                "$ref": "response.status"
+              },
+              "pending"
+            ]
+          },
+          "message": {
+            "$coalesce": [
+              {
+                "$ref": "response.error.message"
+              },
+              {
+                "$ref": "response.message"
+              }
+            ]
+          },
+          "videos": {
+            "$ref": "response.content.video_url"
+          },
+          "usage": {
+            "$ref": "response.usage"
+          },
+          "errorPaths": [
+            "error.code"
+          ],
+          "resultEphemeral": true
+        }
+      }
+    ]
+  }
+}

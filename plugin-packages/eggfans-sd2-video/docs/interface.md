@@ -20,13 +20,14 @@
 | `duration` | integer | 视频时长，4–30 秒 |
 | `resolution` | string | 固定为 `720p` |
 | `aspect_ratio` | string | 画幅比例 |
+| `native_face` | boolean | 内部 `config.face` 开启且有参考图片、参考视频或首帧时提交 `true`；关闭、纯文本、仅音频、仅尾帧时省略；上游不接收内部 `face` 字段 |
 | `image_refs` | string[] | 最多 30 个图片 URL；B、D 模型最多 9 个 |
 | `video_refs` | string[] | 最多 10 个视频 URL |
 | `audio_refs` | string[] | 最多 10 个音频 URL |
 | `first_image` | string | 首帧图片 URL |
 | `last_image` | string | 尾帧图片 URL |
 
-首尾帧字段不能与 `image_refs`、`video_refs` 或 `audio_refs` 同时提交。素材 URL 必须是公网 HTTPS 地址。桌面模式下，本地素材会通过 `CANVAS_PUBLIC_BASE_URL` 转换为短时签名地址；该地址需要通过 HTTPS 反向代理访问当前 BeefTV 后端。
+首尾帧字段不能与 `image_refs`、`video_refs` 或 `audio_refs` 同时提交。素材 URL 必须是公网 HTTPS 地址。桌面模式下，未配置公开访问地址时，本地参考图片、视频和音频在生成前自动上传至 Uguu 免费临时图床，临时链接预计约 3 小时有效；每张图片不能超过 30MB，视频和音频不能超过 128 MiB。每次使用前会检查持久化链接的预计有效期和远端可访问性，失效、临近过期或被删除时自动重新上传并使用最新 URL。原件保留在本地，图床不会收到模型 API Key 或自定义渠道请求头。配置 `CANVAS_PUBLIC_BASE_URL` 后图片优先使用工作区的签名 HTTPS 地址。SD2 通道只提交公网 URL，不调用私域人像库，也不接受 `asset://`。
 
 ## 查询与结果
 
@@ -118,6 +119,13 @@
             "description": "Output aspect ratio."
           },
           {
+            "name": "nativeFace",
+            "type": "boolean",
+            "required": false,
+            "mapping": "native_face",
+            "description": "Enable native face processing for every SD2 model when true; omitted when disabled."
+          },
+          {
             "name": "image_refs",
             "type": "string[]",
             "required": false,
@@ -170,6 +178,58 @@
             "resolution": "720p",
             "aspect_ratio": {
               "$ref": "request.aspectRatio"
+            },
+            "native_face": {
+              "$if": {
+                "condition": {
+                  "$and": [
+                    {
+                      "$ref": "request.nativeFace"
+                    },
+                    {
+                      "$or": [
+                        {
+                          "$gt": [
+                            {
+                              "$len": {
+                                "$ref": "request.videos"
+                              }
+                            },
+                            0
+                          ]
+                        },
+                        {
+                          "$gt": [
+                            {
+                              "$len": {
+                                "$filter": {
+                                  "from": {
+                                    "$ref": "request.images"
+                                  },
+                                  "as": "media",
+                                  "where": {
+                                    "$in": [
+                                      {
+                                        "$ref": "media.role"
+                                      },
+                                      [
+                                        "reference_image",
+                                        "first_frame"
+                                      ]
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            0
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "then": true
+              }
             },
             "image_refs": {
               "$omitEmpty": {

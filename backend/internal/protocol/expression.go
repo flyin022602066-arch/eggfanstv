@@ -526,6 +526,8 @@ func manifestPathValue(root any, path string) any {
 		switch current := value.(type) {
 		case map[string]any:
 			value = current[part]
+		case map[string]map[string]any:
+			value = current[part]
 		case []any:
 			index, err := strconv.Atoi(part)
 			if err != nil || index < 0 || index >= len(current) {

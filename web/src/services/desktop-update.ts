@@ -4,6 +4,7 @@ import { prepareDesktopEditorsForUpdate } from "@/services/desktop-update-prepar
 export type { DesktopUpdateState, DesktopUpdateStatus };
 
 export const DESKTOP_UPDATE_POLL_INTERVAL_MS = 400;
+export const DESKTOP_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const POLLED_STATUSES = new Set<DesktopUpdateStatus>(["checking", "downloading", "installing"]);
 
@@ -33,8 +34,10 @@ export type DesktopUpdateController = {
     getSnapshot: () => DesktopUpdateSnapshot;
     subscribe: (listener: (snapshot: DesktopUpdateSnapshot) => void) => () => void;
     start: () => Promise<void>;
+    check: () => Promise<void>;
     download: () => Promise<void>;
     install: () => Promise<void>;
+    downloadAndInstall: () => Promise<void>;
     retry: () => Promise<void>;
     dispose: () => void;
 };
@@ -66,6 +69,8 @@ export function emptyDesktopUpdateState(currentVersion = ""): DesktopUpdateState
         releaseNotes: "",
         downloadedBytes: 0,
         totalBytes: 0,
+        bytesPerSecond: 0,
+        reconnecting: false,
         error: "",
     };
 }
@@ -82,6 +87,8 @@ export function parseDesktopUpdateState(value: unknown, fallbackCurrentVersion =
         releaseNotes: readText(source.releaseNotes),
         downloadedBytes: readBytes(source.downloadedBytes),
         totalBytes: readBytes(source.totalBytes),
+        bytesPerSecond: readBytes(source.bytesPerSecond),
+        reconnecting: source.reconnecting === true,
         error,
     };
 }
@@ -129,6 +136,41 @@ export function desktopUpdateProgressLabel(state: DesktopUpdateState): string {
     return "正在下载";
 }
 
+export function formatDesktopUpdateSpeed(bytesPerSecond: number): string {
+    return bytesPerSecond > 0 ? `${formatDesktopUpdateBytes(bytesPerSecond)}/s` : "";
+}
+
+export function desktopUpdateRemainingSeconds(state: DesktopUpdateState): number | null {
+    if (state.bytesPerSecond <= 0 || state.totalBytes <= 0 || state.downloadedBytes >= state.totalBytes) return null;
+    return (state.totalBytes - state.downloadedBytes) / state.bytesPerSecond;
+}
+
+export function formatDesktopUpdateRemaining(seconds: number | null): string {
+    if (seconds === null || !Number.isFinite(seconds)) return "";
+    if (seconds < 60) return "剩余不到 1 分钟";
+    if (seconds < 3600) return `剩余约 ${Math.ceil(seconds / 60)} 分钟`;
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.round((seconds % 3600) / 60);
+    return minutes ? `剩余约 ${hours} 小时 ${minutes} 分钟` : `剩余约 ${hours} 小时`;
+}
+
+/** Secondary line under the download status: speed and time left, or why it paused. */
+export function desktopUpdateDetailLabel(state: DesktopUpdateState): string {
+    if (state.status === "downloading") {
+        if (state.reconnecting) return "网络中断，正在重新连接";
+        const speed = formatDesktopUpdateSpeed(state.bytesPerSecond);
+        if (speed) return [speed, formatDesktopUpdateRemaining(desktopUpdateRemainingSeconds(state))].filter(Boolean).join(" · ");
+        return state.downloadedBytes > 0 && state.totalBytes > 0 ? desktopUpdateProgressLabel(state) : "正在连接";
+    }
+    if (state.status === "error") return userFacingDesktopUpdateError(state.error);
+    return "";
+}
+
+/** True when a failed download left bytes that the next attempt continues from. */
+export function hasResumableDesktopUpdate(state: DesktopUpdateState): boolean {
+    return state.status === "error" && state.downloadedBytes > 0 && state.totalBytes > 0 && state.downloadedBytes < state.totalBytes;
+}
+
 export function desktopUpdateActionLabel(status: DesktopUpdateStatus): string {
     switch (status) {
         case "available":
@@ -160,7 +202,8 @@ export function userFacingDesktopUpdateError(error: string): string {
 
 export function shouldShowDesktopUpdaterControls(snapshot: DesktopUpdateSnapshot): boolean {
     if (snapshot.runtime !== "desktop") return false;
-    return snapshot.state.status !== "disabled";
+    if (["available", "downloading", "ready", "installing"].includes(snapshot.state.status)) return true;
+    return snapshot.state.status === "error" && Boolean(snapshot.state.latestVersion) && formatDesktopVersionLabel(snapshot.state.latestVersion) !== formatDesktopVersionLabel(snapshot.state.currentVersion);
 }
 
 function bindingErrorMessage(error: unknown): string {
@@ -302,8 +345,6 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
         } catch {
             if (disposed) return;
             apply({ ...emptyDesktopUpdateState(fallbackVersion), status: "error", error: "无法检查更新，请重试。" });
-        } finally {
-            lastAction = lastAction === "check" ? "none" : lastAction;
         }
     };
 
@@ -389,6 +430,24 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
         await start();
     };
 
+    const check = async () => {
+        if (actionBusy || persistBusy || !(
+            state.status === "idle" ||
+            state.status === "available" ||
+            (state.status === "error" && (lastAction === "check" || lastAction === "none"))
+        )) return;
+        startPromise = null;
+        lastAction = "check";
+        await start();
+    };
+
+    const downloadAndInstall = async () => {
+        if (actionBusy || persistBusy) return;
+        if (state.status === "error" && lastAction === "check") await check();
+        if (state.status === "available" || (state.status === "error" && lastAction === "download" && !stagedReady)) await download();
+        if (state.status === "ready" || (state.status === "error" && stagedReady)) await install();
+    };
+
     return {
         getSnapshot,
         subscribe: (listener) => {
@@ -402,8 +461,10 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
             };
         },
         start,
+        check,
         download,
         install,
+        downloadAndInstall,
         retry,
         dispose: () => {
             disposed = true;

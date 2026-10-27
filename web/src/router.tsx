@@ -1,17 +1,20 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { createBrowserRouter, Navigate, Outlet, useLocation, useParams } from "react-router";
+import { Navigate, Outlet, useLocation, useParams } from "react-router";
 
+import { createWorkspaceRouter } from "@/lib/app-routing";
 import { FullScreenLoader, WorkspaceRouteLoader } from "@/components/ui/aceternity/full-screen-loader";
-import { loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadEditorPage, loadHomePage, loadProjectsPage, loadProjectDetailPage, loadSkillsPage } from "@/lib/workspace-route-modules";
+import { loadAgentsPage, loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadEditorPage, loadHomePage, loadMusicPage, loadProjectsPage, loadProjectDetailPage, loadSkillsPage } from "@/lib/workspace-route-modules";
 import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
 import RouteErrorPage from "@/pages/route-error";
 
+const AgentsPage = lazy(loadAgentsPage);
 const AssetsPage = lazy(loadAssetsPage);
 const HomePage = lazy(loadHomePage);
 const CanvasPage = lazy(loadCanvasPage);
 const CanvasProjectPage = lazy(loadCanvasProjectPage);
 const CreatePage = lazy(loadCreatePage);
 const EditorPage = lazy(loadEditorPage);
+const MusicPage = lazy(loadMusicPage);
 const ProjectsPage = lazy(loadProjectsPage);
 const SkillsPage = lazy(loadSkillsPage);
 const NotFound = lazy(() => import("@/pages/not-found"));
@@ -58,13 +61,15 @@ function LegacyProjectAliasRoute() {
 function devRoutes() {
     const FolderPreviewLab = lazy(() => import("@/pages/dev/folder-preview-lab"));
     const DirectorReproLab = lazy(() => import("@/pages/dev/director-repro-lab"));
+    const AssistantPanelLab = lazy(() => import("@/pages/dev/assistant-panel-lab"));
     return [
         { path: "/dev/folders", element: fullScreenDeferred(<FolderPreviewLab />), errorElement: <RouteErrorPage /> },
         { path: "/dev/director-repro", element: fullScreenDeferred(<DirectorReproLab />), errorElement: <RouteErrorPage /> },
+        { path: "/dev/assistant-panel", element: fullScreenDeferred(<AssistantPanelLab />), errorElement: <RouteErrorPage /> },
     ];
 }
 
-export const router = createBrowserRouter([
+export const router = createWorkspaceRouter([
     ...(import.meta.env.DEV ? devRoutes() : []),
     {
         element: <WorkspaceLayout />,
@@ -73,6 +78,7 @@ export const router = createBrowserRouter([
             { path: "/", element: deferred(<HomePage />) },
             { path: "/create", element: deferred(<CreatePage />) },
             { path: "/editor", element: deferred(<EditorPage />) },
+            { path: "/music", element: deferred(<MusicPage />) },
             {
                 path: "/tasks",
                 // 任务页暂不开放，保留路由以避免旧链接进入半成品界面。
@@ -91,6 +97,7 @@ export const router = createBrowserRouter([
                 element: <RequireFeature feature="pluginCenterEnabled">{deferred(<EagleLibraryPage />)}</RequireFeature>,
             },
             { path: "/settings", element: deferred(<SettingsPage />) },
+            { path: "/agents", element: deferred(<AgentsPage />) },
             { path: "/test-voice-recording", element: deferred(<TestVoiceRecording />) },
             {
                 path: "/projects",
@@ -125,10 +132,4 @@ export const router = createBrowserRouter([
         ],
     },
     { path: "*", element: fullScreenDeferred(<NotFound />) },
-], {
-    /* 支持把前端部署在子路径下（瀚海把 BeefTV 前端挂在 /beef/）。
-       ⚠ 只设 Vite 的 base 不够 —— 那只改写静态资源 URL；react-router 仍按
-       location.pathname 匹配，于是 /beef/canvas 会掉进 NotFound 页。
-       BASE_URL 默认是 "/"，归一到 "/" 后与改动前行为完全一致。 */
-    basename: import.meta.env.BASE_URL.replace(/\/+$/, "") || "/",
-});
+]);

@@ -342,6 +342,11 @@ func normalizeManifestForProvider(manifest *Manifest, index int) error {
 		return fmt.Errorf("plugin provider contribution is missing")
 	}
 	provider := manifest.Contributes.Providers[index]
+	// Released enterprise profiles used the package name as the protocol ID.
+	// Keep those profiles on this installed adapter, including its disabled state.
+	if manifest.Metadata.ID == "openai-videos" && provider.ID == "newapi" {
+		manifest.Metadata.LegacyAliases = []string{"openai-video", "openai-videos"}
+	}
 	manifest.Metadata.ID = provider.ID
 	manifest.Metadata.Categories = provider.Capabilities
 	manifest.Metadata.Scopes = provider.Scopes
@@ -414,6 +419,9 @@ func (a manifestAdapter) AgentAvailable() bool {
 }
 func (a manifestAdapter) ResultAvailable() bool { return a.manifest.ResultOperation != nil }
 func (a manifestAdapter) BuildCreate(_ context.Context, c RequestContext) (RequestSpec, error) {
+	if a.manifest.Metadata.ID == "volcengine-ark-seedance" || a.manifest.Metadata.ID == "volcengine-ark-video" || a.manifest.Metadata.ID == "volcengine-ark-agent-plan-video" || a.manifest.Metadata.ID == "seedance-videos-compatible" {
+		c.Request = NormalizeSeedanceTaskOptions(c.Request)
+	}
 	if len(a.manifest.Contributes.Providers) == 0 {
 		return RequestSpec{}, fmt.Errorf("plugin %s does not provide a provider", a.manifest.Metadata.ID)
 	}
@@ -423,6 +431,13 @@ func (a manifestAdapter) BuildCreate(_ context.Context, c RequestContext) (Reque
 	spec, err := buildManifestOperation(a.manifest.Create, a.manifest.Auth, c.Request, "")
 	if err != nil {
 		return RequestSpec{}, err
+	}
+	if a.manifest.Metadata.ID == "volcengine-ark-seedance" || a.manifest.Metadata.ID == "volcengine-ark-video" || a.manifest.Metadata.ID == "volcengine-ark-agent-plan-video" || a.manifest.Metadata.ID == "seedance-videos-compatible" {
+		if kind := SeedanceOmniTaskType(c.Request); kind != "" {
+			if body, ok := spec.Body.(map[string]any); ok {
+				body["omni_reference_task_type"] = kind
+			}
+		}
 	}
 	// Some NewAPI-compatible gateways validate the prompt under input.content
 	// even though the historical channel-1 contract used input.prompt. Keep the
@@ -1103,6 +1118,7 @@ func manifestRequestValues(request GenerationRequest) map[string]any {
 		"quality":         request.Quality,
 		"generateAudio":   request.GenerateAudio,
 		"watermark":       request.Watermark,
+		"nativeFace":      request.NativeFace,
 		"operation":       request.Operation,
 		"output":          outputValue,
 		"providerOptions": request.ProviderOptions,

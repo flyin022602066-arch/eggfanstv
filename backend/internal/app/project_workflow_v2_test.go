@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -113,6 +115,15 @@ func TestRegisterTaskOutputFromTaskPersistsMediaAssetAndArtifactIdempotently(t *
 	if artifact.MetadataJSON != `{"model":"MiniMax-H3"}` {
 		t.Fatalf("artifact metadata = %q", artifact.MetadataJSON)
 	}
+}
+
+func workflowProjectRevision(t *testing.T, db *gorm.DB, projectID string) int64 {
+	t.Helper()
+	var item model.Project
+	if err := db.First(&item, "id = ?", projectID).Error; err != nil {
+		t.Fatal(err)
+	}
+	return item.Revision
 }
 
 func seedWorkflowProject(t *testing.T, db *gorm.DB) (model.Project, model.ProjectUnit) {
@@ -316,10 +327,14 @@ func TestReplaceProjectUnitShotsCreatesGeneratedAssetReferencesAtomically(t *tes
 		}
 	}
 
-	shots, err := service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{ExpectedShotIDs: []string{}, Shots: []ReplaceProjectUnitShotInput{{
-		CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "人物拾起信封", DurationMs: 3000, Revision: ShotRevisionInput{PlotDescription: "人物拾起信封"}},
-		AssetVersionIDs:          []string{version.ID, version.ID},
-	}}})
+	shots, err := service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: workflowProjectRevision(t, db, project.ID),
+		Shots: []ReplaceProjectUnitShotInput{{
+			CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "人物拾起信封", DurationMs: 3000, Revision: ShotRevisionInput{PlotDescription: "人物拾起信封"}},
+			AssetVersionIDs:          []string{version.ID, version.ID},
+		}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,17 +348,22 @@ func TestReplaceProjectUnitShotsCreatesGeneratedAssetReferencesAtomically(t *tes
 	if len(references) != 1 || references[0].AssetVersionID != version.ID || references[0].Role != "reference" {
 		t.Fatalf("references = %+v, want one generated reference", references)
 	}
-	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{ExpectedShotIDs: []string{"stale-shot-id"}, Shots: []ReplaceProjectUnitShotInput{{
-		CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "并发替换", DurationMs: 3000},
-	}}})
+	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{"stale-shot-id"},
+		ExpectedRevision: workflowProjectRevision(t, db, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "并发替换", DurationMs: 3000}}},
+	})
 	if err == nil || err.Error() != "本章分镜已发生变化，请刷新后重新确认" {
 		t.Fatalf("concurrent replacement error = %v", err)
 	}
 
-	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{Shots: []ReplaceProjectUnitShotInput{{
-		CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "无效资产", DurationMs: 3000},
-		AssetVersionIDs:          []string{"missing-version"},
-	}}})
+	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedRevision: workflowProjectRevision(t, db, project.ID),
+		Shots: []ReplaceProjectUnitShotInput{{
+			CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "无效资产", DurationMs: 3000},
+			AssetVersionIDs:          []string{"missing-version"},
+		}},
+	})
 	if err == nil {
 		t.Fatal("missing project asset version should reject replacement")
 	}
@@ -353,6 +373,52 @@ func TestReplaceProjectUnitShotsCreatesGeneratedAssetReferencesAtomically(t *tes
 	}
 	if storedShots != 1 {
 		t.Fatalf("stored shots = %d, want original replacement preserved", storedShots)
+	}
+}
+
+func TestReplaceProjectUnitShotsPreservesSevenAssetsInThirtySecondReplacement(t *testing.T) {
+	service, db := newProjectWorkflowV2TestService(t)
+	project, unit := seedWorkflowProject(t, db)
+	oldShot, err := service.CreateProjectShot("user-1", project.ID, CreateProjectShotRequest{UnitID: unit.ID, Title: "旧镜头", Description: "五秒旧分镜", DurationMs: 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	versionIDs := make([]string, 0, 7)
+	for index := 0; index < 7; index++ {
+		assetID := fmt.Sprintf("asset-%d", index)
+		versionID := fmt.Sprintf("version-%d", index)
+		asset := model.Asset{ID: assetID, UserID: "user-1", Kind: "image", Category: model.AssetCategory("prop"), Status: model.AssetVersionStatus("ready"), PrimaryVersionID: versionID, Title: assetID, CreatedAt: now, UpdatedAt: now}
+		version := model.AssetVersion{ID: versionID, AssetID: assetID, Version: 1, Status: model.AssetVersionStatus("ready"), CreatedAt: now, UpdatedAt: now}
+		link := model.ProjectAssetLink{ID: fmt.Sprintf("link-%d", index), ProjectID: project.ID, AssetID: assetID, CreatedAt: now}
+		for _, item := range []any{&asset, &version, &link} {
+			if err := db.Create(item).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		versionIDs = append(versionIDs, versionID)
+	}
+	request := ReplaceProjectUnitShotsRequest{ExpectedShotIDs: []string{oldShot.ID}, Shots: []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "新镜头", Description: "完整三十秒分镜", DurationMs: 30000}, AssetVersionIDs: versionIDs}}}
+	shots, err := service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shots) != 1 || shots[0].DurationMs != 30000 || shots[0].ID == oldShot.ID {
+		t.Fatalf("replacement shots = %+v", shots)
+	}
+	var storedShots []model.Shot
+	if err := db.Where("project_id = ? AND unit_id = ?", project.ID, unit.ID).Find(&storedShots).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(storedShots) != 1 || storedShots[0].ID != shots[0].ID {
+		t.Fatalf("old shot was not replaced: %+v", storedShots)
+	}
+	var references []model.ShotAssetReference
+	if err := db.Where("shot_id = ?", shots[0].ID).Find(&references).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(references) != 7 {
+		t.Fatalf("asset references = %d, want 7", len(references))
 	}
 }
 
@@ -575,5 +641,150 @@ func TestRegisterTaskOutputAcceptsLinkedCanvasAndCreatesShotArtifact(t *testing.
 	}
 	if storedArtifact.Type != "storyboard" || storedArtifact.Status != "ready" || !storedArtifact.Selected {
 		t.Fatalf("unexpected shot artifact: %+v", storedArtifact)
+	}
+}
+
+func TestChapterStoryboardOutputRegistrationDoesNotInvalidateApprovedRevision(t *testing.T) {
+	service, db := newProjectWorkflowV2TestService(t)
+	if err := db.AutoMigrate(&model.ProjectAssetFolder{}, &model.CanvasUnitLink{}); err != nil {
+		t.Fatal(err)
+	}
+	project, unit := seedWorkflowProject(t, db)
+	created, err := service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: workflowProjectRevision(t, db, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "批准时的画面", DurationMs: 3000}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvedRevision := workflowProjectRevision(t, db, project.ID)
+	approvedShotIDs := []string{created[0].ID}
+	now := time.Now()
+	input, err := json.Marshal(map[string]any{
+		"mode": "text",
+		"metadata": map[string]any{
+			"domainProjectId":  project.ID,
+			"chapterId":        unit.ID,
+			"source":           "short-drama-chapter-storyboard",
+			"approvedRevision": approvedRevision,
+			"approvedShotIds":  approvedShotIDs,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "chapter-storyboard-1", UserID: "user-1", ProjectID: project.ID, Type: "canvas_text", Operation: "storyboard",
+		Status: model.TaskStatusSucceeded, Prompt: "章节分镜", InputJSON: string(input),
+		ResultJSON: `{"mode":"text","text":"镜头表"}`, CreatedAt: now, UpdatedAt: now, CompletedAt: &now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.RegisterTaskOutputFromTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if workflowProjectRevision(t, db, project.ID) != approvedRevision {
+		t.Fatalf("terminal RegisterTaskOutputFromTask bumped revision to %d, want approved %d", workflowProjectRevision(t, db, project.ID), approvedRevision)
+	}
+
+	repairTasks, err := service.repo.SuccessfulWorkflowTasksForProject("user-1", project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repairTasks) != 1 || repairTasks[0].ID != task.ID {
+		t.Fatalf("repair tasks = %+v, want the chapter storyboard task", repairTasks)
+	}
+	for _, repairTask := range repairTasks {
+		if err := service.RegisterTaskOutputFromTask(repairTask); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := service.ProjectDetail("user-1", project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if workflowProjectRevision(t, db, project.ID) != approvedRevision {
+		t.Fatalf("ProjectDetail repair bumped revision to %d, want approved %d", workflowProjectRevision(t, db, project.ID), approvedRevision)
+	}
+
+	replaced, err := service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  approvedShotIDs,
+		ExpectedRevision: approvedRevision,
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "按原批准快照恢复", DurationMs: 3000}}},
+	})
+	if err != nil {
+		t.Fatalf("approved snapshot after this task's output registration = %v", err)
+	}
+	if len(replaced) != 1 || replaced[0].Description != "按原批准快照恢复" {
+		t.Fatalf("replaced = %+v, want recovered storyboard row", replaced)
+	}
+}
+
+func TestChapterStoryboardApprovedRevisionConflictsAfterInPlaceShotEdit(t *testing.T) {
+	service, db := newProjectWorkflowV2TestService(t)
+	project, unit := seedWorkflowProject(t, db)
+	created, err := service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: workflowProjectRevision(t, db, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "批准时的画面", DurationMs: 3000}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvedRevision := workflowProjectRevision(t, db, project.ID)
+	now := time.Now()
+	input, err := json.Marshal(map[string]any{
+		"mode": "text",
+		"metadata": map[string]any{
+			"domainProjectId":  project.ID,
+			"chapterId":        unit.ID,
+			"source":           "short-drama-chapter-storyboard",
+			"approvedRevision": approvedRevision,
+			"approvedShotIds":  []string{created[0].ID},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "chapter-storyboard-2", UserID: "user-1", ProjectID: project.ID, Type: "canvas_text", Operation: "storyboard",
+		Status: model.TaskStatusSucceeded, Prompt: "章节分镜", InputJSON: string(input),
+		ResultJSON: `{"mode":"text","text":"镜头表"}`, CreatedAt: now, UpdatedAt: now, CompletedAt: &now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.CreateShotRevision("user-1", project.ID, created[0].ID, ShotRevisionInput{PlotDescription: "镜头已改内容", DurationMs: 3200}); err != nil {
+		t.Fatal(err)
+	}
+	afterEdit := workflowProjectRevision(t, db, project.ID)
+	if afterEdit <= approvedRevision {
+		t.Fatal("in-place edit should bump project revision")
+	}
+	if err := service.RegisterTaskOutputFromTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if workflowProjectRevision(t, db, project.ID) != afterEdit {
+		t.Fatalf("chapter storyboard output registration changed revision from %d to %d", afterEdit, workflowProjectRevision(t, db, project.ID))
+	}
+	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{created[0].ID},
+		ExpectedRevision: approvedRevision,
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.99", Description: "恢复写入会覆盖改稿", DurationMs: 3000}}},
+	})
+	if err == nil {
+		t.Fatal("original approved revision replaced in-place same-id edits")
+	}
+	if err.Error() != "项目已被其他操作更新，请重新加载后再保存" && err.Error() != "本章分镜已发生变化，请刷新后重新确认" {
+		t.Fatalf("stale approved snapshot = %v", err)
+	}
+	var stored model.Shot
+	if err := db.First(&stored, "id = ?", created[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Description != "镜头已改内容" {
+		t.Fatalf("description = %q, want 镜头已改内容", stored.Description)
 	}
 }

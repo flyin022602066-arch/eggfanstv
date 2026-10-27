@@ -1,3 +1,5 @@
+import { isSunoModel, sunoSettingsSummary } from "@/lib/suno-generation";
+
 export const audioVoiceOptions = [
     { value: "alloy", label: "Alloy" },
     { value: "ash", label: "Ash" },
@@ -206,6 +208,7 @@ export function resolveAudioSpeechSettings(
         audioPitch?: string;
         audioVolume?: string;
         audioInstructions?: string;
+        audioSunoParams?: string;
     },
 ) {
     const profile = audioSpeechProfile(model);
@@ -216,11 +219,15 @@ export function resolveAudioSpeechSettings(
         audioPitch: profile.showPitch ? normalizeAudioPitchValue(values.audioPitch || "") : "0",
         audioVolume: profile.showVolume ? normalizeAudioVolumeValue(values.audioVolume || "") : "1",
         audioInstructions: profile.showInstructions ? String(values.audioInstructions || "") : "",
+        audioSunoParams: values.audioSunoParams || "",
     };
 }
 
-export function audioSettingsSummary(config: { model?: string; audioVoice?: string; audioFormat?: string; audioSpeed?: string; audioPitch?: string; audioVolume?: string }) {
+export function audioSettingsSummary(config: { model?: string; audioVoice?: string; audioFormat?: string; audioSpeed?: string; audioPitch?: string; audioVolume?: string; audioSunoParams?: string }) {
     const model = config.model || "";
+    if (isSunoModel(model)) {
+        try { return sunoSettingsSummary(config); } catch { return "Suno 参数待修正"; }
+    }
     const profile = audioSpeechProfile(model);
     const parts: string[] = [];
     if (profile.showVoice) parts.push(audioVoiceLabel(config.audioVoice || "", model));
@@ -242,6 +249,7 @@ export function buildAudioSpeechRequest(
     prompt: string,
 ) {
     const model = config.model.trim();
+    if (isSunoModel(model)) throw new Error("Suno 音乐需通过音乐任务提交，不能使用语音合成接口");
     const profile = audioSpeechProfile(model);
     const settings = resolveAudioSpeechSettings(model, config);
     const payload: Record<string, unknown> = {

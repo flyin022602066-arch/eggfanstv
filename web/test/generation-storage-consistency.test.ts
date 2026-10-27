@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race";
+type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race" | "generation-commit-queue-race" | "generation-commit-queue-race-corrupted" | "copied-video-save";
 type ScenarioResponse<T> = { ok: true; result: T } | { ok: false; error: string };
 
 function runScenario<T>(scenario: Scenario): Promise<T> {
@@ -21,6 +21,15 @@ function runScenario<T>(scenario: Scenario): Promise<T> {
         worker.postMessage(scenario);
     });
 }
+
+test("a copied successful video survives ordinary persistence and a subsequent generation commit", async () => {
+    const result = await runScenario<{ copiedIds: string[]; completedIds: string[]; content: string; sourceKeys: string[]; copyKeys: string[] }>("copied-video-save");
+    expect(result.copiedIds).toEqual(["source", "copy"]);
+    expect(result.completedIds).toEqual(["source", "copy"]);
+    expect(result.content).toBe("video-720p");
+    expect(result.sourceKeys).toEqual(["attach-node:old-task:source:0"]);
+    expect(result.copyKeys).toEqual(["attach-node:new-task:copy:0"]);
+});
 
 test("generation image cleanup removes unused generation-image blobs and preserves referenced ones", async () => {
     const result = await runScenario<{ usedPresent: boolean; unusedPresent: boolean }>("image-cleanup");
@@ -49,4 +58,25 @@ test("generation video and audio materialization cannot race cleanup into a cata
         expect(result.blobPresent).toBe(true);
         expect(result.generationAssetCount).toBe(1);
     }
+});
+
+test("a stale ordinary save queued during the generation commit cannot strip the committed node content", async () => {
+    const result = await runScenario<{ injectedStaleSnapshot: boolean; durableContent: string | null; durableStatus: string | null; durableKeys: number; liveContent: string | null; liveStatus: string | null }>("generation-commit-queue-race");
+    expect(result.injectedStaleSnapshot).toBe(true);
+    // 回归：修复前 durable/live 上留下的是「已确认 effect stamp + 空内容 + loading」的节点，
+    // 之后所有幂等守护都会把它当作已应用而跳过修复，节点永久停在生成中。
+    expect(result.durableKeys).toBe(1);
+    expect(result.durableContent).toBe("真人写实版提示词");
+    expect(result.durableStatus).toBe("success");
+    expect(result.liveContent).toBe("真人写实版提示词");
+    expect(result.liveStatus).toBe("success");
+});
+
+test("replaying the task result heals a node already corrupted with a confirmed stamp and empty content", async () => {
+    const result = await runScenario<{ injectedStaleSnapshot: boolean; durableContent: string | null; durableStatus: string | null; durableKeys: number; liveContent: string | null }>("generation-commit-queue-race-corrupted");
+    expect(result.injectedStaleSnapshot).toBe(true);
+    expect(result.durableKeys).toBe(1);
+    expect(result.durableContent).toBe("真人写实版提示词");
+    expect(result.durableStatus).toBe("success");
+    expect(result.liveContent).toBe("真人写实版提示词");
 });

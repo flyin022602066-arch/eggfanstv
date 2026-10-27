@@ -87,6 +87,9 @@ const (
 	// ChannelInterfaceArkTaskGatewayVideo25 是同一网关上的豆包 Seedance 2.5 专用协议：
 	// 创建请求用顶层 prompt（不是 content[]），任务状态查询走 GET /v1/videos/{task_id}。
 	ChannelInterfaceArkTaskGatewayVideo25 ChannelInterfaceType = "ark-task-gateway-video-25"
+	ChannelInterfaceEggfansSeedanceVideo  ChannelInterfaceType = "eggfans-seedance-video"
+	ChannelInterfaceMintsSeedanceVideo    ChannelInterfaceType = "mints-seedance-video"
+	ChannelInterfaceEggfansVolcVideo      ChannelInterfaceType = "eggfans-volc-video"
 
 	ApiCallStatusSucceeded ApiCallStatus = "succeeded"
 	ApiCallStatusFailed    ApiCallStatus = "failed"

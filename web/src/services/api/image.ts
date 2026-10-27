@@ -6,6 +6,7 @@ import type { ReferenceImage } from "@/types/image";
 import { withOpenAIPromptCacheKey } from "@/lib/openai-prompt-cache";
 import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
 import { buildGeminiImageGenerationConfig, parseGeminiImageDataUrl, type GeminiImageGenerationConfig } from "@/lib/gemini-image";
+import { geminiNanoBananaThinkingLevel } from "@/lib/gemini-nano-banana";
 import { isVolcengineArkImageProtocol } from "@/lib/model-protocols";
 import { aiApiUrl, aiHeaders, imageChannelTransport, postChannelJSON, postGeminiJSON, postVolcengineArkImage } from "@/services/api/image-transport";
 
@@ -21,6 +22,22 @@ export type { AiTextContentPart, AiTextMessage, ResponseFunctionTool, ResponseIn
 function withSystemPrompt(config: AiConfig, prompt: string) {
     const systemPrompt = config.systemPrompt.trim();
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
+}
+
+function isEggfansGPTImage(config: Pick<AiConfig, "baseUrl" | "model"> & { interfaceType?: string }) {
+    if (config.interfaceType === "openai-image" && /^gpt-image-2(?:\.5)?(?:-|$)/i.test(config.model.trim())) {
+        try {
+            const url = new URL(config.baseUrl.trim());
+            return ["http:", "https:"].includes(url.protocol) && ["api.eggfans.com", "api.eggfans.org"].includes(url.hostname.toLowerCase());
+        } catch {
+            return false;
+        }
+    }
+    return false;
+}
+
+function imageGenerationFormatParameter(config: Pick<AiConfig, "baseUrl" | "model"> & { interfaceType?: string }) {
+    return isEggfansGPTImage(config) ? "format" : "output_format";
 }
 
 function isToolChoiceCompatibilityError(error: unknown) {
@@ -64,7 +81,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const n = Number(normalizedImage.count);
     if (requestConfig.interfaceType === "gemini-image") {
         try {
-            return await requestGeminiImages(requestConfig, prompt, [], n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality), options);
+            return await requestGeminiImages(requestConfig, prompt, [], n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality, geminiNanoBananaThinkingLevel(requestConfig.model, config.imageThinkingLevel)), options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -111,10 +128,11 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                   model: requestConfig.model,
                   prompt: withSystemPrompt(requestConfig, prompt),
                   n,
+                  ...(isEggfansGPTImage(requestConfig) ? { moderation: "low" } : {}),
                   ...(quality ? { quality } : {}),
                   ...(requestSize ? { [requestSize.parameter]: requestSize.value } : {}),
                   ...(imageProfile.responseFormat.supported ? { response_format: "b64_json" } : {}),
-                  ...(imageProfile.outputFormat.supported ? { output_format: IMAGE_OUTPUT_FORMAT } : {}),
+                  ...(imageProfile.outputFormat.supported ? { [imageGenerationFormatParameter(requestConfig)]: IMAGE_OUTPUT_FORMAT } : {}),
                   ...(imageProfile.transparentBackground.supported && normalizedImage.transparentBackground === "true" ? { background: "transparent" } : {}),
               };
         const responseData = isVolcengineArk ? await postVolcengineArkImage(requestConfig, payload, options) : await postChannelJSON<ImageApiResponse>(requestConfig, aiApiUrl(requestConfig, "/images/generations"), payload, options);
@@ -142,7 +160,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (requestConfig.interfaceType === "gemini-image") {
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
-            return await requestGeminiImages(requestConfig, requestPrompt, references, n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality), options);
+            return await requestGeminiImages(requestConfig, requestPrompt, references, n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality, geminiNanoBananaThinkingLevel(requestConfig.model, config.imageThinkingLevel)), options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -206,6 +224,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
     formData.set("n", String(n));
+    if (isEggfansGPTImage(requestConfig)) formData.set("moderation", "low");
     if (imageProfile.responseFormat.supported) formData.set("response_format", "b64_json");
     if (imageProfile.outputFormat.supported) formData.set("output_format", IMAGE_OUTPUT_FORMAT);
     if (imageProfile.transparentBackground.supported && normalizedImage.transparentBackground === "true") {

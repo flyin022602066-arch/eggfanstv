@@ -59,6 +59,12 @@ func authorizeCustomRelay(method string, target *url.URL, apiFormat string, cont
 	if apiFormat != "openai" && apiFormat != "gemini" && apiFormat != "claude" {
 		return errors.New("自定义渠道调用格式无效")
 	}
+	if strings.Contains(strings.ToLower(requestPath), "/suno/") || strings.EqualFold(requestPath, "/suno") {
+		if target.EscapedPath() != requestPath {
+			return errors.New("Suno 自定义渠道请求路径无效")
+		}
+		return authorizeSunoRelay(method, requestPath, apiFormat, contentType, query)
+	}
 	if method == http.MethodGet {
 		if apiFormat == "openai" && requestPath == "/agnesapi" {
 			if len(query) == 2 && len(query["video_id"]) == 1 && len(query["model_name"]) == 1 && strings.TrimSpace(query.Get("video_id")) != "" && strings.TrimSpace(query.Get("model_name")) != "" {
