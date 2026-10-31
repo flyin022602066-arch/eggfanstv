@@ -1,0 +1,6 @@
+[
+  { "directory": "master-camera-blocking", "displayName": "大师级摄影机位与镜头设计", "tag": "drama" },
+  { "directory": "master-camera-movement", "displayName": "电影级运镜与场面调度", "tag": "drama" },
+  { "directory": "cinematic-lighting", "displayName": "电影光影设计与精细布光", "tag": "drama" },
+  { "directory": "cinematography-continuity", "displayName": "摄影色彩与画面连续性质检", "tag": "drama" }
+]

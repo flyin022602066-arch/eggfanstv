@@ -73,8 +73,8 @@ func TestBuiltinSkillSeedContainsAllSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(definitions) != 34 {
-		t.Fatalf("builtin skill count = %d, want 34", len(definitions))
+	if len(definitions) != 39 {
+		t.Fatalf("builtin skill count = %d, want 39", len(definitions))
 	}
 	seen := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {

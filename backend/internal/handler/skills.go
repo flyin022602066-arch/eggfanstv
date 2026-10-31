@@ -94,7 +94,7 @@ func registerSkillRoutes(r *gin.RouterGroup, svc *app.Service, includeRemote boo
 		}
 		result, err := svc.Skills(user.ID, app.SkillListRequest{
 			Page: page, PageSize: pageSize, Scope: c.DefaultQuery("scope", "public"),
-			Search: c.Query("search"), Tag: c.Query("tag"), Sort: c.DefaultQuery("sort", "popular"),
+			Search: c.Query("search"), Tag: c.Query("tag"), Sort: c.DefaultQuery("sort", "new"),
 		})
 		if err != nil {
 			failService(c, err)

@@ -1,4 +1,6 @@
-import type { Skill, SkillCategory } from "@/services/api/skills";
+import type { Skill, SkillCategory, SkillSort } from "@/services/api/skills";
+
+export const defaultSkillSort: SkillSort = "new";
 
 export const fallbackSkillCategories: SkillCategory[] = [
     { value: "drama", label: "短剧影视" },

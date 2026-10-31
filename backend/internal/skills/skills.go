@@ -384,7 +384,7 @@ func normalizeSkillListRequest(req SkillListRequest) SkillListRequest {
 	switch req.Sort {
 	case "popular", "new", "updated":
 	default:
-		req.Sort = "popular"
+		req.Sort = "new"
 	}
 	req.Search = strings.TrimSpace(req.Search)
 	req.Tag = strings.TrimSpace(req.Tag)

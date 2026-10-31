@@ -116,13 +116,18 @@ func builtinSkillDefinitions() ([]builtinSkillDefinition, error) {
 	if err := json.Unmarshal(builtinSkillsJSON, &definitions); err != nil {
 		return nil, fmt.Errorf("解析内置技能失败: %w", err)
 	}
-	return append(definitions, builtinSkillDefinition{
+	definitions = append(definitions, builtinSkillDefinition{
 		SkillID: NovelScreenplaySkillID, SkillName: "小说拆解剧本",
 		Description: "将小说改编为短剧文学剧本，支持原著诊断、人物与结构、分集大纲、正式剧本和连续性检查；正式剧本按集以固定格式保存到画布文本节点。",
 		Instruction: novelScreenplayInstruction, Status: skillStatusEnabled, Source: 3, Tag: "drama", SortWeight: 1100,
 		CreateTime: 1792368000000, UpdateTime: 1792368000000,
 		OwnerUID: "eggfans-builtin", EffectiveUser: seedEffectiveUser{Name: "Eggfans TV", UID: "eggfans-builtin"},
-	}), nil
+	})
+	storyboardDefinitions, err := storyboard30SkillDefinitions()
+	if err != nil {
+		return nil, err
+	}
+	return append(definitions, storyboardDefinitions...), nil
 }
 
 func (s *Service) EnsureBuiltinSkillsAdded(userID string) error {

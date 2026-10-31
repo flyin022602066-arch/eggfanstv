@@ -10,7 +10,7 @@ import { useSearchParams } from "react-router";
 import { PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceState } from "@/components/layout/workspace-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { fallbackSkillCategories, formatSkillCount, groupSkills, skillCategoryLabel } from "@/pages/skills/skill-catalog";
+import { defaultSkillSort, fallbackSkillCategories, formatSkillCount, groupSkills, skillCategoryLabel } from "@/pages/skills/skill-catalog";
 import { SkillDetailModal } from "@/pages/skills/skill-detail-drawer";
 import { SkillEditorDrawer } from "@/pages/skills/skill-editor-drawer";
 import { SkillInstallModal } from "@/pages/skills/skill-install-modal";
@@ -43,7 +43,7 @@ export default function SkillsPage() {
     const { message, modal } = App.useApp();
     const [searchParams, setSearchParams] = useSearchParams();
     const [scope, setScope] = useState<SkillScope>("public");
-    const [sort, setSort] = useState<SkillSort>("popular");
+    const [sort, setSort] = useState<SkillSort>(defaultSkillSort);
     const [search, setSearch] = useState("");
     const debouncedSearch = useDebouncedValue(search, 250);
     const [tag, setTag] = useState("all");
@@ -111,8 +111,8 @@ export default function SkillsPage() {
     }, [debouncedSearch, page, pageSize, reloadKey, scope, sort, tag]);
 
     const groupedSkills = useMemo(() => groupSkills(skills, categories), [categories, skills]);
-    const filtersActive = Boolean(search || tag !== "all" || sort !== "popular");
-    const resetFilters = useCallback(() => { setSearch(""); setTag("all"); setSort("popular"); setPage(1); }, []);
+    const filtersActive = Boolean(search || tag !== "all" || sort !== defaultSkillSort);
+    const resetFilters = useCallback(() => { setSearch(""); setTag("all"); setSort(defaultSkillSort); setPage(1); }, []);
 
     const openSkill = async (skill: Skill) => {
         setActiveSkill(skill);
@@ -288,7 +288,7 @@ export default function SkillsPage() {
                         title={filtersActive ? "没有找到匹配技能" : scope === "created" ? "还没有创建技能" : scope === "public" ? "技能广场还是空的" : "这里还没有技能"}
                         description={filtersActive ? "换个关键词或分类试试。" : scope === "favorites" ? "收藏的公开技能会显示在这里。" : scope === "mine" ? "从技能广场加入后会显示在这里。" : "创建并公开第一个技能，其他用户就能直接加入使用。"}
                         action={filtersActive
-                            ? <Button onClick={() => { setSearch(""); setTag("all"); setSort("popular"); setPage(1); }}>清除筛选</Button>
+                            ? <Button onClick={resetFilters}>清除筛选</Button>
                             : (scope === "created" || scope === "public")
                               ? <Button type="primary" icon={<Plus className="size-4" />} onClick={() => setInstallOpen(true)}>安装技能</Button>
                               : undefined}
