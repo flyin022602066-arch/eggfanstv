@@ -14,7 +14,7 @@ require (
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sync v0.24.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.49.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2
 )
