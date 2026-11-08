@@ -263,6 +263,9 @@ func TaskInputUsesCustomChannel(input map[string]any) bool {
 	baseURL, _ := config["baseUrl"].(string)
 	apiKey, _ := config["apiKey"].(string)
 	credentialRef, _ := config["credentialRef"].(string)
+	if admissionString(config["interfaceType"]) == "hanbao-video" && strings.TrimSpace(channelID) == "" {
+		return true
+	}
 	if strings.EqualFold(strings.TrimSpace(credentialRef), beefapi.CredentialRef) || strings.TrimSpace(channelID) == beefapi.ChannelID {
 		return strings.TrimSpace(baseURL) != "" && strings.TrimSpace(apiKey) != ""
 	}
@@ -309,6 +312,9 @@ func HasExecutableVideoConfig(input map[string]any) bool {
 		return false
 	}
 	interfaceType := admissionString(config["interfaceType"])
+	if interfaceType == "hanbao-video" {
+		return admissionString(config["channelId"]) == "" && isHanbaoModel(admissionString(config["model"]))
+	}
 	if IsWorkflowInterfaceType(interfaceType) {
 		if admissionString(config["workflowId"]) == "" && admissionString(config["webappId"]) == "" && admissionString(config["model"]) == "" {
 			return false

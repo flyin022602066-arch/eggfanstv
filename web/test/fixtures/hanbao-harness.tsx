@@ -1,0 +1,14 @@
+import { createRoot } from "react-dom/client";
+import { App, ConfigProvider } from "antd";
+import { MemoryRouter } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ChannelSettingsPane } from "@/pages/settings/channel-settings-pane";
+import { getAntThemeConfig } from "@/lib/app-theme";
+import { setActiveUserScope } from "@/lib/user-scope";
+import { normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
+setActiveUserScope("hanbao-offline-browser");
+const config = normalizeConfigSnapshot().config;
+useConfigStore.setState({ config: { ...config, channels: config.channels.filter((channel) => channel.id === "hanbao") } });
+const dark = new URLSearchParams(location.search).get("theme") === "dark";
+document.documentElement.classList.toggle("dark", dark);
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={new QueryClient()}><ConfigProvider theme={getAntThemeConfig(dark)}><App><MemoryRouter><main className="p-4"><ChannelSettingsPane /></main></MemoryRouter></App></ConfigProvider></QueryClientProvider>);

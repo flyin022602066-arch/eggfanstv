@@ -66,10 +66,12 @@ export function HanbaoAccountManager({ onClose }: { onClose: () => void }) {
             if (smsBusy || polling.current) return;
             polling.current = true;
             try {
+                const updates: HanbaoOrder[] = [];
                 for (const order of orders.filter((item) => item.status === 1)) {
                     const updated = await hanbaoSMS<HanbaoOrder>("message", { orderId: order.order_id }, controller.signal);
-                    if (!controller.signal.aborted) updateOrder(updated);
+                    updates.push(updated);
                 }
+                if (!controller.signal.aborted) setOrders((current) => current.map((order) => updates.find((item) => item.order_id === order.order_id) || order));
             } catch (e) {
                 if (!controller.signal.aborted) { setAutoPoll(false); setError(e instanceof Error ? e.message : "收码失败"); }
             } finally { polling.current = false; }
@@ -141,7 +143,7 @@ export function HanbaoAccountManager({ onClose }: { onClose: () => void }) {
                     {projects.length ? <Select className="w-full" aria-label="豆包接码项目" placeholder="选择项目后点击保存接码设置" value={settings.feihu.projectId || undefined} onChange={(value) => smsField("projectId", value)} options={projects.map((item) => ({ value: String(item.project_id), label: `${item.name} · ${item.project_id} · ${item.price} 元`, disabled: item.status !== 2 }))} /> : null}
                     <div className="border-t border-border pt-4">
                         <h3 className="mb-2 font-medium">为憨包账号取号</h3>
-                        <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="grid items-end gap-3 sm:grid-cols-3">
                             {input("接码所属憨包标签", "smsAccount", account, setAccount)}
                             <Select aria-label="运营商" placeholder="不限运营商" allowClear value={filters.isp || undefined} onChange={(value) => filterField("isp", value)} options={["不限", "移动", "联通", "电信", "广电", "虚商", "仅香港"].map((label, index) => ({ label, value: index === 6 ? "hk" : String(index) }))} />
                             <Select aria-label="省份" placeholder="不限省份" allowClear value={filters.province || undefined} onChange={(value) => filterField("province", value)} options={provinces.map((label, index) => ({ label, value: String(index + 1) }))} />
@@ -149,7 +151,7 @@ export function HanbaoAccountManager({ onClose }: { onClose: () => void }) {
                             {input("包含号段（| 分隔）", "include", filters.include || "", (value) => filterField("include", value))}
                             {input("排除号段（| 分隔）", "exclude", filters.exclude || "", (value) => filterField("exclude", value))}
                         </div>
-                        <Collapse className="my-3" items={[{ key: "more", label: "更多取号筛选", children: <div className="grid gap-3 sm:grid-cols-2">
+                        <Collapse className="my-3" items={[{ key: "more", label: "更多取号筛选", children: <div className="grid items-end gap-3 sm:grid-cols-2">
                             {input("指定手机号", "phone", filters.phone || "", (value) => filterField("phone", value))}
                             {input("号码作者（可选）", "author", filters.author || "", (value) => filterField("author", value))}
                             <Select aria-label="取号模式" placeholder="平台默认模式" allowClear value={filters.mode || undefined} onChange={(value) => filterField("mode", value)} options={[{ value: "1", label: "平台号码" }, { value: "2", label: "对接码" }, { value: "3", label: "优先对接码" }]} />

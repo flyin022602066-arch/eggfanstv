@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Native Windows amd64 release entrypoint for the Eggfans TV Wails desktop app.
@@ -516,6 +516,17 @@ if ([string]::IsNullOrWhiteSpace($env:BEEFTV_NODE_RUNTIME)) {
 }
 Invoke-NativeExecutable -FilePath $bunPath -ArgumentList @((Join-Path $repoRoot "scripts\package-agent-host.mjs"), "windows/amd64", (Join-Path $binDir "agent-host")) -FailureMessage "Agent host packaging failed" | Out-Null
 
+# Bundle the pinned Hanbao runtime and its public contracts, never account data.
+$hanbaoSource = Join-Path $repoRoot "tools\hanbao"
+$hanbaoRuntime = Join-Path $hanbaoSource "doubao.exe"
+if (!(Test-Path -LiteralPath $hanbaoRuntime) -or (Get-FileHash -LiteralPath $hanbaoRuntime -Algorithm SHA256).Hash.ToLowerInvariant() -ne "1e548f69030af8790d20a0fcd42ec2207a3e35b15ecb4c70021f4e24aad72866") {
+    throw "Hanbao runtime is missing or its SHA-256 differs from the supplied integration package"
+}
+$hanbaoTarget = Join-Path $binDir "tools\hanbao"
+New-Item -ItemType Directory -Force -Path $hanbaoTarget | Out-Null
+foreach ($name in @("doubao.exe", "capabilities.json", "参数清单.json", "网页协议参数.json", "文件校验清单.json", "README.md")) {
+    Copy-Item -LiteralPath (Join-Path $hanbaoSource $name) -Destination (Join-Path $hanbaoTarget $name) -Force
+}
 # Keep media inside the sidecar tree accepted by already released updaters.
 & (Join-Path $repoRoot "scripts\package-media-runtime-windows.ps1") -Destination (Join-Path $binDir "agent-host\media-runtime")
 

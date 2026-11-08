@@ -27,6 +27,8 @@ RUNTIME_FILES = (
     'agent-host/server.mjs',
     'agent-host/runtime/node.exe',
     'cli/beeftv.exe',
+    'tools/hanbao/doubao.exe',
+    'tools/hanbao/capabilities.json',
 )
 SKILL_PACKAGES = json.loads(Path(__file__).with_name('bundled-skill-packages.json').read_text(encoding='utf-8'))
 SKILL_FILES = tuple('skill-packages/' + name + '.zip' for name in SKILL_PACKAGES)
@@ -53,6 +55,9 @@ class EggfansWindowsPackagingTests(unittest.TestCase):
             'cli/beeftv.exe': b'MZ fixture cli',
             'cli/support/runtime.dll': b'fixture cli dependency',
         }
+        hanbao = Path(__file__).resolve().parents[1] / 'tools' / 'hanbao'
+        for name in ('doubao.exe', 'capabilities.json', '参数清单.json', '网页协议参数.json', '文件校验清单.json', 'README.md'):
+            self.runtime_files['tools/hanbao/' + name] = (hanbao / name).read_bytes()
         for name, reference in SKILL_PACKAGES.items():
             content = io.BytesIO()
             with zipfile.ZipFile(content, 'w', zipfile.ZIP_DEFLATED) as archive:
@@ -155,6 +160,17 @@ class EggfansWindowsPackagingTests(unittest.TestCase):
                 finally:
                     source.write_bytes(original)
                 self.assertFalse(destination.exists())
+
+    def test_portable_hanbao_whitelist_excludes_profiles_and_rejects_substituted_binary(self):
+        self.write(self.binary_root / 'tools/hanbao/doubao/accounts.json', b'private fixture')
+        self.write(self.binary_root / 'tools/hanbao/.settings-key', b'private fixture')
+        sources = {}
+        portable.collect_hanbao_runtime(sources, self.binary_root)
+        self.assertEqual(len(sources), 6)
+        self.assertNotIn('tools/hanbao/doubao/accounts.json', sources)
+        self.write(self.binary_root / 'tools/hanbao/doubao.exe', b'substituted binary')
+        with self.assertRaisesRegex(ValueError, 'SHA-256'):
+            portable.collect_hanbao_runtime({}, self.binary_root)
 
     def payload_manifest(self):
         payload = self.root / 'payload'

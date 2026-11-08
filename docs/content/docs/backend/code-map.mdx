@@ -22,6 +22,8 @@ Wails / local dev
 
 ## 主要目录
 
+憨包本地视频入口在 `generation/hanbao.go`，账号 CLI 与飞狐表单协议分别在 `provider/hanbao/cli.go`、`provider/hanbao/feihu.go`。`app/hanbao.go` 绑定当前工作区，`repository/local_video_receipt.go` 按任务租约原子保存完整任务号、实际账号及提交记录。HTTP 窄端口在 `handler/hanbao.go`，前端入口在 `pages/settings/hanbao-account-manager.tsx`；发布组件位于 `tools/hanbao`。
+
 章节分镜结果回填由 `web/src/pages/projects/detail/chapters.tsx` 协调；`chapter-storyboard-recovery-review.tsx` 在写入前展示资产重名核对，`chapter-storyboard-production.ts` 将确认结果转为镜头脚本。`web/src/lib/project-shot-asset-matching.ts` 默认拒绝歧义，核对模式仅接受用户从候选中明确选择的资产，不自动合并或删除同名资产。
 
 角色造型目录、标注、空图新造型、镜头选择与生成前核对位于 `backend/internal/project/character_reference.go`；原子选择事务在 `repository/character_reference.go`，v18 迁移在 `database/local_schema_character_looks.go`。前端 `lib/character-look-selection.ts` 负责候选与模型结果校验，`services/project-character-references.ts` 负责文本任务编排，角色造型管理和镜头右侧入口分别在 `project-character-looks-modal.tsx`、`workflow-character-references.tsx`；`workflow-shot-references.ts` 统一构建精确版本的图片、声音和提交快照。

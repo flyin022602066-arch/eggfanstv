@@ -13,7 +13,7 @@ from windows_utf8_manifest import enable_utf8_manifest
 PRIVATE_FILE_NAMES = {'.env', '.env.local', '.settings-key'}
 PRIVATE_FILE_SUFFIXES = {'.key', '.pem', '.p12', '.pfx'}
 BUNDLED_SKILL_FILES = tuple('skill-packages/' + name + '.zip' for name in json.loads(Path(__file__).with_name('bundled-skill-packages.json').read_text(encoding='utf-8')))
-REQUIRED_PAYLOAD_FILES = ('agent-host/server.mjs', 'agent-host/runtime/node.exe', 'cli/beeftv.exe') + BUNDLED_SKILL_FILES
+REQUIRED_PAYLOAD_FILES = ('agent-host/server.mjs', 'agent-host/runtime/node.exe', 'cli/beeftv.exe', 'tools/hanbao/doubao.exe', 'tools/hanbao/capabilities.json') + BUNDLED_SKILL_FILES
 
 
 def digest(path):
@@ -51,6 +51,8 @@ def main():
     if re.fullmatch(r'\d+\.\d+\.\d+', version) is None or manifest['platform'] != 'windows-amd64':
         raise ValueError('Expected a stable Windows amd64 release payload')
     validate_required_payload_files(manifest['files'])
+    if digest(source / 'tools/hanbao/doubao.exe') != '1e548f69030af8790d20a0fcd42ec2207a3e35b15ecb4c70021f4e24aad72866':
+        raise ValueError('Hanbao runtime SHA-256 mismatch')
     records = []
     for record in manifest['files']:
         relative = PurePosixPath(record['path'])

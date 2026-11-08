@@ -39,6 +39,19 @@ def collect_runtime_tree(sources, source_root):
             sources[name] = source
 
 
+def collect_hanbao_runtime(sources, source_root):
+    tree = source_root / 'tools' / 'hanbao'
+    runtime = tree / 'doubao.exe'
+    expected = '1e548f69030af8790d20a0fcd42ec2207a3e35b15ecb4c70021f4e24aad72866'
+    if not runtime.is_file() or digest(runtime) != expected:
+        raise ValueError('Hanbao runtime missing or SHA-256 mismatch: tools/hanbao/doubao.exe')
+    for name in ('doubao.exe', 'capabilities.json', '参数清单.json', '网页协议参数.json', '文件校验清单.json', 'README.md'):
+        source = tree / name
+        if not source.is_file() or source.stat().st_size == 0:
+            raise ValueError('Required Hanbao input missing: tools/hanbao/' + name)
+        sources['tools/hanbao/' + name] = source
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--executable', required=True, type=Path)
@@ -82,6 +95,7 @@ def main():
         if not source.is_file() or source.stat().st_size == 0:
             raise ValueError('Required release input missing: ' + name)
     collect_runtime_tree(sources, args.executable.parent)
+    collect_hanbao_runtime(sources, args.executable.parent)
     destination.mkdir(parents=True)
     for name, source in sources.items():
         target = destination / name
@@ -94,7 +108,7 @@ def main():
         'Eggfans TV ' + args.version + ' Windows 10/11 x64 完整便携版\r\n\r\n'
         '请完整解压到有写入权限的文件夹，然后双击 EggfansTV.exe。不要在压缩包内直接运行，也不要只复制一个 EXE。\r\n'
         f'程序、{len(plugin_ids)} 个协议插件、FFmpeg/FFprobe、本地 Whisper 语音识别引擎和多语言 base 模型均已包含。\r\n'
-        '保留 .local/tools 和 plugin-packages 文件夹。本包不含开发工具，不含个人 Key、画布、项目或素材。\r\n'
+        '保留 .local/tools、tools/hanbao 和 plugin-packages 文件夹。本包包含憨包账号组件，不含个人 Key、账号登录资料、画布、项目或素材。\r\n'
         '运行后配置和素材保存在本包 .local/EggfansTV 中；升级前备份此目录，不要删除。\r\n'
         '若本地语音识别提示缺少 MSVCP140、VCRUNTIME140 或 VCOMP140，请运行 prerequisites/VC_redist.x64.exe。\r\n'
         '界面需要 Microsoft WebView2 Runtime；未安装时软件会提示安装微软运行环境。\r\n'

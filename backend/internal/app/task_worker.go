@@ -351,12 +351,12 @@ func (s *Service) shouldDeferVideoProviderTask(task model.Task, decryptedInput s
 	}
 	var pendingErr providerStatePendingError
 	if errors.As(err, &pendingErr) {
-		deferSignal = strings.TrimSpace(pendingErr.TaskID) == providerRequestID && !newAPIChannel2TaskSyncExpired(task, err, time.Now())
+		deferSignal = strings.TrimSpace(pendingErr.TaskID) == providerRequestID && (resolved.InterfaceType == "hanbao-video" || !newAPIChannel2TaskSyncExpired(task, err, time.Now()))
 	}
 	if !deferSignal {
 		return false
 	}
-	return resolved.InterfaceType == string(model.ChannelInterfaceNewAPIChannel2) || isBeefAPIVideoConfig(context.Background(), resolved)
+	return resolved.InterfaceType == "hanbao-video" || resolved.InterfaceType == string(model.ChannelInterfaceNewAPIChannel2) || isBeefAPIVideoConfig(context.Background(), resolved)
 }
 
 func newAPIChannel2TaskSyncExpired(task model.Task, err error, now time.Time) bool {

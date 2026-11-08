@@ -11,6 +11,16 @@ import (
 // providers are handled by the caller. lookup may be nil when no channel is
 // selected; the function then validates against request-declared capability.
 func ValidateConfiguredTask(input TaskInput, lookup ChannelModelLookup) (TaskInput, error) {
+	if input.Config.InterfaceType == "hanbao-video" {
+		if input.Mode != "video" || input.Config.ChannelID != "" {
+			return input, kernel.BadAuthRequest("憨包只支持本地视频任务")
+		}
+		if !isHanbaoModel(input.Config.Model) {
+			return input, kernel.BadAuthRequest("憨包模型不在内置清单中")
+		}
+		profile := DefaultModelCapabilityConfigForModel("hanbao-video", input.Config.Model)
+		return input, validateVideoTask(profile.Video, input)
+	}
 	if input.Mode != "image" && input.Mode != "video" && input.Mode != "audio" {
 		return input, nil
 	}
@@ -69,6 +79,10 @@ func ValidateConfiguredTask(input TaskInput, lookup ChannelModelLookup) (TaskInp
 	}
 	applyFixedVideoResolution(&input, normalized.Video)
 	return input, validateVideoTask(normalized.Video, input)
+}
+
+func isHanbaoModel(name string) bool {
+	return name == "seedance_v2.5" || name == "seedance_v2.0_mini" || name == "seedance_v2.0"
 }
 
 func ValidateWorkflowProviderPromptLength(input TaskInput) error {

@@ -24,10 +24,100 @@ tags:
   - name: assets
   - name: admin
   - name: beefapi
+  - name: hanbao
   - name: agent-ops
   - name: assistant
   - name: creation-conversations
 paths:
+  /hanbao/status:
+    get:
+      tags: [hanbao]
+      summary: 读取憨包组件可用性及脱敏设置
+      description: 当前本地工作区专用；不会执行 CLI 或联系上游。data 包含 available、reason、settings；飞狐凭据只返回 hasApiKey/hasApiSecret 标记，apiKey/apiSecret 为空。
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '401': { description: 本地工作区未初始化 }
+        '503': { description: 本地服务未就绪 }
+  /hanbao/settings:
+    put:
+      tags: [hanbao]
+      summary: 保存憨包账号和加密的飞狐配置
+      description: 最大 16 KiB。飞狐密钥为空保留原值；等待短信订单会阻止更换凭据或项目；活动憨包任务阻止修改。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account, channel, canvasAttempts, versionCode, pcVersion, feihu]
+              properties:
+                account: { type: string }
+                channel: { type: string, enum: [auto, canvas, chat] }
+                canvasAttempts: { type: integer, minimum: 1, maximum: 3, default: 1 }
+                versionCode: { type: string, default: '20800' }
+                pcVersion: { type: string, default: '3.43.2' }
+                feihu:
+                  type: object
+                  properties:
+                    baseUrl: { type: string, default: 'https://my.feihu2026.com/api/sms' }
+                    apiKey: { type: string, writeOnly: true }
+                    apiSecret: { type: string, writeOnly: true }
+                    projectId: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 参数无效或待处理短信订单阻止修改 }
+        '409': { description: 憨包任务正在执行，reason 为 conflict }
+  /hanbao/accounts/{action}:
+    post:
+      tags: [hanbao]
+      summary: 管理憨包本地浏览器账号
+      description: 最大 4 KiB；登录和检查会联网，登录可等待 300 秒；accounts 可能清理空的本地账号。生成期间拒绝管理操作。
+      parameters:
+        - in: path
+          name: action
+          required: true
+          schema: { type: string, enum: [accounts, login, checklogin, open, logout, delete-account, set-plan, reset-quota] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account: { type: string }
+                plan: { type: string, enum: [normal, standard] }
+                dailyLimit: { type: integer, minimum: 0 }
+                dailySeconds: { type: integer, minimum: 0 }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 账号参数无效或组件失败 }
+        '409': { description: 账号操作或生成正在执行 }
+  /hanbao/sms/{action}:
+    post:
+      tags: [hanbao]
+      summary: 憨包专用飞狐接码操作
+      description: 最大 8 KiB；订单绑定当前项目及原平台账号，只允许本模块创建的订单。取号前核对已审核豆包项目；短信轮询至少间隔 10 秒。平台使用表单 POST，密钥和 Token 不进入 URL。仅 orders 为本地读取。
+      parameters:
+        - in: path
+          name: action
+          required: true
+          schema: { type: string, enum: [connect, info, projects, orders, receive, message, release, blacklist] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account: { type: string }
+                orderId: { type: string }
+                filters:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: phone、isp、province、cardType、include、exclude、author、mode、code、hk
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 参数无效、订单归属不符、轮询频繁或平台失败 }
   /projects/{id}/characters/{assetId}/looks/extract:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
