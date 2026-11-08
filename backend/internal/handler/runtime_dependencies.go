@@ -8,6 +8,7 @@ import (
 
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/appearance"
+	"infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/conversation"
@@ -53,6 +54,7 @@ type RuntimeDependencies struct {
 	// TextReplay is the archive owned by the runtime; legacy callers use its app facade.
 	TextReplay  textreplay.API
 	BeefAPI     *beefapi.Service
+	Hanbao      HanbaoPort
 	Eagle       *eagle.Client
 	Diagnostics *diagnostics.Service
 	Appearance  *appearance.Service
@@ -71,6 +73,7 @@ type serviceRuntimeAdapter struct {
 	saveModelConfig             func([]byte) error
 	resources                   func(string, int) ([]model.Resource, error)
 	uploadLocalResource         func(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error)
+	retrieveSunoMedia           func(context.Context, string, asset.SunoMediaRequest, int64) (*model.Resource, error)
 	listProjects                func(string) ([]localproject.Summary, error)
 	tasksWithOptions            func(string, localtask.ListOptions) ([]localtask.Summary, error)
 	createTask                  func(string, localtask.CreateRequest) (*model.Task, error)
@@ -84,6 +87,9 @@ func newServiceRuntimeAdapter(value *app.Service) serviceRuntimeAdapter {
 		allowRequest: value.AllowRequest, requestRetryAfter: value.RequestRetryAfter,
 		readModelConfig: value.ReadLocalModelConfig, saveModelConfig: value.SaveLocalModelConfig,
 		resources: value.Resources, uploadLocalResource: value.UploadLocalResource,
+		retrieveSunoMedia: func(ctx context.Context, userID string, input asset.SunoMediaRequest, limit int64) (*model.Resource, error) {
+			return value.ResourceService().RetrieveSunoMedia(ctx, userID, input, limit)
+		},
 		listProjects: value.ListProjects, tasksWithOptions: value.TasksWithOptions, createTask: value.CreateLocalTask,
 		createTimelineRender: value.CreateTimelineRenderTask, createTimelineTranscription: value.CreateTimelineTranscriptionTask,
 		createDepthCapture: value.CreateDepthCaptureTask,
@@ -112,6 +118,10 @@ func (a serviceRuntimeAdapter) Resources(userID string, limit int) ([]model.Reso
 
 func (a serviceRuntimeAdapter) UploadLocalResource(userID string, header *multipart.FileHeader, kind string, width, height int, durationMs int64, identity ...string) (*model.Resource, error) {
 	return a.uploadLocalResource(userID, header, kind, width, height, durationMs, identity...)
+}
+
+func (a serviceRuntimeAdapter) RetrieveSunoMedia(ctx context.Context, userID string, input asset.SunoMediaRequest, limit int64) (*model.Resource, error) {
+	return a.retrieveSunoMedia(ctx, userID, input, limit)
 }
 
 func (a serviceRuntimeAdapter) ListProjects(userID string) ([]localproject.Summary, error) {

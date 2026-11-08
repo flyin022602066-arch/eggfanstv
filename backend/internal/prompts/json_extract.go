@@ -3,6 +3,8 @@ package prompts
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 )
 
 func extractJSONText(raw string) (string, error) {
@@ -35,6 +37,96 @@ func ExtractJSONText(raw string) (string, error) {
 // ExtractPreferredJSONText 优先返回包含 preferKey 的顶层 JSON 对象。
 func ExtractPreferredJSONText(raw string, preferKey string) (string, error) {
 	return extractPreferredJSONText(raw, preferKey)
+}
+
+type IncompleteChapterAssetsError struct{}
+
+func (IncompleteChapterAssetsError) Error() string {
+	return "章节资产输出被截断，尚未收到完整的角色、场景和道具 JSON"
+}
+
+func (IncompleteChapterAssetsError) IncompleteTextResult() bool { return true }
+
+func extractChapterAssetsJSONText(raw string) (string, error) {
+	candidate := ""
+	for start := 0; start < len(raw); start++ {
+		if raw[start] != '{' && raw[start] != '[' && raw[start] != '"' {
+			continue
+		}
+		decoder := json.NewDecoder(strings.NewReader(raw[start:]))
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			if raw[start] == '{' && chapterAssetsObjectStarted(raw[start:]) {
+				candidate = ""
+				if errors.Is(err, io.ErrUnexpectedEOF) {
+					return "", IncompleteChapterAssetsError{}
+				}
+			}
+			if raw[start] == '"' {
+				continue
+			}
+			end := jsonValueEnd(raw, start)
+			if end < start {
+				break
+			}
+			start = end
+			continue
+		}
+		end := start + int(decoder.InputOffset())
+		if raw[start] == '{' {
+			var object map[string]json.RawMessage
+			if json.Unmarshal(value, &object) == nil {
+				_, hasCharacters := object["characters"]
+				_, hasScenes := object["scenes"]
+				props, hasProps := object["props"]
+				if hasCharacters || hasScenes || hasProps || len(object) == 0 {
+					candidate = raw[start:end]
+					if _, hasName := object["name"]; !hasCharacters && !hasScenes && hasName && len(props) > 0 && props[0] == '"' {
+						candidate = ""
+					}
+				}
+			}
+		}
+		start = end - 1
+	}
+	if candidate != "" {
+		return candidate, nil
+	}
+	return "", errors.New("模型未返回完整的章节资产 JSON 对象")
+}
+
+func chapterAssetsObjectStarted(raw string) bool {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	_, _ = decoder.Token()
+	firstField := true
+	for {
+		offset := decoder.InputOffset()
+		key, err := decoder.Token()
+		if err != nil {
+			prefix := strings.TrimSpace(raw[offset:])
+			prefix = strings.TrimSpace(strings.TrimPrefix(prefix, ","))
+			if prefix == "" {
+				return firstField
+			}
+			for _, name := range []string{"characters", "scenes", "props"} {
+				if strings.HasPrefix(`"`+name+`"`, prefix) {
+					return true
+				}
+			}
+			return false
+		}
+		if key == "characters" || key == "scenes" || key == "props" {
+			return true
+		}
+		if _, ok := key.(string); !ok {
+			return false
+		}
+		firstField = false
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return false
+		}
+	}
 }
 
 // extractPreferredJSONText 与 extractJSONText 一样逐个扫描完整的 JSON 值，但会优先返回顶层对象且

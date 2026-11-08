@@ -70,19 +70,20 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 func taskClientContext(raw string) *TaskClientContext {
 	var input struct {
 		Metadata struct {
-			Source          string `json:"source"`
-			SceneID         string `json:"sceneId"`
-			NodeID          string `json:"nodeId"`
-			ConversationID  string `json:"conversationId"`
-			MessageID       string `json:"messageId"`
-			BatchIndex      int    `json:"batchIndex"`
-			BatchCount      int    `json:"batchCount"`
-			DomainProjectID string `json:"domainProjectId"`
-			ChapterID       string `json:"chapterId"`
-			Operation       string `json:"operation"`
-			ShotID          string `json:"shotId"`
-			WorkflowStepID  string `json:"workflowStepId"`
-			ArtifactType    string `json:"artifactType"`
+			Source             string `json:"source"`
+			SceneID            string `json:"sceneId"`
+			NodeID             string `json:"nodeId"`
+			CharacterVersionID string `json:"characterVersionId"`
+			ConversationID     string `json:"conversationId"`
+			MessageID          string `json:"messageId"`
+			BatchIndex         int    `json:"batchIndex"`
+			BatchCount         int    `json:"batchCount"`
+			DomainProjectID    string `json:"domainProjectId"`
+			ChapterID          string `json:"chapterId"`
+			Operation          string `json:"operation"`
+			ShotID             string `json:"shotId"`
+			WorkflowStepID     string `json:"workflowStepId"`
+			ArtifactType       string `json:"artifactType"`
 		} `json:"metadata"`
 	}
 	if json.Unmarshal([]byte(raw), &input) != nil {
@@ -90,6 +91,9 @@ func taskClientContext(raw string) *TaskClientContext {
 	}
 	metadata := input.Metadata
 	context := &TaskClientContext{NodeID: metadata.NodeID}
+	if strings.HasPrefix(metadata.NodeID, "character-turnaround:") {
+		context.CharacterVersionID = metadata.CharacterVersionID
+	}
 	if metadata.Source == "director-panorama" && metadata.SceneID != "" {
 		context.Source = metadata.Source
 		context.SceneID = metadata.SceneID

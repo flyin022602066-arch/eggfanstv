@@ -745,28 +745,32 @@ export default function CreatePage() {
                     ...retryContext,
                 }));
                 if (!result.text?.trim()) throw new Error("后端任务没有返回文本");
+                await updateOriginAssistant((item) => ({ ...item, status: "done", content: result.text || "", reasoning: result.reasoning, error: undefined, generationErrorCode: undefined }));
                 const textTaskId = Array.from(boundTaskIds)[0];
                 if (textTaskId) {
-                    await runtime.consumeGenerationTaskMessage({
-                        ...(boundTasks.get(textTaskId) || {
+                    try {
+                        await runtime.consumeGenerationTaskMessage({
+                            ...(boundTasks.get(textTaskId) || {
+                                id: textTaskId,
+                                type: "text",
+                                status: "succeeded",
+                                prompt: expandedPrompt,
+                                attempts: 1,
+                                createdAt: new Date().toISOString(),
+                                updatedAt: new Date().toISOString(),
+                            }),
                             id: textTaskId,
-                            type: "text",
+                            type: boundTasks.get(textTaskId)?.type || "text",
                             status: "succeeded",
-                            prompt: expandedPrompt,
-                            attempts: 1,
-                            createdAt: new Date().toISOString(),
-                            updatedAt: new Date().toISOString(),
-                        }),
-                        id: textTaskId,
-                        type: boundTasks.get(textTaskId)?.type || "text",
-                        status: "succeeded",
-                        clientContext: { conversationId: originConversationId, messageId: assistantMessage.id },
-                    }, assistantMessage.id, async ({ conversation, bindingStatus }) => {
-                        if (bindingStatus === "deleted") return;
-                        if (conversation) applyCanonicalConversation(originConversationId, conversation as CreationConversation);
-                    }, { signal: requestLifecycle.signal, materialize: async (task) => task });
-                } else {
-                    updateOriginAssistant((item) => ({ ...item, content: result.text || "", reasoning: result.reasoning }));
+                            clientContext: { conversationId: originConversationId, messageId: assistantMessage.id },
+                        }, assistantMessage.id, async ({ conversation, bindingStatus }) => {
+                            if (bindingStatus === "deleted") return;
+                            if (conversation) applyCanonicalConversation(originConversationId, conversation as CreationConversation);
+                        }, { signal: requestLifecycle.signal, materialize: async (task) => task });
+                    } catch (error) {
+                        if (requestLifecycle.signal.aborted) throw error;
+                        toast.warning("正文已生成并保留，对话结果暂未同步完成。无需重新生成，可稍后重新打开对话。");
+                    }
                 }
             } else if (mode === "image") {
                 const taskCount = Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));

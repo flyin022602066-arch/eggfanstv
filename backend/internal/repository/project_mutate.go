@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/assets"
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -707,6 +708,12 @@ func createProjectAssetCandidatesAndBumpTx(tx *gorm.DB, userID, projectID string
 	}
 	inserted := make([]model.ProjectAssetCandidate, 0, len(candidates))
 	for index := range candidates {
+		if candidates[index].Status == "confirmed" {
+			var asset model.Asset
+			if err := tx.Joins("JOIN project_asset_links ON project_asset_links.asset_id = assets.id AND project_asset_links.project_id = ?", projectID).Where("assets.id = ? AND assets.user_id = ? AND assets.category = ?", candidates[index].ResolvedAssetID, userID, candidates[index].Category).First(&asset).Error; err != nil {
+				return nil, err
+			}
+		}
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&candidates[index])
 		if result.Error != nil {
 			return nil, result.Error
@@ -819,6 +826,9 @@ func (r *Repository) SaveCharacterVersionActive(userID, projectID, expectedPrima
 		if err := saveCharacterVersionCAS(tx, expectedPrimaryVersionID, asset, version, representations, voice); err != nil {
 			return err
 		}
+		if err := saveProjectImageLibraryTx(tx, projectID, asset, version, representations); err != nil {
+			return err
+		}
 		return bumpProjectRevisionTx(tx, projectID, asset.UpdatedAt)
 	})
 }
@@ -834,14 +844,14 @@ func (r *Repository) SaveCharacterVersionAndPropagateReferences(userID, projectI
 		if err := saveCharacterVersionCAS(tx, expectedPrimaryVersionID, asset, version, representations, voice); err != nil {
 			return err
 		}
-		if err := replaceProjectCharacterReferencesTx(tx, projectID, asset.ID, version.ID, asset.UpdatedAt); err != nil {
+		if err := replaceProjectAssetReferencesTx(tx, projectID, asset.ID, version.ID, asset.UpdatedAt); err != nil {
 			return err
 		}
 		return bumpProjectRevisionTx(tx, projectID, asset.UpdatedAt)
 	})
 }
 
-func replaceProjectCharacterReferencesTx(tx *gorm.DB, projectID, assetID, nextVersionID string, updatedAt time.Time) error {
+func replaceProjectAssetReferencesTx(tx *gorm.DB, projectID, assetID, nextVersionID string, updatedAt time.Time) error {
 	if strings.TrimSpace(assetID) == "" || strings.TrimSpace(nextVersionID) == "" {
 		return nil
 	}
@@ -879,13 +889,26 @@ func replaceProjectCharacterReferencesTx(tx *gorm.DB, projectID, assetID, nextVe
 	return nil
 }
 
-func (r *Repository) ConfirmProjectCharacterCandidateActive(userID string, candidate *model.ProjectAssetCandidate, expectedPrimaryVersionID string, asset *model.Asset, version *model.AssetVersion, representations []model.AssetRepresentation, voice *model.CharacterVoiceBinding) error {
+func (r *Repository) ConfirmProjectCharacterCandidateActive(userID string, candidate *model.ProjectAssetCandidate, expectedPrimaryVersionID string, asset *model.Asset, version *model.AssetVersion, representations []model.AssetRepresentation, voice *model.CharacterVoiceBinding, extraLooks ...model.AssetVersion) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if _, err := requireActiveProjectTx(tx, userID, candidate.ProjectID); err != nil {
 			return err
 		}
 		if err := saveCharacterVersionCAS(tx, expectedPrimaryVersionID, asset, version, representations, voice); err != nil {
 			return err
+		}
+		for _, look := range extraLooks {
+			if err := tx.Create(&look).Error; err != nil {
+				return err
+			}
+			if voice != nil {
+				copy := *voice
+				copy.ID = kernel.NewID()
+				copy.AssetVersionID = look.ID
+				if err := tx.Create(&copy).Error; err != nil {
+					return err
+				}
+			}
 		}
 		result := tx.Model(&model.ProjectAssetCandidate{}).
 			Where("id = ? AND project_id = ? AND status = ?", candidate.ID, candidate.ProjectID, "pending_confirmation").
@@ -900,7 +923,7 @@ func (r *Repository) ConfirmProjectCharacterCandidateActive(userID string, candi
 	})
 }
 
-func (r *Repository) ConfirmProjectAssetCandidateActive(userID string, candidate *model.ProjectAssetCandidate, asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink, createAsset bool) error {
+func (r *Repository) ConfirmProjectAssetCandidateActive(userID string, candidate *model.ProjectAssetCandidate, asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink, createAsset bool, extraLooks ...model.AssetVersion) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if _, err := requireActiveProjectTx(tx, userID, candidate.ProjectID); err != nil {
 			return err
@@ -917,10 +940,15 @@ func (r *Repository) ConfirmProjectAssetCandidateActive(userID string, candidate
 			if err := tx.Create(version).Error; err != nil {
 				return err
 			}
+			for _, look := range extraLooks {
+				if err := tx.Create(&look).Error; err != nil {
+					return err
+				}
+			}
 		} else if err := tx.First(&model.Asset{}, "id = ? AND user_id = ?", asset.ID, asset.UserID).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("project_id = ? AND asset_id = ?", link.ProjectID, link.AssetID).FirstOrCreate(link).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "project_id"}, {Name: "asset_id"}}, DoNothing: true}).Create(link).Error; err != nil {
 			return err
 		}
 		result := tx.Model(&model.ProjectAssetCandidate{}).
@@ -968,6 +996,23 @@ func (r *Repository) SaveShotWithRevisionActive(userID string, shot *model.Shot,
 			return err
 		}
 		revision.Version = currentVersion + 1
+		if !create && expectedCurrentRevisionID != "" {
+			var previous model.ShotRevision
+			if err := tx.First(&previous, "id = ? AND shot_id = ?", expectedCurrentRevisionID, shot.ID).Error; err != nil {
+				return err
+			}
+			// 保存相同脚本时沿用已审核造型；真实改稿保留旧修订以触发重新识别。
+			before, after := previous, *revision
+			before.ID, after.ID = "", ""
+			before.Version, after.Version = 0, 0
+			before.CreatedBy, after.CreatedBy = "", ""
+			before.CreatedAt, after.CreatedAt = time.Time{}, time.Time{}
+			if before == after {
+				if err := tx.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND selection_revision_id = ?", shot.ID, expectedCurrentRevisionID).Update("selection_revision_id", revision.ID).Error; err != nil {
+					return err
+				}
+			}
+		}
 		if err := tx.Create(revision).Error; err != nil {
 			return err
 		}

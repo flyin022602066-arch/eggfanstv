@@ -1,7 +1,7 @@
 import { ArrowDownUp, AudioLines, Box, Check, CheckCheck, Clapperboard, Copy, Download, FileText, FileUp, FileX2, FolderOpen, FolderPlus, History, Image as ImageIcon, LayoutGrid, Link2, List, Maximize2, MoreHorizontal, Pause, PencilLine, Play, Plus, RotateCcw, SlidersHorizontal, Star, Trash2, Upload, Volume2, VolumeX, X, ZoomIn, ZoomOut, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Drawer, Dropdown, Form, Input, Modal, Popover, Progress, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Drawer, Dropdown, Form, Input, Modal, Progress, Select, Space, Tag, Typography } from "antd";
 import type { MenuProps } from "antd";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -956,7 +956,7 @@ function AssetsPageSession() {
                                     <Button disabled={transferBusy} icon={<Download className="size-3.5" />} onClick={() => { setExportWorkflowId(projectFilter !== "all" && projectFilter !== "unassigned" ? projectFilter : workflows[0]?.id); setWorkflowExportOpen(true); }}>按工作流导出</Button>
                                     <Dropdown trigger={["click"]} menu={{ items: [{ key: "all", label: "导出当前筛选资产", disabled: transferBusy, onClick: () => void exportAllAssets() }] }}><Button aria-label="更多资产操作" icon={<MoreHorizontal className="size-4" />} /></Dropdown>
                                     <div className="assets-header-compact-actions">
-                                        <ExpandableSearch value={keyword} placeholder="搜索资产" onChange={(value) => { setPage(1); setKeyword(value); }} />
+                                        <ExpandableSearch value={keyword} placeholder="搜索资产" collapseOnBlur={false} onChange={(value) => { setPage(1); setKeyword(value); }} />
                                         <button type="button" className={cn("assets-header-compact-button", filtersOpen && "is-active")} aria-label="筛选资产" title="筛选资产" aria-pressed={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal className="size-4" /></button>
                                     </div>
                                     <Dropdown trigger={["click"]} menu={{ items: [
@@ -1173,8 +1173,6 @@ function AssetsPageSession() {
                                                     asset={asset}
                                                     workflowLabel={assetWorkflowLabel(asset, workflows)}
                                                     selected={selectedIds.includes(asset.id)}
-                                                    deleting={deletingAsset?.id === asset.id}
-                                                    deletePending={deletePending}
                                                     onSelect={(selected) => setSelectedIds((current) => (selected ? [...new Set([...current, asset.id])] : current.filter((id) => id !== asset.id)))}
                                                     onOpen={() => setPreviewAsset(asset)}
                                                     onToggleFavorite={() => void toggleFavorite(asset)}
@@ -1183,8 +1181,6 @@ function AssetsPageSession() {
                                                     onCopy={copyAssetText}
                                                     onDownload={downloadImage}
                                                     onDelete={() => setDeletingAsset(asset)}
-                                                    onConfirmDelete={confirmDelete}
-                                                    onCancelDelete={() => setDeletingAsset(null)}
                                                     folderOptions={folderSelectOptions}
                                                     onMoveToFolder={(folderId) => void moveSelectedAssetsToFolder([asset.id], folderId)}
                                                 />
@@ -1413,6 +1409,21 @@ function AssetsPageSession() {
                 }}
             />
 
+            <AppModal
+                className="library-modal library-confirm-modal"
+                title="永久删除素材"
+                open={Boolean(deletingAsset)}
+                onCancel={() => { if (!deleteInFlight.current) setDeletingAsset(null); }}
+                onOk={() => void confirmDelete()}
+                confirmLoading={deletePending}
+                okText="永久删除"
+                okButtonProps={{ danger: true }}
+                cancelButtonProps={{ disabled: deletePending }}
+                cancelText="取消"
+            >
+                确定删除资产「{deletingAsset?.title}」吗？删除后不可恢复。仍被项目、画布或任务引用的资产会保留，并提示引用来源。
+            </AppModal>
+
             <Modal
                 className="library-modal library-confirm-modal"
                 title="永久删除素材"
@@ -1435,8 +1446,6 @@ function AssetCard({
     asset,
     workflowLabel,
     selected,
-    deleting,
-    deletePending,
     onSelect,
     onOpen,
     onToggleFavorite,
@@ -1445,16 +1454,12 @@ function AssetCard({
     onCopy,
     onDownload,
     onDelete,
-    onConfirmDelete,
-    onCancelDelete,
     folderOptions,
     onMoveToFolder,
 }: {
     asset: LibraryAsset;
     workflowLabel: string;
     selected: boolean;
-    deleting: boolean;
-    deletePending: boolean;
     onSelect: (selected: boolean) => void;
     onOpen: () => void;
     onToggleFavorite: () => void;
@@ -1463,23 +1468,10 @@ function AssetCard({
     onCopy: (asset: LibraryAsset) => void;
     onDownload: (asset: LibraryAsset) => void;
     onDelete: () => void;
-    onConfirmDelete: () => Promise<void>;
-    onCancelDelete: () => void;
     folderOptions: Array<{ label: string; value: string }>;
     onMoveToFolder: (folderId: string) => void;
 }) {
     const [menuOpen, setMenuOpen] = useState(false);
-    const deleteConfirmRequested = useRef(false);
-    const openDeleteConfirm = () => {
-        deleteConfirmRequested.current = true;
-        setMenuOpen(true);
-        onDelete();
-    };
-    const closeDeleteConfirm = () => {
-        if (deletePending) return;
-        deleteConfirmRequested.current = false;
-        onCancelDelete();
-    };
     const menuItems: MenuProps["items"] = [
         ...(asset.kind === "text" || asset.kind === "image" ? [{ key: "edit", icon: <PencilLine className="size-3.5" />, label: "编辑", onClick: onEdit }] : []),
         { key: "tags", icon: <PencilLine className="size-3.5" />, label: "编辑标签", onClick: onEditTags },
@@ -1488,40 +1480,11 @@ function AssetCard({
         { key: "favorite", icon: <Star className="size-3.5" />, label: asset.metadata?.favorite === true ? "取消收藏" : "收藏", onClick: onToggleFavorite },
         { key: "move", icon: <FolderOpen className="size-3.5" />, label: "移动到分类", children: folderOptions.map((folder) => ({ key: folder.value || "uncategorized", label: folder.label, onClick: () => onMoveToFolder(folder.value) })) },
         { type: "divider" as const },
-        { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: (
-            <Popover
-                open={deleting}
-                onOpenChange={(open) => { if (open) openDeleteConfirm(); else closeDeleteConfirm(); }}
-                afterOpenChange={(open) => { if (!open && !deleteConfirmRequested.current) setMenuOpen(false); }}
-                trigger="click"
-                placement="rightBottom"
-                arrow={false}
-                overlayClassName="asset-delete-confirm-popover"
-                content={(
-                    <div className="asset-delete-confirm-content" onClick={(event) => event.stopPropagation()}>
-                        <p>确定删除该资产吗？删除后不可恢复。</p>
-                        <div className="asset-delete-confirm-actions">
-                            <Button size="small" disabled={deletePending} onClick={closeDeleteConfirm}>取消</Button>
-                            <Button size="small" danger loading={deletePending} onClick={() => void onConfirmDelete()}>永久删除</Button>
-                        </div>
-                    </div>
-                )}
-            >
-                <span className="asset-delete-confirm-trigger">永久删除</span>
-            </Popover>
-        ), onClick: openDeleteConfirm },
+        { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "永久删除", onClick: onDelete },
     ];
     return (
         <AssetLibraryCard selected={selected}>
-            <AssetCover asset={asset} selected={selected} onSelect={onSelect} onOpen={onOpen} onToggleFavorite={onToggleFavorite} menuItems={menuItems} menuOpen={menuOpen} onMenuOpenChange={(open) => {
-                if (!open && deleteConfirmRequested.current) return;
-                setMenuOpen(open);
-            }} onMenuAction={(key) => {
-                if (key === "delete") return;
-                deleteConfirmRequested.current = false;
-                setMenuOpen(false);
-                onCancelDelete();
-            }} />
+            <AssetCover asset={asset} selected={selected} onSelect={onSelect} onOpen={onOpen} onToggleFavorite={onToggleFavorite} menuItems={menuItems} menuOpen={menuOpen} onMenuOpenChange={setMenuOpen} onMenuAction={() => setMenuOpen(false)} />
             <button type="button" className="asset-collection-body is-compact block w-full px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--workspace-accent)]" onClick={onOpen}>
                 <div className="asset-card-meta">
                     <h2 className="truncate text-[var(--fs-body)] font-semibold text-foreground" title={asset.title}>{asset.title}</h2>

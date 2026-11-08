@@ -75,6 +75,7 @@ func Builtins() *Registry {
 		openAIChatAdapter(), openAIResponsesAdapter(), claudeAdapter(),
 		openAIVideosAdapter(), newAPIChannel1Adapter(), newAPIVideosAdapter(), xAIVideosAdapter(), arkVideosAdapter(), jimengVideosAdapter(), geminiVeoAdapter(), novitaVideosAdapter(), miniMaxVideosAdapter(),
 		agnesAdapter(),
+		hanbaoAdapter(),
 	)
 	if err != nil {
 		panic(err)

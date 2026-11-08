@@ -10,6 +10,7 @@ import (
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/provider/workflow"
+	"infinite-canvas/backend/internal/provider/hanbao"
 )
 
 // Execute owns paid-generation orchestration: prompt templates, config,
@@ -139,6 +140,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 			return nil, err
 		}
 	}
+	if input.Mode == "text" && promptTemplateOperation == "chapter_assets_extract" {
+		return runChapterAssetsTextTask(ctx, runtime, input)
+	}
 	result, taskErr := dispatch(ctx, input)
 	if taskErr == nil && input.Mode == "text" && promptTemplateOperation != "" {
 		if runtime.Prompt == nil {
@@ -225,6 +229,11 @@ func applyCanvasTextStreaming(taskType string, input *Input) {
 }
 
 func validatePreparedInput(ctx context.Context, input Input) error {
+	if input.Config.InterfaceType == hanbao.Protocol {
+		runtime, _ := RuntimeFromContext(ctx)
+		if input.Mode != "video" || runtime.Hanbao == nil || !hanbao.SupportedModel(input.Config.Model) { return errors.New("憨包本地视频渠道尚未就绪") }
+		return nil
+	}
 	if input.Config.APIFormat == "gemini" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiImage) {
 		_, hasDeclarativeAgent := agentProtocolAdapterForContext(ctx, input.Config.InterfaceType)
 		if input.AgentRequests == nil || !hasDeclarativeAgent {

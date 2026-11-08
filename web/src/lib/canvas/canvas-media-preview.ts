@@ -2,6 +2,13 @@ import { buildLibTVVideoPreviewUrl } from "@/lib/canvas/libtv-import";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { parseVideoBoolean } from "@/lib/video-generation-options";
 import { isSilentDirectorClayVideo } from "@/lib/canvas/director/director-clay-output";
+import { ownedResourceIdFromMediaRef, resourceStorageKey } from "@/services/api/resources";
+
+/** Character cards store a cover URL, whose loopback port can change on restart. */
+export function canvasNodeCharacterCoverStorageKey(node: CanvasNodeData) {
+    const resourceId = ownedResourceIdFromMediaRef(undefined, node.metadata?.characterCoverUrl);
+    return resourceId ? resourceStorageKey(resourceId) : undefined;
+}
 
 export function inferVideoHasAudio(metadata: CanvasNodeData["metadata"]): boolean | undefined {
     if (isSilentDirectorClayVideo(metadata)) return false;

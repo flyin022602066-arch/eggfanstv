@@ -10,6 +10,9 @@ func TestJiasuPresetUsesLiveGwayCatalog(t *testing.T) {
 		if preset.BaseURL != "https://www.gway.dev" || preset.CatalogURL != "https://www.gway.dev/pricing" || preset.PresetVersion != 3 {
 			t.Fatal("wrong Gway preset")
 		}
+		if preset.DisplayName != "极途 Gway" {
+			t.Fatalf("wrong Gway display name: %q", preset.DisplayName)
+		}
 		if len(preset.Models) != 0 {
 			t.Fatal("legacy Jiasu models must not be restored by the built-in preset")
 		}

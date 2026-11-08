@@ -96,7 +96,7 @@ func (r *Repository) ProjectUnitShots(projectID string, unitID string) ([]model.
 }
 
 func (r *Repository) ProjectUnitShotRevisions(projectID string, unitID string) ([]model.ShotRevision, error) {
-	var revisions []model.ShotRevision
+	revisions := make([]model.ShotRevision, 0)
 	err := r.db.Table("shot_revisions").Select("shot_revisions.*").Joins("JOIN shots ON shots.id = shot_revisions.shot_id").Where("shots.project_id = ? AND shots.unit_id = ?", projectID, unitID).Order("shots.position asc, shot_revisions.version asc").Scan(&revisions).Error
 	return revisions, err
 }

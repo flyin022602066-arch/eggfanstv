@@ -28,7 +28,7 @@ import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } fro
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { DEFAULT_DRAWING_ENGINE } from "@/lib/canvas/canvas-drawing-engine";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
+import { CanvasAssetLibraryContext, usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasThemeStore, useCanvasThemeScope } from "@/stores/canvas/use-canvas-theme-store";
@@ -128,6 +128,7 @@ import { useCanvasAssistantProposal } from "./use-canvas-assistant-proposal";
 import { useCanvasConnectedNodeVisibility } from "./use-canvas-connected-node-visibility";
 import { useCanvasGenerationOrchestration } from "./use-canvas-generation-orchestration";
 import { useCanvasMentionNormalize } from "./use-canvas-mention-normalize";
+import { useCanvasReferenceTemplates } from './use-canvas-reference-templates';
 import { useCanvasNodeContent } from "./use-canvas-node-content";
 import { useCanvasPointerSelectionChrome, useCanvasNodeToolbarHover } from "./use-canvas-pointer-chrome";
 import { useCanvasProjectDialogs } from "./use-canvas-project-dialogs";
@@ -171,6 +172,7 @@ function visibleGenerationBatch(node: CanvasNodeData) {
 
 export default function CanvasPage() {
     useCanvasThemeScope();
+    const { id = "" } = useParams<{ id: string }>();
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
@@ -179,7 +181,7 @@ export default function CanvasPage() {
 
     if (!mounted) return <CanvasRefreshShell />;
 
-    return <InfiniteCanvasPage />;
+    return <CanvasAssetLibraryContext.Provider value={id}><InfiniteCanvasPage /></CanvasAssetLibraryContext.Provider>;
 }
 
 function InfiniteCanvasPage() {
@@ -844,7 +846,7 @@ function InfiniteCanvasPage() {
     }, [focusMode]);
 
     useEffect(() => {
-        if (!dialogNodeId) setNodeImageSettingsOpen(false);
+        setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
 
     useLayoutEffect(() => {
@@ -2203,6 +2205,7 @@ function InfiniteCanvasPage() {
         [closeConnectionCreateMenu],
     );
 
+    const { applyReferenceTemplate, removeReferenceTemplate } = useCanvasReferenceTemplates({ projectId, assets, nodesRef, connectionsRef, setNodes, setConnections, enabled: projectLoaded && !readOnly && !versions.preview });
     const renderCanvasNodePanel = useCallback(
         (panelNode: CanvasNodeData) => {
             if (panelNode.type === CanvasNodeType.Script || panelNode.type === CanvasNodeType.Drawing) return null;
@@ -2245,6 +2248,8 @@ function InfiniteCanvasPage() {
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
                     onGenerate={handleGenerateNode}
+                    onApplyReferenceTemplate={applyReferenceTemplate}
+                    onRemoveReferenceTemplate={removeReferenceTemplate}
                     onRemoveReference={handleRemoveNodeReference}
                     onReorderReferences={handleReorderNodeReferences}
                     onReplaceReference={handleReplaceNodeReference}
@@ -2264,6 +2269,8 @@ function InfiniteCanvasPage() {
             handleConfigNodeChange,
             handleGenerateNode,
             handleNodePromptChange,
+            applyReferenceTemplate,
+            removeReferenceTemplate,
             handleRemoveNodeReference,
             handleReorderNodeReferences,
             handleReplaceNodeReference,
@@ -3028,9 +3035,7 @@ function InfiniteCanvasPage() {
 
                         <CanvasNodeToolbar
                             readOnly={readOnly}
-                            // LibTV 的右侧 Agent 停靠态会收起节点悬浮工具栏，避免工具栏
-                            // 与面板争夺画布空间；节点本身的快捷操作仍保留在节点菜单中。
-                            node={assistant.open || isCanvasNodeMoving || nodeImageSettingsOpen || annotationNodeId || maskEditNodeId || emotionNodeId || angleNodeId || (dialogNode && !isCanvasMediaResultNode(dialogNode)) || textEditorNodeId ? null : toolbarNode}
+                            node={isCanvasNodeMoving || nodeImageSettingsOpen || annotationNodeId || maskEditNodeId || emotionNodeId || angleNodeId || (dialogNode && !isCanvasMediaResultNode(dialogNode)) || textEditorNodeId ? null : toolbarNode}
                             workspaceMode={workspaceMode}
                             viewport={viewport}
                             containerRef={containerRef}

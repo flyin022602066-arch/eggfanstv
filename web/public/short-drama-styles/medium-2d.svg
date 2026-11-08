@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" fill="none">
+  <path fill="#f0e8dc" d="M0 0h640v360H0z"/>
+  <path d="m50 270 146-125 138 125zm186 0 174-176 183 176z" fill="#b7c7c1"/>
+  <path d="m50 270 146-125-61 125zm186 0 174-176-65 176z" fill="#d3ded7"/>
+  <circle cx="458" cy="91" r="35" fill="#d89b72"/>
+  <g stroke="#344a50" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="m230 280 21-62 42-24 45 24 25 62z" fill="#628b91"/><path d="m293 194 45 24 25 62h-62z" fill="#3c656e"/><path d="M257 144c0-38 73-39 73 0v24c0 24-16 42-37 42s-36-18-36-42z" fill="#f1c5a4"/><path d="M257 153c-13-46 10-70 37-70 39 0 50 33 36 75l-19-31-18 14-17-12-19 24z" fill="#344a50"/><path d="m272 158 9 1m23 0 9-1m-25 28 13 1"/></g>
+  <path d="M63 290h514" stroke="#344a50" stroke-width="2"/>
+  <text x="30" y="40" fill="#344a50" font-size="14" font-family="sans-serif" letter-spacing="4">2D · LINE / CEL / COMPOSITION</text>
+  <text x="30" y="337" fill="#6b7e7b" font-size="13" font-family="sans-serif">二维媒介规范示意 · 非成片预览</text>
+</svg>

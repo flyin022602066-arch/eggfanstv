@@ -23,8 +23,9 @@ type ProjectCharacterDetail = localproject.CharacterDetail
 
 type characterTurnaroundTaskInput struct {
 	Metadata struct {
-		Operation        string `json:"operation"`
-		CharacterAssetID string `json:"characterAssetId"`
+		Operation          string `json:"operation"`
+		CharacterAssetID   string `json:"characterAssetId"`
+		CharacterVersionID string `json:"characterVersionId"`
 	} `json:"metadata"`
 }
 
@@ -102,7 +103,7 @@ func (s *Service) finalizeCharacterTurnaroundTask(task model.Task, result map[st
 		return false, err
 	}
 	resourceID := strings.TrimSpace(output.Images[0].ResourceID)
-	if err := s.projectDomain().BindCharacterTurnaround(task.UserID, projectID, assetID, task.ID, resourceID, task.Prompt); err != nil {
+	if err := s.projectDomain().BindCharacterTurnaroundFromVersion(task.UserID, projectID, assetID, input.Metadata.CharacterVersionID, task.ID, resourceID, task.Prompt); err != nil {
 		if bound, checkErr := s.projectDomain().CharacterTurnaroundBound(task.ID); checkErr == nil && bound {
 			return false, nil
 		}

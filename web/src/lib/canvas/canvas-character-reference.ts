@@ -2,6 +2,7 @@ import { resourceFileUrl } from "@/services/api/resources";
 import type { ProjectAsset } from "@/services/api/projects";
 import type { CanvasNodeData } from "@/types/canvas";
 
+export type CharacterLookDefinition = { name: string; clothing: string; appearance?: string; ageStage?: string; hairstyle?: string; state?: string; matchHints?: string; excludeHints?: string; changeReason?: string; sourceEvidence?: string };
 export type CharacterBreakdown = {
     name: string;
     aliases: string[];
@@ -16,6 +17,7 @@ export type CharacterBreakdown = {
     voiceLanguage: string;
     voiceAge: string;
     voiceTimbre: string;
+    looks?: CharacterLookDefinition[];
 };
 
 export function refreshCanvasCharacterReferenceNodes(nodes: CanvasNodeData[], assets: ProjectAsset[]) {
@@ -132,7 +134,58 @@ function flattenCharacterCandidates(value: unknown): unknown[] | undefined {
     return undefined;
 }
 
+function normalizeChapterAssetLineWraps(raw: string) {
+    let normalized = "";
+    let inString = false;
+    let escaped = false;
+    for (const character of raw) {
+        if (inString) {
+            if (!escaped && (character === "\n" || character === "\r" || character === "\t")) continue;
+            if (escaped) escaped = false;
+            else if (character === "\\") escaped = true;
+            else if (character === '"') inString = false;
+        } else if (character === '"') {
+            inString = true;
+        }
+        normalized += character;
+    }
+    return normalized;
+}
+
+function extractChapterAssetRootJson(raw: string) {
+    const incompleteMessage = "模型未返回完整的章节资产 JSON，不能回填部分角色、场景或道具";
+    let result: Record<string, unknown> | undefined;
+    let failureMessage = incompleteMessage;
+    for (let start = 0; start < raw.length; start += 1) {
+        if (raw[start] !== "{" && raw[start] !== "[") continue;
+        const end = findJsonValueEnd(raw, start);
+        if (end < start) throw new Error(incompleteMessage);
+        const source = raw.slice(start, end + 1);
+        start = end;
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(normalizeChapterAssetLineWraps(source));
+        } catch {
+            result = undefined;
+            failureMessage = incompleteMessage;
+            continue;
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+        const value = parsed as Record<string, unknown>;
+        if (!("characters" in value) && !("scenes" in value) && !Array.isArray(value.props)) continue;
+        if (Array.isArray(value.characters) && Array.isArray(value.scenes) && Array.isArray(value.props)) {
+            result = value;
+        } else {
+            result = undefined;
+            failureMessage = "章节资产结果缺少角色、场景或道具数组，请重新提取";
+        }
+    }
+    if (result) return result;
+    throw new Error(failureMessage);
+}
+
 export function extractCharacterBreakdownJson(raw: string, allowEmptyCharacters = false) {
+    if (allowEmptyCharacters) return extractChapterAssetRootJson(raw);
     for (let start = 0; start < raw.length; start += 1) {
         if (raw[start] !== "{" && raw[start] !== "[") continue;
         const end = findJsonValueEnd(raw, start);
@@ -144,9 +197,6 @@ export function extractCharacterBreakdownJson(raw: string, allowEmptyCharacters 
             // 模型的推理文字可能包含 aliases: [] 等合法 JSON 片段；角色契约只接受带 characters 字段的对象。
             const candidates = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? flattenCharacterCandidates((parsed as { characters?: unknown }).characters) : undefined;
             if (Array.isArray(candidates) && candidates.length) return parsed;
-            // 章节资产允许无人场景；仍交由章节解析器校验三个必填数组。
-            if (allowEmptyCharacters && parsed && typeof parsed === "object" && !Array.isArray(parsed)
-                && Array.isArray((parsed as { characters?: unknown }).characters)) return parsed;
         } catch {
             // Ignore unrelated braces in model prose and continue to the next complete JSON value.
         }
@@ -161,13 +211,25 @@ export function parseCharacterBreakdown(raw: string): CharacterBreakdown[] {
     if (!Array.isArray(candidates)) throw new Error("角色拆解结果缺少 characters 数组");
 
     const seen = new Set<string>();
+    const aliasOwners = new Map<string, Set<string>>();
+    for (const candidate of candidates) {
+        if (!candidate || typeof candidate !== "object") continue;
+        const value = candidate as Record<string, unknown>;
+        const name = normalizeCharacterName(String(value.name || ""));
+        for (const alias of Array.isArray(value.aliases) ? value.aliases : []) {
+            const key = normalizeCharacterName(String(alias));
+            const owners = aliasOwners.get(key) || new Set<string>();
+            owners.add(name);
+            aliasOwners.set(key, owners);
+        }
+    }
     const characters: CharacterBreakdown[] = [];
     candidates.forEach((candidate) => {
         if (!candidate || typeof candidate !== "object") return;
         const value = candidate as Record<string, unknown>;
         const name = String(value.name || "").trim();
         const key = normalizeCharacterName(name);
-        const aliases = Array.isArray(value.aliases) ? value.aliases.map((alias) => String(alias).trim()).filter(Boolean) : [];
+        const aliases = Array.isArray(value.aliases) ? value.aliases.map((alias) => String(alias).trim()).filter((alias) => alias && aliasOwners.get(normalizeCharacterName(alias))?.size === 1) : [];
         const identityKeys = [key, ...aliases.map(normalizeCharacterName)].filter(Boolean);
         if (!name || !key || identityKeys.some((identityKey) => seen.has(identityKey))) return;
         const role = String(value.role || "").trim();
@@ -180,6 +242,18 @@ export function parseCharacterBreakdown(raw: string): CharacterBreakdown[] {
         // AI 提取属于角色写入路径：只有名称不足以建立角色卡，避免空设定进入项目后再由用户猜测补全。
         if (!role || descriptiveFields.length < 3 || !voiceLanguage || !voiceAge || !voiceTimbre) throw new Error(`角色“${name}”缺少剧情定位、稳定设定或声音画像，请重新提取`);
         identityKeys.forEach((identityKey) => seen.add(identityKey));
+        let looks: CharacterLookDefinition[] | undefined;
+        if (value.looks !== undefined) {
+            if (!Array.isArray(value.looks) || !value.looks.length || value.looks.length > 24) throw new Error("角色造型数组无效：" + name);
+            const names = new Set<string>();
+            looks = value.looks.map((item: unknown) => {
+                if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("角色造型格式无效：" + name);
+                const source = item as Record<string, unknown>;
+                if (typeof source.name !== "string" || !source.name.trim() || typeof source.clothing !== "string" || !source.clothing.trim() || names.has(source.name.trim())) throw new Error("角色造型缺少名称、服装或名称重复：" + name);
+                names.add(source.name.trim());
+                return Object.fromEntries(Object.entries(source).filter(([key, field]) => ["name", "clothing", "appearance", "ageStage", "hairstyle", "state", "matchHints", "excludeHints", "changeReason", "sourceEvidence"].includes(key) && typeof field === "string").map(([key, field]) => [key, (field as string).trim()])) as CharacterLookDefinition;
+            });
+        }
         characters.push({
             name,
             aliases: Array.from(new Set(aliases.filter((alias) => normalizeCharacterName(alias) !== key))),
@@ -194,6 +268,7 @@ export function parseCharacterBreakdown(raw: string): CharacterBreakdown[] {
             voiceLanguage,
             voiceAge,
             voiceTimbre,
+            ...(looks ? { looks } : {}),
         });
     });
     if (!characters.length) throw new Error("没有从章节正文中识别到可用角色");

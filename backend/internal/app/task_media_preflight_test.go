@@ -73,7 +73,15 @@ func (u *transportRefreshTestUploader) Upload(ctx context.Context, owner string,
 }
 
 func TestLocalVideoTaskAdmissionPreservesAutomaticReferenceRefresh(t *testing.T) {
-	for _, protocol := range []string{"jiasu-video", "eggfans-sd2-video"} {
+	for _, test := range []struct {
+		protocol string
+		model    string
+	}{
+		{protocol: "jiasu-video", model: "sd-2.5-j2-V"},
+		{protocol: "eggfans-sd2-video", model: "sd-2.5-j2-V"},
+		{protocol: "towo-sd25-video", model: "seedance-2.5"},
+	} {
+		protocol, model := test.protocol, test.model
 		t.Run(protocol, func(t *testing.T) {
 			db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "refresh.db")), &gorm.Config{})
 			if err != nil {

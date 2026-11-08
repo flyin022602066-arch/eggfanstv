@@ -134,6 +134,9 @@ func RunDeclarativeAgentTask(ctx context.Context, input Input, adapter protocol.
 			parser.emitReasoning = input.OnReasoningDelta
 			data, mime, err := ExecuteProtocolBinaryRequestWithConsumer(ctx, input.Config, spec, parser.Consume)
 			if err != nil {
+				if parser.err != nil {
+					return nil, parser.err
+				}
 				return nil, err
 			}
 			if strings.Contains(strings.ToLower(mime), "event-stream") {
@@ -390,6 +393,9 @@ func PostStreamingAgent(ctx context.Context, config Config, path string, body ma
 	}
 	data, mimeType, err := PostStreamingBinary(ctx, config, path, body, parser.Consume)
 	if err != nil {
+		if parser.err != nil {
+			return nil, parser.err
+		}
 		return nil, err
 	}
 	if !strings.Contains(strings.ToLower(mimeType), "event-stream") {
@@ -417,6 +423,7 @@ type StreamingAgentParser struct {
 	toolCalls     map[int]*StreamingAgentToolCall
 	toolCallByID  map[string]int
 	completed     map[string]interface{}
+	requestID     string
 	err           error
 	emit          func(string)
 	emitReasoning func(string)
@@ -475,6 +482,12 @@ func (p *StreamingAgentParser) consumeFrame(frame string) {
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		p.err = fmt.Errorf("Agent 流式事件解析失败：%w", err)
 		return
+	}
+	if requestID := sanitizeDebugID(firstNonEmpty(stringField(payload, "request_id"), stringField(payload, "requestId"), stringField(payload, "request-id"))); requestID != "" {
+		p.requestID = requestID
+	}
+	if p.requestID != "" {
+		payload["request_id"] = p.requestID
 	}
 	if err := ValidateTextPayload(payload); err != nil {
 		p.err = err
@@ -717,6 +730,13 @@ func CloneStringAnyMap(value map[string]interface{}) map[string]interface{} {
 }
 
 func RunTextTask(ctx context.Context, input Input) (map[string]interface{}, error) {
+	if metadataString(input.Metadata, "storyboardExecution") == "planned-director-v1" {
+		return runPlannedDirectorTask(ctx, input, runTextProviderTask)
+	}
+	return runTextProviderTask(ctx, input)
+}
+
+func runTextProviderTask(ctx context.Context, input Input) (map[string]interface{}, error) {
 	if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
 		return RunDeclarativeProtocolTask(ctx, input)
 	}
@@ -921,8 +941,8 @@ func ValidatedTextHistory(history []TextMessage) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(history))
 	for _, message := range history {
 		role := strings.ToLower(strings.TrimSpace(message.Role))
-		content := strings.TrimSpace(message.Content)
-		if (role != "user" && role != "assistant") || content == "" {
+		content := message.Content
+		if (role != "user" && role != "assistant") || strings.TrimSpace(content) == "" {
 			continue
 		}
 		result = append(result, map[string]interface{}{"role": role, "content": content})
@@ -1050,6 +1070,18 @@ func ValidateTextPayload(payload map[string]interface{}) error {
 		encoded, _ := json.Marshal(payload)
 		raw := string(encoded)
 		return NewRawPayloadError(raw)
+	}
+	for _, value := range InterfaceSlice(payload["choices"]) {
+		choice, _ := value.(map[string]interface{})
+		if strings.EqualFold(strings.TrimSpace(stringField(choice, "finish_reason")), "content_filter") {
+			fields := walkProviderFields(payload, 0)
+			encoded, _ := json.Marshal(map[string]any{
+				"error":      map[string]string{"code": "content_filter", "message": textContentFilterMessage, "param": "finish_reason"},
+				"request_id": sanitizeDebugID(fields.RequestID),
+				"task_id":    sanitizeDebugID(fields.TaskID),
+			})
+			return NewRawPayloadError(string(encoded))
+		}
 	}
 	return nil
 }

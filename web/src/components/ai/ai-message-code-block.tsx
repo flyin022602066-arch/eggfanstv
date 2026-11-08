@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import shikiWasmUrl from "virtual:beeftv-shiki-onig-wasm";
 
 type AiMessageCodeBlockProps = {
     children?: ReactNode;
@@ -7,7 +8,7 @@ type AiMessageCodeBlockProps = {
     isStreaming?: boolean;
 };
 
-type ShikiHighlighter = Awaited<ReturnType<typeof import("shiki").createHighlighter>>;
+type ShikiHighlighter = Awaited<ReturnType<typeof import("shiki/core").createHighlighterCore>>;
 
 let highlighterPromise: Promise<ShikiHighlighter> | null = null;
 
@@ -39,8 +40,37 @@ const SHIKI_LANGS = [
     "kotlin",
     "swift",
     "docker",
-    "text",
 ] as const;
+
+const SHIKI_LANG_LOADERS = {
+    javascript: () => import("@shikijs/langs/javascript"),
+    typescript: () => import("@shikijs/langs/typescript"),
+    jsx: () => import("@shikijs/langs/jsx"),
+    tsx: () => import("@shikijs/langs/tsx"),
+    json: () => import("@shikijs/langs/json"),
+    html: () => import("@shikijs/langs/html"),
+    css: () => import("@shikijs/langs/css"),
+    scss: () => import("@shikijs/langs/scss"),
+    bash: () => import("@shikijs/langs/bash"),
+    shellscript: () => import("@shikijs/langs/shellscript"),
+    python: () => import("@shikijs/langs/python"),
+    sql: () => import("@shikijs/langs/sql"),
+    markdown: () => import("@shikijs/langs/markdown"),
+    yaml: () => import("@shikijs/langs/yaml"),
+    diff: () => import("@shikijs/langs/diff"),
+    xml: () => import("@shikijs/langs/xml"),
+    java: () => import("@shikijs/langs/java"),
+    go: () => import("@shikijs/langs/go"),
+    rust: () => import("@shikijs/langs/rust"),
+    c: () => import("@shikijs/langs/c"),
+    cpp: () => import("@shikijs/langs/cpp"),
+    csharp: () => import("@shikijs/langs/csharp"),
+    ruby: () => import("@shikijs/langs/ruby"),
+    php: () => import("@shikijs/langs/php"),
+    kotlin: () => import("@shikijs/langs/kotlin"),
+    swift: () => import("@shikijs/langs/swift"),
+    docker: () => import("@shikijs/langs/docker"),
+} satisfies Record<(typeof SHIKI_LANGS)[number], () => Promise<{ default: unknown }>>;
 
 /** 用户常见语言写法 → shiki 语言名；未知语言回退纯文本（无高亮但外壳不变）。 */
 const LANGUAGE_ALIASES: Record<string, string> = {
@@ -69,10 +99,19 @@ const LANGUAGE_ALIASES: Record<string, string> = {
 
 function loadHighlighter(): Promise<ShikiHighlighter> {
     if (!highlighterPromise) {
-        highlighterPromise = import("shiki").then(({ createHighlighter }) =>
-            createHighlighter({
-                langs: [...SHIKI_LANGS],
-                themes: ["github-light", "github-dark"],
+        highlighterPromise = Promise.all([
+            import("shiki/core"),
+            import("shiki/engine/oniguruma"),
+            Promise.all(SHIKI_LANGS.map((language) => SHIKI_LANG_LOADERS[language]())),
+            Promise.all([
+                import("@shikijs/themes/github-light"),
+                import("@shikijs/themes/github-dark"),
+            ]),
+        ]).then(([{ createHighlighterCore }, { createOnigurumaEngine }, languageModules, themeModules]) =>
+            createHighlighterCore({
+                langs: languageModules.map((module) => module.default),
+                themes: themeModules.map((module) => module.default),
+                engine: createOnigurumaEngine(fetch(shikiWasmUrl)),
             }),
         );
     }

@@ -11,53 +11,55 @@ import (
 
 func TestSeedanceDispatchUsesGatewayDeliveryFallback(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "1")
-	for _, withURL := range []bool{true, false} {
-		t.Run(map[bool]string{true: "result URL", false: "content endpoint"}[withURL], func(t *testing.T) {
-			creates, polls, direct, proxy := 0, 0, 0, 0
-			var server *httptest.Server
-			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") != "Bearer test-key" {
-					t.Error("missing provider credential")
-				}
-				switch {
-				case r.Method == http.MethodPost && r.URL.Path == "/v1/videos":
-					creates++
-					_ = json.NewEncoder(w).Encode(map[string]any{"id": "original"})
-				case r.Method == http.MethodGet && r.URL.Path == "/v1/videos/original":
-					polls++
-					state := map[string]any{"status": "completed"}
-					if withURL {
-						state["video_url"] = server.URL + "/v1/videos/original/content"
+	for _, status := range []string{"completed", "succeeded", "SUCCESS", "done"} {
+		for _, withURL := range []bool{true, false} {
+			t.Run(status+"/"+map[bool]string{true: "result URL", false: "content endpoint"}[withURL], func(t *testing.T) {
+				creates, polls, direct, proxy := 0, 0, 0, 0
+				var server *httptest.Server
+				server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get("Authorization") != "Bearer test-key" {
+						t.Error("missing provider credential")
 					}
-					_ = json.NewEncoder(w).Encode(state)
-				case r.Method == http.MethodGet && r.URL.Path == "/v1/videos/original/content":
-					if r.URL.Query().Get("delivery") != "proxy" {
-						direct++
-						w.WriteHeader(http.StatusServiceUnavailable)
-						return
+					switch {
+					case r.Method == http.MethodPost && r.URL.Path == "/v1/videos":
+						creates++
+						_ = json.NewEncoder(w).Encode(map[string]any{"id": "original"})
+					case r.Method == http.MethodGet && r.URL.Path == "/v1/videos/original":
+						polls++
+						state := map[string]any{"status": status}
+						if withURL {
+							state["video_url"] = server.URL + "/v1/videos/original/content"
+						}
+						_ = json.NewEncoder(w).Encode(state)
+					case r.Method == http.MethodGet && r.URL.Path == "/v1/videos/original/content":
+						if r.URL.Query().Get("delivery") != "proxy" {
+							direct++
+							w.WriteHeader(http.StatusServiceUnavailable)
+							return
+						}
+						proxy++
+						w.Header().Set("Content-Type", "video/mp4")
+						_, _ = w.Write([]byte("original video"))
+					default:
+						t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+						w.WriteHeader(http.StatusNotFound)
 					}
-					proxy++
-					w.Header().Set("Content-Type", "video/mp4")
-					_, _ = w.Write([]byte("original video"))
-				default:
-					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusNotFound)
+				}))
+				defer server.Close()
+				ctx := WithEndpoints(context.Background(), Endpoints{BeefAPIVideoBaseURL: server.URL})
+				policy := DefaultVideoPollPolicy()
+				policy.Sleep = func(context.Context, time.Duration) error { return nil }
+				result, err := RunVideoTaskWithPolicy(ctx, Input{Mode: "video", Prompt: "pottery", Config: Config{BaseURL: server.URL, APIKey: "test-key", InterfaceType: "newapi", Model: "seedance-2.0-fast", VideoSeconds: "5", VQuality: "720P", Size: "16:9"}}, policy)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}))
-			defer server.Close()
-			ctx := WithEndpoints(context.Background(), Endpoints{BeefAPIVideoBaseURL: server.URL})
-			policy := DefaultVideoPollPolicy()
-			policy.Sleep = func(context.Context, time.Duration) error { return nil }
-			result, err := RunVideoTaskWithPolicy(ctx, Input{Mode: "video", Prompt: "pottery", Config: Config{BaseURL: server.URL, APIKey: "test-key", InterfaceType: "newapi", Model: "seedance-2.0-fast", VideoSeconds: "5", VQuality: "720P", Size: "16:9"}}, policy)
-			if err != nil {
-				t.Fatal(err)
-			}
-			video, _ := result["video"].(map[string]interface{})
-			_, data, err := DecodeProviderDataURL(stringField(video, "dataUrl"))
-			if err != nil || string(data) != "original video" || creates != 1 || polls != 1 || direct != 1 || proxy != 1 {
-				t.Fatalf("result=%v creates=%d polls=%d direct=%d proxy=%d error=%v", result, creates, polls, direct, proxy, err)
-			}
-		})
+				video, _ := result["video"].(map[string]interface{})
+				_, data, err := DecodeProviderDataURL(stringField(video, "dataUrl"))
+				if err != nil || string(data) != "original video" || creates != 1 || polls != 1 || direct != 1 || proxy != 1 {
+					t.Fatalf("result=%v creates=%d polls=%d direct=%d proxy=%d error=%v", result, creates, polls, direct, proxy, err)
+				}
+			})
+		}
 	}
 }
 

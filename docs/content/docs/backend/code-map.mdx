@@ -22,6 +22,10 @@ Wails / local dev
 
 ## 主要目录
 
+章节分镜结果回填由 `web/src/pages/projects/detail/chapters.tsx` 协调；`chapter-storyboard-recovery-review.tsx` 在写入前展示资产重名核对，`chapter-storyboard-production.ts` 将确认结果转为镜头脚本。`web/src/lib/project-shot-asset-matching.ts` 默认拒绝歧义，核对模式仅接受用户从候选中明确选择的资产，不自动合并或删除同名资产。
+
+角色造型目录、标注、空图新造型、镜头选择与生成前核对位于 `backend/internal/project/character_reference.go`；原子选择事务在 `repository/character_reference.go`，v18 迁移在 `database/local_schema_character_looks.go`。前端 `lib/character-look-selection.ts` 负责候选与模型结果校验，`services/project-character-references.ts` 负责文本任务编排，角色造型管理和镜头右侧入口分别在 `project-character-looks-modal.tsx`、`workflow-character-references.tsx`；`workflow-shot-references.ts` 统一构建精确版本的图片、声音和提交快照。
+
 主角人脸预设由 `web/src/pages/projects/detail/project-character-face-presets-modal.tsx` 管理上传与角色绑定，`web/src/lib/project-character-face-presets.ts` 解析预设并生成身份约束，`project-character-media.ts` 在单张与批量角色生图前读取最新预设并提交参考图。`backend/internal/project/character_face_presets.go` 校验资源归属、角色绑定与项目范围，`projects.character_face_presets_json` 保存小型配置；数据库 v17 的追加列迁移与就绪检查位于 `database/local_schema_character_face_presets.go`，资源引用与删除保护仍由 `repository/resource_reference.go` 处理。
 
 | 边界 | 位置 | 职责 |
@@ -52,6 +56,13 @@ Wails / local dev
 - `web/src/lib/asset-workflows.ts`：按稳定画布 ID 及资源关联识别工作流，收集当前文本和媒体快照。
 - `web/src/pages/assets/asset-transfer.ts`：资产包清单、原始文件打包、导入校验及目标设备资源重映射。
 - `backend/cmd/desktop/artifact_stream.go`：`BeginOwnedArtifact` 由保存对话框创建临时文件；`AppendOwnedArtifact` 按偏移校验最多 1MB 分块，完整写入后原子替换；`AbortOwnedArtifact` 与应用退出清理未完成文件。文件路径不由前端指定，单包最大 8GB。
+
+### 画布参考模板
+
+- `web/src/lib/canvas/canvas-reference-templates.ts`：模板校验、筛选、图片节点去重、共享连线归属以及提示词编号同步。
+- `web/src/services/canvas-reference-templates.ts`：按用户 scope 的 localforage 模板/Blob 目录、内容哈希及应用时的工作区资源物化。
+- `web/src/components/canvas/canvas-reference-template-modal.tsx`：单图导入、组合编辑、收藏、筛选和删除确认；相邻 hook 管理目录读取与缩略图生命周期。
+- `web/src/pages/canvas/use-canvas-reference-templates.ts`：模型图片上限、项目/节点/账号有效性及节点与连线提交；`canvas-node-generation.ts` 按实际参考图片顺序编译模板用途。
 
 ### Agent 小说改编
 

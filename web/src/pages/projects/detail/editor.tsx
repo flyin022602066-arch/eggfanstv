@@ -435,7 +435,7 @@ export default function ProjectEditorView({ detail }: { detail: ProjectDetail })
     }, [assets, canvasSyncKeys, projectId, refreshAssets]);
 
     return (
-        <EditorStoreProvider store={store} host={{ projectId, assets, refreshAssets, openExport: () => { setRightTab("export"); setRightCollapsed(false); setAiOpen(false); } }}>
+        <EditorStoreProvider store={store} host={{ projectId, assets, episodeContext: detail, refreshAssets, openExport: () => { setRightTab("export"); setRightCollapsed(false); setAiOpen(false); } }}>
             <div ref={workbenchRef} className="editor-workbench relative flex h-full min-h-0 flex-col bg-[var(--director-workspace-bg)]">
                 <EditorTopBar
                     onExport={() => setRightTab("export")}

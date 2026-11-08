@@ -89,7 +89,7 @@ type Props = {
         };
     };
     onClose: () => void;
-    onConfirm: (ids: string[], expectedScope: CapturedUserScope) => Promise<void> | void;
+    onConfirm: (ids: string[], expectedScope: CapturedUserScope, selectedItems: AssetLibraryPickerItem[]) => Promise<void> | void;
     onFolderAction?: (folderId: string, expectedScope: CapturedUserScope) => Promise<void> | void;
 };
 
@@ -288,7 +288,10 @@ function AssetLibraryPickerModalSession({
         setError("");
         try {
             const confirmed = await runAssetViewAction(entryScope, async (scope) => {
-                await onConfirm(selectedIds, scope);
+                const selectedItems = selectedIds
+                    .map((id) => resolvePickerCatalogItem(id, allItems, useRemoteItems ? remoteItems : []))
+                    .filter((item): item is AssetLibraryPickerItem => Boolean(item));
+                await onConfirm(selectedIds, scope, selectedItems);
                 return true;
             });
             if (!confirmed) return;

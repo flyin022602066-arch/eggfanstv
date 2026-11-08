@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createJSONStorage } from "zustand/middleware";
 
-import { VideoSettingsPanel } from "../src/components/video-settings-panel";
+import { TowoVideoReferenceSettings, VideoSettingsPanel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { buildGenerationConfig, buildVideoGenerationMetadata } from "../src/lib/canvas/canvas-project-generation";
-import { isEggfansSd2DModel, normalizeSd2FaceMaskMode } from "../src/lib/eggfans-sd2-face-mask";
+import { isEggfansSd2DModel, isTowoSd25Model, normalizeSd2FaceMaskMode, usesTowoLocalFaceMask } from "../src/lib/eggfans-sd2-face-mask";
 import { jiasuFaceMaskCacheKey } from "../src/lib/jiasu-face-mask";
 import { backendProviderConfig, prepareBackendGenerationTask } from "../src/services/api/generation-task";
-import { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } from "../src/stores/use-config-store";
+import { createModelChannel, defaultConfig, normalizeConfigSnapshot, resolveModelRequestConfig, useConfigStore } from "../src/stores/use-config-store";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 function configFor(protocol = "eggfans-sd2-video", model = "sd-2.5-D") {
@@ -105,5 +105,79 @@ describe("SD2 D local face masks", () => {
             useConfigStore.setState(original, true);
             useConfigStore.persist.setOptions({ storage });
         }
+    });
+});
+
+describe("Towo Seedance 2.5 local face masks", () => {
+    test("off preserves the original owned reference without requiring face processing", async () => {
+        const config = { ...configFor("towo-sd25-video", "seedance-2.5"), videoSd2FaceMask: "off" };
+        const image = { id: "original", name: "原图", type: "image/png", dataUrl: "", storageKey: "resource:towo-original" };
+        const prepared = await prepareBackendGenerationTask({ mode: "video", config, prompt: "scene", referenceImages: [image] });
+        const input = prepared.input as { config: Record<string, unknown>; referenceImages: Array<{ storageKey: string }> };
+
+        expect(input.referenceImages[0]?.storageKey).toBe("resource:towo-original");
+        expect(input.config.interfaceType).toBe("towo-sd25-video");
+        expect(input.config).not.toHaveProperty("face");
+        expect(input.config).not.toHaveProperty("nativeFace");
+    });
+
+    test("shows the Towo face-mask controls in the workflow settings surface", () => {
+        const html = renderToStaticMarkup(<TowoVideoReferenceSettings config={{ ...configFor("towo-sd25-video", "seedance-2.5"), videoSd2FaceMask: "grid" }} theme={canvasThemes.dark} onConfigChange={() => {}} />);
+
+        expect(html).toContain("人脸处理");
+        expect(html).toContain('aria-label="自动人脸遮罩"');
+        expect(html).toContain('aria-label="网格密度"');
+        expect(html).toContain("50%");
+        expect(html).toContain("60%");
+        expect(html).toContain("75%");
+        expect(html).toContain("上传 Uguu");
+    });
+
+    test("shows local masking without exposing an undocumented native face option", () => {
+        const config = configFor("towo-sd25-video", "seedance-2.5");
+        expect(config.channels[0]?.baseUrl).toBe("https://towoapi.com");
+        expect(resolveModelRequestConfig(config, config.model).interfaceType).toBe("towo-sd25-video");
+        const html = renderToStaticMarkup(<VideoSettingsPanel config={config} theme={canvasThemes.dark} onConfigChange={() => {}} />);
+        expect(isTowoSd25Model("towo-sd25-video", "channel::seedance-2.5")).toBe(true);
+        expect(isTowoSd25Model("eggfans-sd2-video", "seedance-2.5")).toBe(false);
+        expect(usesTowoLocalFaceMask("towo-sd25-video", "seedance-2.5", "grid-75")).toBe(true);
+        expect(usesTowoLocalFaceMask("towo-sd25-video", "seedance-2.5", "off")).toBe(false);
+        expect(html).toContain("自动人脸遮罩");
+        expect(html).toContain("Towo 不发送 native_face");
+        expect(html).not.toContain('aria-label="过人脸"');
+        expect(backendProviderConfig(config, "video")).not.toHaveProperty("face");
+        expect(backendProviderConfig(config, "video")).not.toHaveProperty("nativeFace");
+    });
+
+    test("recognizes legacy Towo channels that only saved the domain and model", () => {
+        const config = normalizeConfigSnapshot({ config: {
+            ...defaultConfig,
+            channels: [createModelChannel({
+                id: "legacy-towo",
+                name: "Towo",
+                baseUrl: "https://towoapi.com",
+                apiKey: "synthetic-key",
+                models: ["seedance-2.5"],
+                modelProfiles: [{ model: "seedance-2.5", capability: "video" }],
+            })],
+            model: "legacy-towo::seedance-2.5",
+            videoModel: "legacy-towo::seedance-2.5",
+        } }).config;
+
+        expect(resolveModelRequestConfig(config, config.model).interfaceType).toBe("towo-sd25-video");
+        expect(renderToStaticMarkup(<VideoSettingsPanel config={config} theme={canvasThemes.dark} onConfigChange={() => {}} />)).toContain("自动人脸遮罩");
+    });
+
+    test("persists Towo mask mode and overrides separately from EggFans SD2", () => {
+        const towoFaceMasks = { source: { sourceHash: "towo-hash", regions: [{ id: "face", x: 0.1, y: 0.1, width: 0.3, height: 0.3 }] } };
+        const node: CanvasNodeData = { id: "video", type: CanvasNodeType.Video, title: "Towo", position: { x: 0, y: 0 }, width: 400, height: 240, metadata: { towoFaceMask: "grid-75", towoFaceMasks, sd2FaceMask: "mosaic", sd2FaceMasks: { other: { sourceHash: "sd2-hash", regions: [] } } } };
+        const config = configFor("towo-sd25-video", "seedance-2.5");
+        expect(resolveModelRequestConfig(config, config.model).interfaceType).toBe("towo-sd25-video");
+        const built = buildGenerationConfig(config, node, "video");
+        expect(built.videoSd2FaceMask).toBe("grid-75");
+        const metadata = buildVideoGenerationMetadata(node, undefined, built);
+        expect(metadata).toMatchObject({ towoFaceMask: "grid-75", towoFaceMasks });
+        expect(metadata).not.toHaveProperty("sd2FaceMasks");
+        expect(backendProviderConfig(built, "video")).not.toHaveProperty("face");
     });
 });

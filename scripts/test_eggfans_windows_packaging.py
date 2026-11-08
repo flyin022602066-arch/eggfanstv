@@ -1,8 +1,12 @@
 import hashlib
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -24,6 +28,8 @@ RUNTIME_FILES = (
     'agent-host/runtime/node.exe',
     'cli/beeftv.exe',
 )
+SKILL_PACKAGES = json.loads(Path(__file__).with_name('bundled-skill-packages.json').read_text(encoding='utf-8'))
+SKILL_FILES = tuple('skill-packages/' + name + '.zip' for name in SKILL_PACKAGES)
 
 
 class EggfansWindowsPackagingTests(unittest.TestCase):
@@ -47,6 +53,12 @@ class EggfansWindowsPackagingTests(unittest.TestCase):
             'cli/beeftv.exe': b'MZ fixture cli',
             'cli/support/runtime.dll': b'fixture cli dependency',
         }
+        for name, reference in SKILL_PACKAGES.items():
+            content = io.BytesIO()
+            with zipfile.ZipFile(content, 'w', zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('SKILL.md', '---\nname: ' + name.split('/')[-1] + '\n---\nFixture skill')
+                archive.writestr(reference, 'Fixture reference')
+            self.runtime_files['skill-packages/' + name + '.zip'] = content.getvalue()
         self.write(self.binary_root / 'EggfansTV.exe', b'MZ fixture application')
         for name, content in self.runtime_files.items():
             self.write(self.binary_root / name, content)
@@ -107,7 +119,7 @@ class EggfansWindowsPackagingTests(unittest.TestCase):
         self.assertFalse(destination.with_suffix('.zip').exists())
 
     def test_portable_rejects_missing_or_empty_runtime_entries_before_copying(self):
-        for name in RUNTIME_FILES:
+        for name in RUNTIME_FILES + SKILL_FILES:
             source = self.binary_root / name
             original = source.read_bytes()
             for invalid in ('missing', 'empty'):
@@ -167,7 +179,7 @@ class EggfansWindowsPackagingTests(unittest.TestCase):
         self.assertFalse((self.root / 'installer.exe').exists())
 
     def test_installer_rejects_runtime_entries_missing_from_manifest_or_empty(self):
-        for name in RUNTIME_FILES:
+        for name in RUNTIME_FILES + SKILL_FILES:
             for invalid in ('unlisted', 'empty'):
                 with self.subTest(path=name, invalid=invalid):
                     payload, manifest = self.payload_manifest()
@@ -194,6 +206,80 @@ class EggfansWindowsPackagingTests(unittest.TestCase):
         (payload / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'User data must not be included'):
             self.run_installer_validation(payload)
+
+    def run_skill_builder(self, source, destination):
+        script = Path(__file__).with_name('package-bundled-skills.mjs').resolve()
+        self.assertTrue(script.is_file(), 'Windows release has no bundled skill ZIP builder')
+        bun = os.environ.get('BEEFTV_BUN_BIN') or shutil.which('bun')
+        self.assertTrue(bun, 'Bun is required for the offline skill packaging tests')
+        return subprocess.run([bun, str(script), str(source), str(destination)], cwd=self.root, capture_output=True, text=True, encoding='utf-8')
+
+    def skill_source_fixture(self):
+        source = self.root / 'skill sources with spaces'
+        repository = Path(__file__).resolve().parents[1]
+        for name in SKILL_PACKAGES:
+            shutil.copytree(repository / 'skill-packages' / name, source / name)
+        return source
+
+    def test_windows_skill_builder_creates_registered_archives_with_references(self):
+        source = self.skill_source_fixture()
+        destination = self.root / 'release with spaces' / 'skill-packages'
+        result = self.run_skill_builder(source, destination)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({path.relative_to(destination).as_posix() for path in destination.rglob('*.zip')}, {name + '.zip' for name in SKILL_PACKAGES})
+        original = {}
+        for name, reference in SKILL_PACKAGES.items():
+            path = destination / (name + '.zip')
+            original[name] = path.read_bytes()
+            with zipfile.ZipFile(path) as archive:
+                self.assertIsNone(archive.testzip())
+                expected = {path.relative_to(source / name).as_posix(): path.read_bytes() for path in (source / name).rglob('*') if path.is_file()}
+                self.assertEqual(set(archive.namelist()), set(expected))
+                self.assertIn('SKILL.md', expected)
+                self.assertIn(reference, expected)
+                for entry, content in expected.items():
+                    self.assertEqual(archive.read(entry), content)
+                    self.assertNotIn('\\', entry)
+        sentinel = destination / 'unrelated.zip'
+        sentinel.write_bytes(b'preserve unrelated package')
+        result = self.run_skill_builder(source, destination)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name, content in original.items():
+            self.assertEqual((destination / (name + '.zip')).read_bytes(), content)
+        self.assertEqual(sentinel.read_bytes(), b'preserve unrelated package')
+
+    def test_windows_skill_builder_rejects_incomplete_or_misnamed_sources(self):
+        source = self.skill_source_fixture()
+        for name, reference in SKILL_PACKAGES.items():
+            for entry in ('SKILL.md', reference):
+                path = source / name / entry
+                original = path.read_bytes()
+                for invalid in ('missing', 'empty'):
+                    with self.subTest(package=name, entry=entry, invalid=invalid):
+                        path.unlink() if invalid == 'missing' else path.write_bytes(b'')
+                        destination = self.root / 'invalid release' / 'skill-packages'
+                        try:
+                            result = self.run_skill_builder(source, destination)
+                        finally:
+                            path.write_bytes(original)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(name, result.stderr)
+                        self.assertIn(entry, result.stderr)
+                        self.assertFalse(destination.exists())
+        path = source / next(iter(SKILL_PACKAGES)) / 'SKILL.md'
+        path.write_text('---\nname: wrong-package\n---\nFixture', encoding='utf-8')
+        result = self.run_skill_builder(source, self.root / 'wrong name release')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('name', result.stderr)
+
+    def test_windows_release_build_generates_skill_packages_after_clean_build(self):
+        script = Path(__file__).with_name('build-beeftv-windows-release.ps1').read_text(encoding='utf-8-sig')
+        invocation = re.search(r'Invoke-NativeExecutable[^\n]*package-bundled-skills\.mjs[^\n]*', script)
+        self.assertIsNotNone(invocation, 'Windows release never generates bundled skill ZIPs')
+        self.assertGreater(invocation.start(), script.index('Test-DesktopIconResources -ExecutablePath $exePath'))
+        self.assertIn('$bunPath', invocation.group())
+        self.assertIn('Join-Path $repoRoot "skill-packages"', invocation.group())
+        self.assertIn('Join-Path $binDir "skill-packages"', invocation.group())
 
 
 if __name__ == '__main__':

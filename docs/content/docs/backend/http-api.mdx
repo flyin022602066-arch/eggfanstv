@@ -12,6 +12,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 - 成功响应为 `{ "code": 0, "data": ... }`；错误响应保留结构化 `code/reason/msg`。
 - 写入接口限制 body 大小并校验资源归属；不信任前端提供的文件路径、模型能力或 provider 状态。
 - 外部模型密钥由本地 provider config 管理，不在 API 日志或任务列表中返回。
+- 角色设定图任务的列表摘要在 `clientContext.characterVersionId` 返回目标造型版本，仅对 `character-turnaround:` 节点投影，供界面按造型展示任务状态；不返回完整任务输入或模型凭据。
 
 自定义模型服务的配置仍由受保护的工作区配置接口提供给当前界面；运行时内存和生成请求可能包含凭据。浏览器持久配置缓存不保存 API Key、Secret Key 或自定义 Header，启动后从后端加载。内置 BeefAPI 继续使用后端凭据引用。配置导出会遮盖密钥和 Header 值；回填脱敏标记时必须匹配原渠道与 Header 名称，不能借用其他渠道的密钥。
 
@@ -27,9 +28,40 @@ Suno 音乐导演台也复用该中转入口，仅允许已发布的 26 个 `/su
 
 ## 核心路由组
 
+章节资产提取不对模型正文进行本地敏感词审核，也不按正文或返回文本字数判定审核失败。上游明确返回 `finish_reason: content_filter` 时仍视为上游拒绝，不自动续接或将半成品写入资产。失败提示明确标注上游来源并保留 `content_filter`、`finish_reason` 和可用的请求编号；流式响应在前一事件提供的请求编号继续用于终止事件。诊断仅记录错误元数据，不复制章节正文。HTTP 或 API 后台显示调用成功不能替代内容完成状态。
+
+章节资产提取使用项目完整的未归档角色造型目录作为身份与视觉连续性参考，不将总库角色作为本章出镜证据。`looks[].changeReason` 描述相对已有版本的明确视觉差异，`sourceEvidence` 为本章原文的逐字引用；普通表情、动作、道具和未明确衣着不构成新造型。服务端按本项目标准姓名优先、已确认别名其次核对：无有效新造型依据时复用角色，以 `confirmed` 候选和 `resolvedAssetId` 记录本章关联，不新建角色或改动原图、声音、镜头引用。有依据的新造型保留待确认并在 `detailsJson._characterMatch` 返回归属及差异说明；该元信息由服务端生成，不信任请求中的同名字段。默认确认再次核对项目库；多个同名目标必须显式选择归并，不自动挑第一个，也不新建第三个。此流程不自动合并或删除历史重复资产。
+
+角色多造型接口均校验当前 owner、项目活动状态和角色归属：
+
+角色资产摘要中的 `characterLookCount` 是未归档的不同造型数量，`versionCount` 保留历史版本数量语义；初始设定与同造型重绘不重复计为新造型。角色生成入口按造型分别提交图片任务，先完成基础造型，再以基础版人脸编辑后续造型。显式选择某一历史版本时，仅生成该版本。
+
+| 方法与路径 | 合同 |
+| --- | --- |
+| `GET /projects/:id/character-versions` | 返回 `{ revision, versions }`，包含未归档角色历史版本的精确设定、图片、声音、`referenceProfile` 和 `updatedAt` |
+| `DELETE /projects/:id/characters/:assetId/versions/:versionId` | 必填 query `expectedUpdatedAt`（RFC3339 日期时间，须 URL 编码），不发送请求体；成功返回 `{ deleted: true }`，仅将版本状态设为 `archived` |
+| `PATCH /projects/:id/characters/:assetId/versions/:versionId/reference-profile` | `{ expectedUpdatedAt, profile }`；profile 含 `lookId/name/description/matchHints/excludeHints/enabled/preferred/default`。定稿或默认要求就绪参考图，同组定稿和角色默认唯一 |
+| `POST /projects/:id/characters/:assetId/looks` | `{ baseVersionId, profile, definition }`；创建空图新造型，保留基础角色身份/声音，返回 `{ version }` |
+| `POST /projects/:id/characters/:assetId/looks/extract` | `{ baseVersionId, expectedUpdatedAt }`；本地拆分已有多套设定，返回 `{ versions }`；保留历史图与旧镜头，不调用模型、不重复创建 |
+| `PUT /projects/:id/units/:unitId/character-references` | `{ expectedRevision, choices }`；每项含 `shotId/assetId/versionId/status/source/locked/reason/expectedShotRevisionId`。单次最多 1000 项，事务内全成或全败；项目或脚本变化、镜头生成中、自动覆盖锁定返回冲突 |
+
+`choices.status` 为 `resolved` 或 `pending`，`source` 为 `manual/auto/rule`。自动 resolved 仅接受启用且有图片的造型定稿。缺图或不属于该角色的版本返回参数错误。人工选择可以使用非定稿历史图片。图片替换接口支持 `baseVersionId`；角色生图任务 metadata 的 `characterVersionId` 固定提交时基础版本，任务完成后不借用期间修改过的新设定。
+
+分镜角色区支持从项目资产手动补绑已有图片的角色并锁定精确版本。自动识别同时核对章节正文与镜头中的可见动作，不以对白提及或资产声明作为出镜依据；显式人物列表和群体站位属于可见证据。角色提取保留有独立名称、动作或对白的群体成员，共用群体标签不能使不同人物被别名去重。章节资产提取在候选写入成功后标记完成并跳转该章节资产页，写入失败保留错误；已回填的任务不会重复自动跳转。
+
+删除单个造型版本允许未使用的历史版本、空图版本和有备选的当前主版本；删除主版本时优先切换到最近的有就绪参考图的未归档版本，没有图片时使用最近的未归档版本，并同步角色资产的主版本指针、状态与设定快照。最后一个未归档版本不能单独删除，需使用“移除角色资产”。版本、表现、原始资源、声音绑定及任务记录均保留，不触发媒体物理删除或任务取消。角色造型目录不再返回归档版本；归档版本不可重新标注、作为新造型或拆分基础、作为角色生图源、替图或生图回填基础，亦不可绑定到镜头。
+
+删除在同一事务中校验项目活动状态、角色归属、版本更新时间及主版本/备选修订，检查所有当前 `linked` 镜头引用、当前用户画布中的固定版本/动态主版本/资源引用，以及排队或生成中任务的版本/资源引用。被引用或引用数据无法解析时返回 HTTP 409 并提示先解除引用、修复画布或等待/取消任务；已完成任务不阻止删除。缺少或无效的 `expectedUpdatedAt`、最后版本和非活动项目返回 400；项目、角色或版本不存在/无权访问/版本已归档返回 404；修订变化返回 409。失败事务不改变主版本、版本状态或项目修订。
+
+拆分与候选造型去重仅统计未归档版本；删除后允许从仍可用的基础设定重建同一 `lookId`，生成新的版本 ID 和递增版本号，不复活或覆盖归档记录。
+
+分镜制作的图片/视频任务携带 `characterReferenceSnapshot`（每项含 `assetId/versionId/resourceId/lookId/lookName/reason/locked`）以及项目、章节、镜头、脚本修订。任务入队前核对当前绑定、判定状态、图片资源归属和实际提交资源；pending、过期自动判定、同人多版本或缺图时拒绝提交。镜头使用历史版本时，图片和声音均按该版本读取，不借用当前新版本。
+
 `POST /tasks/:id/stop-local` 供当前桌面界面对单条排队中或生成中的视频任务执行“仅本地停止”。服务校验任务归属与视频类型，持久化为 `cancelled`、阶段为“本地已停止”，清除本地轮询计划与执行租约，并停止当前进程的等待。该接口不发送上游取消或查询请求，不声明上游已取消；保留上游任务 ID、输入和历史记录。已在本地停止的任务重复请求返回同一状态，其他终态不修改。旧 worker 的延迟轮询与完成结果不能覆盖已停止状态。重新生成由用户另行发起，可能产生新的上游费用。入口默认折叠在镜头视频右侧产物预览下方和任务详情的“高级任务操作”中。
 
-`PUT /projects/:id/characters/:assetId/representations` 是主动替换角色参考图：校验本地图片资源归属后，在同一事务中创建角色新版本，并将本项目中该角色已绑定的镜头参考切换到新版本，保留引用顺序。已生成的旧产物标记为待更新但不删除文件；已提交任务的输入快照和运行状态不变。修改角色文字设定、声音或普通自动匹配不会擅自改写固定的历史版本。镜头缩略图和预览使用与生成提交相同的绑定版本，不使用角色当前主版本冒充提交图片。
+`PUT /projects/:id/characters/:assetId/representations` 校验本地图片资源归属后，在同一事务中创建角色新版本；可用 `baseVersionId` 指定历史基础版本。重绘、替换参考图或修改角色设定不会切换旧镜头的固定引用，旧产物及已提交任务快照保持原样。用户需在「角色造型参考」中显式切换版本；真正切换绑定时，对应旧产物才标记为待更新。镜头缩略图、预览和生成提交使用同一绑定版本。
+
+`POST /projects/:id/assets/:assetId/replace-image` 用于场景和道具资产的手动换图：请求体为 `{ "resourceId": "..." }`，服务端校验项目、资产分类、图片资源归属和就绪状态，在同一事务中创建新的已确认资产版本，并把本项目所有镜头引用同步到新版本。前端可从个人素材库选择图片或先上传本地图片；原版本保留在历史记录中，其他项目和角色资产不受影响。
 
 `PATCH /projects/:id` 支持 `characterFacePresetsJson` 字符串，内容为 `{ "male": { "resourceId": "…", "fileName": "男主.png", "assetIds": ["…"] }, "female": { "resourceId": "…", "assetIds": ["…"] } }`。两项均可省略，`{}` 清空预设。接口校验项目归属、活动状态、图片资源归属与就绪状态，以及本项目角色绑定；允许先保存图片后绑定角色，同一角色不能绑定男女主两种面孔。`GET /projects/:id/core` 返回已持久化的预设。单张及批量角色生图提交前读取最新预设，将对应 `resource:` 图片放入 `referenceImages`，将人脸身份约束放入受保护的角色设定变量，沿用现有图片协议及产物回填。保存预设不会替换已有角色图或启动模型任务。
 
@@ -74,6 +106,8 @@ Suno 音乐导演台也复用该中转入口，仅允许已发布的 26 个 `/su
 ## 统一操作层与内置创作助手
 
 ### 视频预览
+
+`POST /resources/suno-media` 接收 `{ url, clipId, kind: "audio" | "video", durationMs? }` 和必填 `X-Idempotency-Key`，只取回已生成的 Suno 原媒体，返回 `{ resource }`。当前用户、幂等身份、实际文件类型、生成文件大小、出口地址及每次重定向均被校验；下载不携带模型 Key、Cookie 或桌面令牌。下载使用独立的三分钟期限，客户端不套用业务 JSON 的四秒超时。成功后复用本地原件；网络、失效链接、非媒体响应与存储失败只报告本地取回错误，不修改上游状态、不重提创作。该窄接口不恢复旧的通用 `/resources/import`。
 
 `POST /resources/:id/playback` 校验资源归属，为已上传完成的本地 H.265 或 MPEG-4 Part 2 视频按需准备 H.264 预览，返回最新资源状态。已在处理或已完成时复用现有任务和文件，失败后再次请求可重试。导入和应用启动不会主动转换全部视频。
 
@@ -171,9 +205,11 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 
 章节分镜替换与角色候选写入可携带 `sourceTaskId`。服务端核对原任务、用户、项目、章节和生成类型，并将结果写入与稳定操作回执放在同一事务中。同一任务和内容重放返回原回执，不覆盖之后的人工编辑；更换内容返回 `409 operation_id_reused_with_different_payload`。分镜仍须提交批准时的 `expectedRevision` 与 `expectedShotIds`；冲突为 `409 project_revision_conflict` 或 `project_unit_shots_changed`。
 
+章节资产提取携带 `sourceTaskId` 保存成功时，以本次完整结果整体替换该集的全部 `pending_confirmation` 资产草稿（角色、场景、道具，不限草稿来源），不追加历史草稿。去重前排除即将替换的本集草稿，避免旧内容挡住新提取；已确认资产、章节关联及其他集草稿保留。合法空结果会清空本集旧草稿；校验失败或数据库写入失败则回滚，旧草稿不变。无 `sourceTaskId` 的手动补提仍按增量保存。
+
 `GET /projects/:id/chapter-apply-receipts?taskIds=` 查询最多 100 个任务的已提交回执。页面不以更新时间猜测是否写入；没有回执的分镜结果保留待核对，确认后可直接写入，不重新生成。
 
-`POST /tasks/:id/query-provider` 用于取回失败视频任务的原有结果：校验归属、持久化的供应商任务 ID 和协议支持后，只查询状态及下载，不重新提交生成。恢复成功会保存任务结果并登记产物；正在处理时返回 `recovered=false`。没有原任务 ID 的记录不能凭本地 ID 自动找回。已发出但未取得回执的提交标记为 `submission_unknown`，阻止付费重试；明确限流、鉴权拒绝或尚未发送的请求保留对应错误类别。
+`POST /tasks/:id/query-provider` 用于取回失败视频任务的原有结果：校验归属、持久化的供应商任务 ID 和协议支持后，只查询状态及下载，不重新提交生成。恢复成功会保存任务结果并登记产物；正在处理时返回 `recovered=false`。没有原任务 ID 的记录不能凭本地 ID 自动找回。已发出但未取得回执的提交标记为 `submission_unknown`，阻止付费重试；明确限流、鉴权拒绝或尚未发送的请求保留对应错误类别。上游明确返回 `model_not_found` 且未提供任务 ID、也不是幂等重放时，保留“模型或接口不可用”错误，即使 HTTP 状态是 503，也不误标为提交待确认；普通 5xx 和网络中断仍保留结果未知语义。
 
 NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID 并继续后台取回，自动恢复最长到任务开始后 24 小时；超出窗口后可在失败任务详情手动取回。任务日志接口提供脱敏的 `summary`，不返回原始 `message` / `payload` 内容；摘要不写回数据库。
 
@@ -184,6 +220,10 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 镜头生成面板、任务详情和画布失败提示提供“失败日志”，显示同一份脱敏诊断及已记录的请求轨迹；镜头面板默认展开，画布节点可手动展开。上游 HTTP 或业务错误优先展示实际响应摘要、错误码、HTTP 状态和请求 ID，不被通用的“生成失败”或“提交结果尚未确认”提示覆盖；提交前的本地校验和提交后的界面同步错误单独标注。没有请求证据的旧任务不推断上游是否收到，不自动重新提交或收费。
 
 `failureDiagnostics` 同时保留本轮执行证据：运行版本和平台、任务配置中的模型/尺寸/质量/数量、提示词长度、参考素材数量与图片大小、本地参考图限制，以及最多 8 次请求（首次及最近 7 次，省略数量另计）的发起状态、HTTP 状态、请求 ID、开始时间、耗时和字节数。任务配置不等于最终出站参数；协议可能转换或省略字段，核对实际发送值须凭请求 ID 关联请求日志。HTTP 200 仅表示收到响应；`executionResult=completed` 才表示生成处理完成。转后台回查时状态为 `pending`，同一次任务继续累积有界轨迹并保留首次请求。成功任务也保存这些证据，以便区分后续本地保存失败或画布应用失败（复制内容来源为 `client_result`）。请求轨迹覆盖统一 Provider HTTP 客户端；旧记录、未经过该客户端的插件请求或上游未提供的 ID 仍可能缺失，不能仅凭空轨迹推断未发送。
+
+## 章节工作区的空集合
+
+`GET /projects/:id/units/:unitId/workspace` 的 `shots`、`shotRevisions` 等集合字段在没有记录时返回 `[]`，不返回 `null`。尚未生成分镜的章节也可读取工作区并按正文提取角色、场景与道具。
 
 ## 项目资产的集数筛选
 
@@ -203,7 +243,7 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 图片节点的「节点信息」面板也可调用 `POST /resources/:id/temporary-image-url` 准备 Uguu 链接。该接口始终使用 Uguu，不受 `CANVAS_PUBLIC_BASE_URL` 影响；仍有效的链接直接复用，失效后自动重传并保存最新链接和预计有效期，便于复制给外部视频模型。Eggfans SD2 的图片参考使用此接口，仅提交公网 HTTPS URL，不调用私域素材库，也不接受 `asset://`。
 
-佳速视频使用独立 `jiasu-video` 协议，仅提供视频能力，默认上游为 `https://www.gway.dev`。`/pricing` 模型目录地址转换为 `/api/pricing?surface=plaza`；本地配置读取和保存时迁移旧佳速默认地址，保留密钥、用户参数及其他渠道。任务配置中的 `videoJiasuFaceMode` 为 `default`、`off`、`light`、`heavy`，只在佳速视频任务中映射为可选 `face`，不复用 SD2 的 `native_face`。创建 `/v1/video/generations`，查询 `/v1/videos/tasks/{task_id}`，结果读取 `result_urls`。媒体统一使用公网 URL，本地原件通过临时图床准备有效地址，跳过所有私域 URI 同步；有本地资源记录时优先使用原件，不复用其他通道的资产 URI。`@图片N`、`@视频N`、`@音频N` 的引用名称与媒体数组顺序同步，首尾帧在 `images[].type` 内提交。H3 每段视频的 `duration_seconds` 来源于本地素材的实际时长，缺失时拒绝提交。
+佳速视频使用独立 `jiasu-video` 协议，仅提供视频能力，默认上游为 `https://www.gway.dev`。`/pricing` 模型目录地址转换为 `/api/pricing?surface=plaza`；本地配置读取和保存时迁移旧佳速默认地址，保留密钥、用户参数及其他渠道。任务配置中的 `videoJiasuFaceMode` 为 `default`、`off`、`light`、`heavy`，只在佳速视频任务中映射为可选 `face`，不复用 SD2 的 `native_face`。创建 `/v1/video/generations`，查询 `/v1/videos/tasks/{task_id}`，结果读取 `result_urls`。视频参考素材恢复沿用原有 Uguu 图床上传流程，不调用 Gway 媒体图床，也不增加图床并发限制；生成请求只携带准备完成的公开 URL。此调整不改变视频 API 请求、TOWO、Eggfans SD2、Mints 或其他自定义渠道。媒体统一使用公网 URL，跳过所有私域 URI 同步；有本地资源记录时优先使用原件，不复用其他通道的资产 URI。`@图片N`、`@视频N`、`@音频N` 的引用名称与媒体数组顺序同步，首尾帧在 `images[].type` 内提交。H3 每段视频的 `duration_seconds` 来源于本地素材的实际时长，缺失时拒绝提交。
 
 佳速 SD 的本地自动人脸遮罩在客户端创建任务之前执行，默认半透明网格，可手动调整或关闭。预览不上传图床；生成时通过现有 `POST /resources` 保存原尺寸 PNG 处理副本，任务图片引用指向副本的 `resource:<id>`，由原有媒体准备流程取得有效公网 URL。原件不替换，副本的失效链接重新上传副本。遮罩样式与区域按用户和原图内容缓存，区域随视频节点保存；本地配置 `videoJiasuFaceMask` 不进入 Provider 上游参数。仅协议 `jiasu-video` 的 `dola-sd-2.5`、`dola-sd-2.0` 应用此流程，H3 和其他渠道保持原来的素材路径。
 
@@ -214,6 +254,8 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 SD2 视频任务的 `input.config.face` 为布尔开关。仅协议为 `eggfans-sd2-video`、开关开启，且准备后的素材实际包含参考图片、参考视频或首帧时，后端向 `POST /v1/videos` 映射 `native_face: true`。关闭、纯文本、仅音频和仅尾帧均省略；内部 `face` 不透传上游。A 至 E 不按模型过滤，D 的本地网格遮罩不覆盖原生开关。已保存的旧任务仍可读取 `videoNativeFace`；新任务显式的 `face: false` 优先于旧值。佳速和 Seedance 不使用该映射。
 
 `GET /resources/:id` 的 `data.resource` 包含最近一次成功上传的 `temporaryImageUrl`、`temporaryImageUploadedAt` 与 `temporaryImageExpiresAt`（预计失效时间）；此读取不会上传或访问图床。上传记录持久化在工作区，重开软件后仍可读取。画布图片的“节点信息”显示未过期的完整 URL 并支持复制，过期后停止提供复制入口；有效期是图床的预计保留时间，远端提前删除仍可能导致链接不可用。
+
+Uguu 临时链接继续沿用原有缓存与可用性检查规则，失效后读取本地原文件重新上传；上传失败按原有本地准备流程返回错误，不切换 Gway 图床，也不会重新提交视频任务或覆盖本地原文件。
 
 ## Eggfans Seedance 与私域素材
 

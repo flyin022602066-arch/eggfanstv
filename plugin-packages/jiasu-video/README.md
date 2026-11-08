@@ -1,4 +1,4 @@
-# 佳速视频
+# 极途 Gway
 
 独立的视频渠道，支持 `dola-sd-2.5`、`dola-sd-2.0`、`minimax-h3`、`sd-2.5-j2-V` 和 `sd-2.5-J2`。在模型配置中单独填写该渠道的 URL、API Key 和请求头，默认地址为 `https://ai.jiasuapi.com`。
 

@@ -14,11 +14,13 @@ import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-con
 import { defaultModelCapabilityConfig, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { applyChannelAdaptation } from "@/lib/channel-adaptation";
 import { BUILTIN_CHANNEL_SEEDS, isChannelVisibleInPackagedSettings } from "@/lib/builtin-channels";
+import { HANBAO_MODEL_NAMES, HANBAO_PROTOCOL, isHanbaoChannel } from "@/lib/hanbao";
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
 import { normalizeProjectAssetImagePresets, type ProjectAssetImagePresets } from "@/lib/project-asset-image-preferences";
 import { normalizeProjectWorkflowModels, type ProjectWorkflowModels } from "@/lib/project-workflow-model-preferences";
-import { normalizeChapterStoryboardModes, normalizeChapterStoryboardSkills, type ChapterStoryboardModes, type ChapterStoryboardSkills } from "@/lib/chapter-storyboard-mode";
+import { normalizeChapterDialogueConstraintModes, normalizeChapterStoryboardModes, normalizeChapterStoryboardSkills, type ChapterDialogueConstraintModes, type ChapterStoryboardModes, type ChapterStoryboardSkills } from "@/lib/chapter-storyboard-mode";
+import { normalizeProjectSystemPresentations, type SystemPresentationSettings } from "@/lib/chapter-system-presentation";
 import { seedancePortraitLabel, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
 import type { VideoBilling } from "@/lib/video-billing";
 
@@ -398,7 +400,9 @@ export type ModelChannel = {
 };
 
 export type AiConfig = {
+    projectSystemPresentations?: Record<string, SystemPresentationSettings>;
     projectChapterStoryboardModes?: ChapterStoryboardModes;
+    projectChapterDialogueConstraintModes?: ChapterDialogueConstraintModes;
     projectChapterStoryboardSkills?: ChapterStoryboardSkills;
     projectWorkflowModels?: ProjectWorkflowModels;
     projectAssetImagePresets?: ProjectAssetImagePresets;
@@ -454,6 +458,7 @@ export type ModelCapability = "image" | "video" | "text" | "audio";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const EGGFANS_BASE_URL = "https://api.eggfans.com";
 const EGGFANS_CATALOG_URL = `${EGGFANS_BASE_URL}/pricing`;
+const TOWO_BASE_URL = "https://towoapi.com";
 const JIASU_BASE_URL = "https://www.gway.dev";
 const JIASU_CATALOG_URL = `${JIASU_BASE_URL}/pricing`;
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
@@ -653,8 +658,8 @@ export function channelHasManagedBeefAPICredential(channel: Pick<ModelChannel, "
     return channel.credentialRef === MANAGED_BEEFAPI_CREDENTIAL_REF || channel.hasApiKey === true;
 }
 
-export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey">) {
-    return channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
+export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey"> & Partial<Pick<ModelChannel, "interfaceType" | "modelProfiles">>) {
+    return isHanbaoChannel(channel) || channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
@@ -739,6 +744,11 @@ function mergeBuiltinChannelSeeds(channels: ModelChannel[]): ModelChannel[] {
             continue;
         }
         const existing = result[index];
+        if (seed.id === "hanbao") {
+            result[index] = createModelChannel({ ...existing, ...seed, name: existing.name || seed.name, apiKey: "", secretKey: "", headers: [], modelProfiles: seed.modelProfiles?.map((profile) => ({ ...profile, displayName: HANBAO_MODEL_NAMES[profile.model] })) });
+            changed = true;
+            continue;
+        }
         const missing = seed.models.filter((model) => !existing.models.includes(model));
         if (!missing.length) continue;
         result[index] = { ...existing, models: [...existing.models, ...missing] };
@@ -773,7 +783,9 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
         ...defaultConfig,
         ...persistedConfig,
         projectWorkflowModels: normalizeProjectWorkflowModels(persistedConfig.projectWorkflowModels),
+        projectSystemPresentations: normalizeProjectSystemPresentations(persistedConfig.projectSystemPresentations),
         projectChapterStoryboardModes: normalizeChapterStoryboardModes(persistedConfig.projectChapterStoryboardModes),
+        projectChapterDialogueConstraintModes: normalizeChapterDialogueConstraintModes(persistedConfig.projectChapterDialogueConstraintModes),
         projectChapterStoryboardSkills: normalizeChapterStoryboardSkills(persistedConfig.projectChapterStoryboardSkills),
         projectAssetImagePresets: normalizeProjectAssetImagePresets(persistedConfig.projectAssetImagePresets),
         taskWorkflowProvider: "model" as const,
@@ -1132,7 +1144,9 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const model = modelOptionName(value || config.model);
     const modelProfile = channel.modelProfiles?.find((item) => item.model === model);
     const modelProtocol = normalizeModelProtocol(modelProfile?.protocol);
+    const towoProtocol = isTowoSeedanceChannel(channel, model) ? ("towo-sd25-video" as const) : undefined;
     const interfaceType = modelProtocol
+        || towoProtocol
         || normalizeModelProtocol(channel.interfaceType)
         || (channel.scope === "system" || !usesOpenAICompatibleProtocolDefault(channel.apiFormat)
             ? undefined
@@ -1144,14 +1158,24 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
             ? "https://vip.eggfans.asia"
             : channel.baseUrl,
         referenceAssetOrigin: channel.referenceAssetOrigin,
-        apiKey: channel.credentialRef ? "" : channel.apiKey,
-        secretKey: channel.credentialRef ? "" : channel.secretKey,
-        headers: channel.headers,
+        apiKey: interfaceType === HANBAO_PROTOCOL || channel.credentialRef ? "" : channel.apiKey,
+        secretKey: interfaceType === HANBAO_PROTOCOL || channel.credentialRef ? "" : channel.secretKey,
+        headers: interfaceType === HANBAO_PROTOCOL ? [] : channel.headers,
         apiFormat: interfaceType ? (interfaceType === "gemini-veo" || interfaceType === "gemini-image" || interfaceType === "gemini-generate-content" ? ("gemini" as const) : interfaceType === "claude-api" ? ("claude" as const) : ("openai" as const)) : channel.apiFormat,
         interfaceType,
         channelId: channel.scope === "system" ? channel.id : "",
         credentialRef: channel.credentialRef || (isBuiltinBeefAPIChannel(channel) ? MANAGED_BEEFAPI_CREDENTIAL_REF : undefined),
     };
+}
+
+function isTowoSeedanceChannel(channel: ModelChannel, model: string) {
+    if (!/^seedance-2\.5$/iu.test(model.trim())) return false;
+    try {
+        const hostname = new URL(channel.baseUrl.trim()).hostname.toLowerCase();
+        return hostname === "towoapi.com" || hostname.endsWith(".towoapi.com");
+    } catch {
+        return false;
+    }
 }
 
 function normalizeChannels(config: AiConfig, ensureDefault = true) {
@@ -1217,6 +1241,7 @@ export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfa
     if (interfaceType === "gemini-veo" || interfaceType === "gemini-image") return GEMINI_BASE_URL;
     if (interfaceType === "eggfans-sd2-video") return "https://vip.eggfans.asia";
     if (interfaceType === "jiasu-video") return JIASU_BASE_URL;
+    if (interfaceType === "towo-sd25-video") return TOWO_BASE_URL;
     if (interfaceType === "mints-seedance-video") return "http://open.mints-id.com";
     if (interfaceType === "novita-video") return "https://api.novita.ai/v3";
     if (interfaceType === "volcengine-ark-agent-plan-image" || interfaceType === "volcengine-ark-agent-plan-video") return "https://ark.cn-beijing.volces.com/api/plan/v3";

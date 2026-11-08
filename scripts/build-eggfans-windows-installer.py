@@ -12,7 +12,8 @@ from windows_utf8_manifest import enable_utf8_manifest
 
 PRIVATE_FILE_NAMES = {'.env', '.env.local', '.settings-key'}
 PRIVATE_FILE_SUFFIXES = {'.key', '.pem', '.p12', '.pfx'}
-REQUIRED_PAYLOAD_FILES = ('agent-host/server.mjs', 'agent-host/runtime/node.exe', 'cli/beeftv.exe')
+BUNDLED_SKILL_FILES = tuple('skill-packages/' + name + '.zip' for name in json.loads(Path(__file__).with_name('bundled-skill-packages.json').read_text(encoding='utf-8')))
+REQUIRED_PAYLOAD_FILES = ('agent-host/server.mjs', 'agent-host/runtime/node.exe', 'cli/beeftv.exe') + BUNDLED_SKILL_FILES
 
 
 def digest(path):
@@ -45,7 +46,7 @@ def main():
     output = args.output.resolve()
     if output.exists():
         raise ValueError('Installer already exists; choose a new output filename')
-    manifest = json.loads((source / 'manifest.json').read_text(encoding='utf-8'))
+    manifest = json.loads((source / 'manifest.json').read_text(encoding='utf-8-sig'))
     version = manifest['version'].removeprefix('v')
     if re.fullmatch(r'\d+\.\d+\.\d+', version) is None or manifest['platform'] != 'windows-amd64':
         raise ValueError('Expected a stable Windows amd64 release payload')

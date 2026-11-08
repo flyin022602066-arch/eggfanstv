@@ -49,7 +49,7 @@ export function clampJiasuFaceRegion(region: JiasuFaceRegion): JiasuFaceRegion {
     return { ...region, x: left, y: top, width: right - left, height: bottom - top };
 }
 
-export function jiasuFaceMaskCacheKey(scope: string, sourceHash: string, mode: JiasuFaceMaskMode, regions: JiasuFaceRegion[], channel: "jiasu" | "eggfans-sd2" = "jiasu") {
+export function jiasuFaceMaskCacheKey(scope: string, sourceHash: string, mode: JiasuFaceMaskMode, regions: JiasuFaceRegion[], channel: "jiasu" | "eggfans-sd2" | "towo" = "jiasu") {
     return JSON.stringify([`${channel}-face-mask-v1`, scope, sourceHash, mode, regions.map(({ x, y, width, height }) => ({ x, y, width, height }))]);
 }
 

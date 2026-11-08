@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { sunoDefaultValues, sunoOperation } from "@/lib/suno-contract";
 import { getActiveUserScope } from "@/lib/user-scope";
+import type { SunoMusicVideoPlan } from "@/lib/suno-music-video-plan";
 
 export type SunoStudioClip = {
     id: string;
@@ -37,16 +38,47 @@ export type SunoStudioJob = {
     canvasSource?: SunoCanvasSource;
 };
 
+export type SunoMusicVideoStatus = "submitting" | "queued" | "running" | "succeeded" | "failed" | "unknown";
+export type SunoMusicVideoTask = {
+    id: string;
+    songJobId: string;
+    songClipId: string;
+    songTitle: string;
+    model: string;
+    channelId: string;
+    baseUrl: string;
+    duration: number;
+    audioStart: number;
+    audioDuration: number;
+    segmentIndex?: number;
+    segmentCount?: number;
+    prompt: string;
+    status: SunoMusicVideoStatus;
+    provider?: string;
+    providerTaskId?: string;
+    createdAt: string;
+    completedAt?: string;
+    updatedAt: string;
+    resultUrl?: string;
+    storageKey?: string;
+    mimeType?: string;
+    bytes?: number;
+    error?: string;
+    syncError?: string;
+};
+export type SunoMusicVideoDraft = { model: string; source?: SunoStudioSource; prompt: string; duration: string; ratio: string; resolution: string; audioStart: string; lyrics?: string; plan?: SunoMusicVideoPlan; characterFacePresets?: import("@/lib/project-character-face-presets").CharacterFacePresets; assetImagePresets?: import("@/lib/suno-music-video-generation").SunoMusicVideoImagePresets };
+
 export type SunoStudioSource = { jobId: string; clipId: string };
 export type SunoCanvasSource = { projectId: string; nodeId: string };
 export type SunoStudioDraft = { channelId: string; operationId: string; values: Record<string, unknown>; source?: SunoStudioSource; canvasSource?: SunoCanvasSource };
-type SunoStudioSnapshot = { draft: SunoStudioDraft; jobs: SunoStudioJob[]; selectedJobId: string | null; operationDrafts?: Record<string, Record<string, unknown>> };
+type SunoStudioSnapshot = { draft: SunoStudioDraft; jobs: SunoStudioJob[]; selectedJobId: string | null; operationDrafts?: Record<string, Record<string, unknown>>; musicVideos: SunoMusicVideoTask[]; musicVideoDraft: SunoMusicVideoDraft };
 type SunoStudioState = SunoStudioSnapshot & {
     scope: string;
     hydrated: boolean;
     persistenceError?: string;
     hydrate: (scope?: string) => Promise<void>;
     setDraft: (patch: Partial<SunoStudioDraft>) => void;
+    setMusicVideoDraft: (patch: Partial<SunoMusicVideoDraft>) => void;
     selectJob: (id: string | null) => void;
     restoreJob: (id: string) => void;
 };
@@ -58,7 +90,7 @@ let hydration = 0;
 
 function emptySnapshot(): SunoStudioSnapshot {
     const operationId = "post-suno-submit-music";
-    return { draft: { channelId: "", operationId, values: sunoDefaultValues(operationId) }, jobs: [], selectedJobId: null };
+    return { draft: { channelId: "", operationId, values: sunoDefaultValues(operationId) }, jobs: [], selectedJobId: null, musicVideos: [], musicVideoDraft: { model: "", prompt: "", duration: "", ratio: "", resolution: "", audioStart: "0" } };
 }
 
 function snapshotFor(scope: string): SunoStudioSnapshot {
@@ -102,7 +134,18 @@ function parseSnapshot(value: string | null): SunoStudioSnapshot {
         if (!job.id || !job.channelId || !Array.isArray(job.clips) || !job.values) throw new Error("音乐任务记录不完整，未覆盖原记录");
         sunoOperation(job.operationId);
     }
-    return { draft: parsed.draft, operationDrafts: parsed.operationDrafts || {}, jobs: parsed.jobs.map((job) => job.status === "submitting" ? { ...job, status: job.taskId ? "queued" : "unknown", syncError: job.taskId ? undefined : "上次提交结果未确认，请核对渠道任务记录，勿重复提交" } : job), selectedJobId: parsed.selectedJobId || null };
+    const musicVideos = Array.isArray(parsed.musicVideos) ? parsed.musicVideos : [];
+    for (const task of musicVideos) {
+        if (!task.id || !task.model || !task.songJobId || !task.songClipId || !["submitting", "queued", "running", "succeeded", "failed", "unknown"].includes(task.status)) throw new Error("MV 任务记录不完整，未覆盖原记录");
+    }
+    return {
+        draft: parsed.draft,
+        operationDrafts: parsed.operationDrafts || {},
+        jobs: parsed.jobs.map((job) => job.status === "submitting" ? { ...job, status: job.taskId ? "queued" : "unknown", syncError: job.taskId ? undefined : "上次提交结果未确认，请核对渠道任务记录，勿重复提交" } : job),
+        selectedJobId: parsed.selectedJobId || null,
+        musicVideos: musicVideos.map((task) => task.status === "submitting" ? { ...task, status: "unknown", syncError: "上次提交结果未确认，请先核对上游任务，勿重复提交" } : task),
+        musicVideoDraft: { ...emptySnapshot().musicVideoDraft, ...(parsed.musicVideoDraft || {}) },
+    };
 }
 
 export const useSunoStudioStore = create<SunoStudioState>((set, get) => ({
@@ -139,6 +182,10 @@ export const useSunoStudioStore = create<SunoStudioState>((set, get) => ({
             return { ...snapshot, operationDrafts, draft: next };
         }).catch(() => undefined);
     },
+    setMusicVideoDraft: (patch) => {
+        if (!get().hydrated) return;
+        void change(get().scope, (snapshot) => ({ ...snapshot, musicVideoDraft: { ...snapshot.musicVideoDraft, ...patch } })).catch(() => undefined);
+    },
     selectJob: (id) => {
         if (!get().hydrated) return;
         void change(get().scope, (snapshot) => ({ ...snapshot, selectedJobId: id })).catch(() => undefined);
@@ -163,4 +210,12 @@ export async function addSunoStudioJob(scope: string, job: SunoStudioJob) {
 
 export async function updateSunoStudioJob(scope: string, id: string, patch: Partial<SunoStudioJob>) {
     await change(scope, (snapshot) => ({ ...snapshot, jobs: snapshot.jobs.map((job) => job.id === id ? { ...job, ...patch, updatedAt: new Date().toISOString() } : job) }));
+}
+
+export async function addSunoMusicVideoTask(scope: string, task: SunoMusicVideoTask) {
+    await change(scope, (snapshot) => ({ ...snapshot, musicVideos: [task, ...snapshot.musicVideos], musicVideoDraft: { ...snapshot.musicVideoDraft, source: { jobId: task.songJobId, clipId: task.songClipId }, model: task.model, prompt: task.prompt, duration: String(task.duration), audioStart: String(task.audioStart) } }));
+}
+
+export async function updateSunoMusicVideoTask(scope: string, id: string, patch: Partial<SunoMusicVideoTask>) {
+    await change(scope, (snapshot) => ({ ...snapshot, musicVideos: snapshot.musicVideos.map((task) => task.id === id ? { ...task, ...patch, updatedAt: new Date().toISOString() } : task) }));
 }

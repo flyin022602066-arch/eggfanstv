@@ -9,6 +9,20 @@ const context: ShotAssetReferenceContext = {
     assetReferences: [{ assetId: "scene", title: "雨夜", category: "environment", imageIndex: 1 }],
 };
 
+test("reused panel references use this shot's state rather than numbers in the reference image", () => {
+    const panelContext: ShotAssetReferenceContext = {
+        ...context,
+        mentionReferences: [{ id: "panel", nodeId: "", assetId: "panel", kind: "image", label: "进化系统面板", title: "进化系统面板", active: true }],
+        assetReferences: [{ assetId: "panel", title: "进化系统面板", category: "prop", imageIndex: 1 }],
+    };
+    const result = buildWorkflowVideoPrompt({ videoPrompt: "面板亮起，显示【宿主：苏夜】【灵气：80】。" }, panelContext, "jiasu-video");
+    expect(result.prompt).toContain("【灵气：80】");
+    expect(result.prompt).toContain("不得照抄参考图中的文字或数值");
+    expect(result.prompt).toContain("未给出的数值留空");
+    expect(result.prompt).toContain("@图片1");
+    expect(result.sections.reduce((total, section) => total + section.chars, 0)).toBe(result.chars);
+});
+
 test("keeps timeline and dialogue once while exposing the complete prompt breakdown", () => {
     const action = "0–15秒：抬头；15–30秒：回望。";
     const dialogue = "林默：我们回家。";

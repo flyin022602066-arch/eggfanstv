@@ -70,7 +70,7 @@ export async function inspectJiasuFaceMask(image: ReferenceImage, override?: Jia
     }
 }
 
-export async function prepareJiasuFaceMaskedImage(image: ReferenceImage, mode: JiasuFaceMaskMode, override?: JiasuFaceMaskOverride, signal?: AbortSignal, channel: "jiasu" | "eggfans-sd2" = "jiasu"): Promise<ReferenceImage> {
+export async function prepareJiasuFaceMaskedImage(image: ReferenceImage, mode: JiasuFaceMaskMode, override?: JiasuFaceMaskOverride, signal?: AbortSignal, channel: "jiasu" | "eggfans-sd2" | "towo" = "jiasu"): Promise<ReferenceImage> {
     if (mode === "off") return image;
     const inspection = await inspectJiasuFaceMask(image, override, signal);
     if (!inspection.regions.length) return image;

@@ -2,18 +2,25 @@
 .assets-library-source-rail-inner { display: flex; flex-direction: column; gap: 4px; padding: 14px 12px; }
 .generation-history-page .assets-library-hero { min-height: 92px !important; }
 .generation-history-page .assets-library-hero .app-page-header { height: 64px !important; min-height: 64px !important; gap: 0; padding-bottom: 0 !important; }
-/* 个人资产库与生成历史共用同一套纵向页头节奏。 */
-.assets-library-page:not(.generation-history-page) .assets-library-hero { min-height: 92px !important; gap: var(--space-3) !important; }
-.assets-library-page:not(.generation-history-page) .assets-library-hero .app-page-header { height: auto; min-height: 64px !important; flex-wrap: wrap; gap: var(--space-3); padding-block: var(--space-3); }
-.assets-library-page:not(.generation-history-page) .app-page-header > div { max-width: 100%; }
+.assets-library-page:not(.generation-history-page) .assets-library-hero { display: flex; height: auto; min-height: 0 !important; flex: none; flex-direction: column; align-items: stretch; gap: var(--space-3) !important; padding-bottom: var(--space-4); }
+.assets-library-page:not(.generation-history-page) .assets-library-hero .app-page-header { display: grid; position: static; height: auto; min-height: 64px !important; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-3); padding-block: var(--space-3); }
+.assets-library-page:not(.generation-history-page) .app-page-header > div { min-width: 0; max-width: 100%; }
+.assets-library-page:not(.generation-history-page) .app-page-header > div:last-child { justify-content: flex-end; }
 .assets-library-service-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 .assets-library-service-actions:empty { display: none; }
 .assets-library-page:not(.generation-history-page) .assets-kind-tabs { display: flex; gap: 8px; align-items: center; }
-.assets-library-page:not(.generation-history-page) .assets-secondary-controls { display: block; }
+.assets-library-page:not(.generation-history-page) .assets-secondary-controls { display: block; position: static; width: 100%; height: auto; min-width: 0; }
 .assets-kind-row { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-3); }
-.assets-kind-actions { display: inline-flex; min-width: 0; align-items: center; gap: var(--space-3); margin-left: auto; }
+.assets-kind-actions { display: inline-flex; min-width: 0; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-left: auto; }
 .assets-library-page .assets-kind-tabs { flex-wrap: wrap; }
 .assets-workflow-select { width: 220px; max-width: 100%; }
+@media (max-width: 760px) {
+    .assets-library-page:not(.generation-history-page) .assets-library-hero .app-page-header { grid-template-columns: minmax(0, 1fr); }
+    .assets-library-page:not(.generation-history-page) .app-page-header > div:last-child { justify-content: flex-start; }
+    .assets-library-page .assets-header-actions { align-items: stretch; }
+    .assets-library-page .assets-header-action-buttons, .assets-library-page .assets-library-service-actions { justify-content: flex-start; }
+    .assets-kind-actions { margin-left: 0; }
+}
 .assets-workflow-groups { display: flex; flex-direction: column; gap: var(--space-5); }
 .assets-workflow-heading { display: flex; min-width: 0; align-items: center; gap: var(--space-2); color: var(--user-ink); }
 .assets-workflow-heading h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body); font-weight: 500; }

@@ -6,7 +6,8 @@ import { EditorAssetIngest } from "../../src/lib/plugins/builtin/editor/editor-a
 import { normalizeTimelineProject } from "../../src/lib/timeline/timeline-tracks";
 import { setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope } from "@/lib/user-scope-guard";
-import type { ProjectAsset } from "../../src/services/api/projects";
+import type { ProjectAsset, ProjectDetail } from "../../src/services/api/projects";
+import type { TimelineProject } from "../../src/types/timeline";
 import { createEditorStore } from "../../src/stores/editor/editor-store";
 import { createEditorAssetIngestDoubles, type EditorAssetIngestDoubles } from "./editor-asset-ingest-doubles";
 
@@ -19,6 +20,9 @@ type HarnessWindow = Window & {
         switchABA: () => void;
         switchProject: () => void;
         remountEditor: () => void;
+        setLibrary: (assets: ProjectAsset[], context: Pick<ProjectDetail, "units" | "shots" | "shotArtifacts">) => void;
+        getTimeline: () => TimelineProject | null;
+        undo: () => void;
     };
 };
 
@@ -37,6 +41,7 @@ function Harness() {
     const [projectId, setProjectId] = useState("project-a");
     const [editorKey, setEditorKey] = useState(0);
     const [assets, setAssets] = useState<ProjectAsset[]>([]);
+    const [episodeContext, setEpisodeContext] = useState<Pick<ProjectDetail, "units" | "shots" | "shotArtifacts">>();
 
     const refreshAssets = useCallback(async () => {
         doubles.calls.push({
@@ -76,11 +81,17 @@ function Harness() {
             setAssets([]);
         },
         remountEditor: () => setEditorKey((key) => key + 1),
+        setLibrary: (items, context) => {
+            setAssets(items);
+            setEpisodeContext(context);
+        },
+        getTimeline: () => store.getState().project,
+        undo: () => store.getState().undo(),
     };
 
     return (
-        <div style={{ height: "100vh" }}>
-            <EditorStoreProvider store={store} host={{ projectId, assets, refreshAssets }}>
+        <div style={{ height: "100vh", width: 256 }}>
+            <EditorStoreProvider store={store} host={{ projectId, assets, episodeContext, refreshAssets }}>
                 <EditorAssetIngest key={editorKey} />
             </EditorStoreProvider>
             <p data-testid="project-id">{projectId}</p>

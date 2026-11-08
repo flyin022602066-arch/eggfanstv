@@ -350,8 +350,9 @@ export function CanvasProjectEditorDialogs({
                 onCancelClear={status.onCancelClear}
                 onConfirmClear={status.onConfirmClear}
             />
-            <AssetPickerModal open={assets.pickerOpen} multiple={assets.multiple} onInsert={assets.onInsertLibrary} onClose={assets.onClosePicker} />
+            <AssetPickerModal canvasId={projectId} open={assets.pickerOpen} multiple={assets.multiple} onInsert={assets.onInsertLibrary} onClose={assets.onClosePicker} />
             <CanvasProjectAssetModal
+                canvasId={projectId}
                 open={assets.projectOpen}
                 detail={assets.detail}
                 initialCategory={assets.initialCategory}

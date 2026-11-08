@@ -1,9 +1,65 @@
 import { describe, expect, test } from "bun:test";
 
-import { chapterStoryboardApprovalSnapshot, chapterStoryboardRecoveryDecision, chapterTaskIdentity } from "@/pages/projects/detail/project-chapter-ai";
+import { chapterAssetsFromGenerationTask, chapterStoryboardFromGenerationTask, chapterStoryboardApprovalSnapshot, chapterStoryboardRecoveryDecision, chapterTaskIdentity } from "@/pages/projects/detail/project-chapter-ai";
 import type { GenerationTask } from "@/services/api/task-center";
 
 describe("章节生成任务刷新恢复", () => {
+    test("已生成只反映已写入镜头，保存失败仍提供现有结果的写入入口", async () => {
+        const source = await Bun.file(new URL("../src/pages/projects/detail/chapters.tsx", import.meta.url)).text();
+        const savedState = source.slice(source.indexOf("const storyboardGenerated"), source.indexOf("const visibleUnits"));
+        expect(savedState).toContain("storyboardImpact.shotCount > 0");
+        expect(savedState).not.toContain("serverCompletedOperations");
+        expect(savedState).not.toContain("completedChapterOperations");
+        const saveFailure = source.slice(source.indexOf("if (generated && isStoryboardReplacementConflict"), source.indexOf("const confirmStoryboardReplacement"));
+        expect(saveFailure).toContain("if (generated) queuePendingStoryboardRecovery");
+    });
+
+    test("取回拟人化系统资产沿用提交时的形象，不补成面板道具", () => {
+        const result = chapterAssetsFromGenerationTask(task({
+            status: "succeeded",
+            resultJson: JSON.stringify({ mode: "text", text: '{"characters":[],"scenes":[],"props":[]}' }),
+            inputJson: JSON.stringify({ metadata: { promptTemplateOperation: "chapter_assets_extract", promptTemplateVariables: { 章节正文: "【叮！任务完成，奖励已发放。】", 系统表现模式: "character", 系统角色名称: "小白", 系统角色形象: "有蓝色翅膀的白狐狸", 系统角色声音: "清亮活泼的少女音" } } }),
+        }));
+        expect(result.props).toEqual([]);
+        expect(result.characters).toHaveLength(1);
+        expect(result.characters[0]).toMatchObject({ name: "小白", appearance: "有蓝色翅膀的白狐狸", voiceTimbre: "清亮活泼的少女音" });
+    });
+
+    test("拟人化分镜恢复仍承接原文和角色身份，不追加面板表现规则", () => {
+        const settings = { mode: "character", characterName: "小白", characterAppearance: "有蓝色翅膀的白狐狸", characterVoice: "清亮活泼的少女音" };
+        const text = "【宿主：苏夜】\n【灵气：80】";
+        const result = chapterStoryboardFromGenerationTask(task({
+            status: "succeeded",
+            resultJson: JSON.stringify({ rows: [{ shotNumber: 1, durationSeconds: 30, videoMotionPrompt: "苏夜抬头。", imageGenerationPrompt: "苏夜看向前方。", characters: [] }] }),
+            inputJson: JSON.stringify({ metadata: { systemPresentation: settings, protectedSystemElements: [{ text, positionRatio: 0 }] } }),
+        }));
+        expect(result.rows[0]!.systemPresentation).toEqual(settings);
+        expect(result.rows[0]!.characters).toContainEqual({ characterName: "小白" });
+        expect(result.rows[0]!.videoMotionPrompt).toContain("小白");
+        expect(result.rows[0]!.videoMotionPrompt).toContain(text);
+        expect(result.rows[0]!.videoMotionPrompt).not.toContain("作为画面内系统界面");
+    });
+
+    test("刷新取回的无括号状态字段也补回系统道具", () => {
+        const result = chapterAssetsFromGenerationTask(task({
+            status: "succeeded",
+            resultJson: JSON.stringify({ mode: "text", text: '{"characters":[],"scenes":[],"props":[]}' }),
+            inputJson: JSON.stringify({ metadata: { promptTemplateOperation: "chapter_assets_extract", promptTemplateVariables: { 章节正文: "进化系统启动中\n宿主：苏夜\n等级：D级" } } }),
+        }));
+        expect(result.props.map((asset) => asset.name)).toEqual(["进化系统面板"]);
+    });
+
+    test("刷新取回时也按任务冻结原文补回模型漏提的系统道具", () => {
+        const result = chapterAssetsFromGenerationTask(task({
+            status: "succeeded",
+            resultJson: JSON.stringify({ mode: "text", text: '{"characters":[],"scenes":[],"props":[]}' }),
+            inputJson: JSON.stringify({ metadata: { promptTemplateOperation: "chapter_assets_extract", promptTemplateVariables: { 章节正文: "【进化系统启动中】\n【宿主：苏夜】\n【等级：D级】" } } }),
+        }));
+        expect(result.props).toHaveLength(1);
+        expect(result.props[0]!.name).toBe("进化系统面板");
+        expect(result.characters).toEqual([]);
+    });
+
     test("优先从任务列表的安全客户端上下文识别章节与操作", () => {
         expect(chapterTaskIdentity(task({
             clientContext: {
@@ -87,7 +143,12 @@ describe("章节生成任务刷新恢复", () => {
         expect(source).toContain("queryGenerationTask(task.id, { expectedScope })");
         expect(source).toContain("核对后写入");
         expect(createStoryboard.indexOf("const approvedRevision")).toBeLessThan(createStoryboard.indexOf("confirmStoryboardReplacement"));
-        expect(applyRecovery.indexOf("const reviewedRevision")).toBeLessThan(applyRecovery.indexOf("confirmRecoveredStoryboardWrite"));
+        expect(applyRecovery).toContain("readCurrentStoryboardApproval");
+        expect(applyRecovery).toContain("readCurrentApproval: () => readCurrentStoryboardApproval");
+        expect(source).toContain("const readCurrentStoryboardApproval = async");
+        expect(source).toContain("staleTime: 0");
+        expect(applyRecovery).toContain("formatStoryboardRecoveryError(error)");
+        expect(applyRecovery).toContain("applyingStoryboardRecoveryChapterId");
         expect(source).not.toContain("chapterTaskResultAlreadyApplied");
         expect(source).not.toContain("shot.updatedAt");
         expect(source).not.toMatch(/storeGeneratedStoryboard\([^;]*detail\.project\.revision/);

@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -110,6 +111,7 @@ type SkillList struct {
 }
 
 type SkillMutationRequest struct {
+	ArchiveBase64 string               `json:"archiveBase64"`
 	SkillName     string               `json:"skillName"`
 	Description   string               `json:"description"`
 	Instruction   string               `json:"instruction"`
@@ -198,6 +200,16 @@ func (s *Service) UpdateSkill(userID string, id string, req SkillMutationRequest
 	skill, err := s.ownedSkill(userID, id)
 	if err != nil {
 		return nil, err
+	}
+	if req.ArchiveBase64 != "" {
+		if len(req.ArchiveBase64) > (maxSkillPackageBytes+2)/3*4 {
+			return nil, kernel.BadAuthRequest("技能包超过20MB")
+		}
+		archive, err := base64.StdEncoding.DecodeString(req.ArchiveBase64)
+		if err != nil {
+			return nil, kernel.BadAuthRequest("技能包编码无效")
+		}
+		return s.UpdateOwnedSkillArchive(userID, id, archive)
 	}
 	requireInstruction := skill.SourceType == "markdown" || skill.SourceType == "builtin" || skill.SourceType == ""
 	normalized, mediaJSON, err := normalizeSkillMutationRequest(req, requireInstruction)

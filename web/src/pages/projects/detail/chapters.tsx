@@ -1,4 +1,4 @@
-import { App, Button, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Select } from "antd";
+import { App, Button, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
@@ -52,17 +52,22 @@ import {
 import { useNavigate, useParams } from "react-router";
 
 import { SkillRuntimePicker, useSkillRuntimeCatalog } from "@/components/skills/skill-runtime-picker";
+import { SkillRuntimePreparationError } from "@/services/skill-runtime";
 import { ModelPicker } from "@/components/model-picker";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-picker-modal";
 import { decodeNovelText, splitTextIntoChapters } from "@/lib/canvas/canvas-document";
 import { navigateToSettings } from "@/lib/settings-navigation";
-import { reviewChapterStoryboardPrompt, type ChapterStoryboardMode } from "@/lib/chapter-storyboard-mode";
+import { extractSystemElementBlocks, reviewChapterStoryboardPrompt, type ChapterDialogueConstraintMode, type ChapterStoryboardMode } from "@/lib/chapter-storyboard-mode";
+import { extractChapterSystemInterfaceProps, missingChapterSystemInterfaceProps } from "@/lib/chapter-system-interface";
+import { normalizeSystemPresentationSettings, systemCharacterDefinition, type SystemPresentationSettings } from "@/lib/chapter-system-presentation";
 import { captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import {
     createProjectAssetCandidates,
     createProjectUnit,
     deleteProjectUnit,
+    getProjectCore,
+    getProjectUnitWorkspace,
     importProjectUnits,
     listProjectAssets,
     listChapterApplyReceipts,
@@ -78,7 +83,13 @@ import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@
 
 import { formatCount, formatTime, statusLabel, type ProjectDetailViewProps } from "./shared";
 import { chapterStoryboardAssets, chapterStoryboardCharacters, chapterStoryboardReplaceImpact, storyboardRowsToProjectShots } from "./chapter-storyboard-production";
+import { getCharacterReferenceCatalog } from "@/services/api/project-character-references";
 import { chapterAssetsFromGenerationTask, chapterStoryboardApprovalSnapshot, chapterStoryboardFromGenerationTask, chapterStoryboardRecoveryDecision, chapterTaskIdentity, extractChapterAssets, generateChapterStoryboard } from "./project-chapter-ai";
+import { ProjectSystemPresentationSettings } from "./project-system-presentation-settings";
+import { ChapterSkillStatus, type ChapterSkillAttempt } from "./chapter-skill-status";
+import { ChapterStoryboardRecoveryReview } from "./chapter-storyboard-recovery-review";
+import type { ProjectShotReplacementInput } from "./chapter-storyboard-production";
+import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
 
 const CHAPTER_ROW_HEIGHT = 62;
 const MAX_NOVEL_IMPORT_CHAPTERS = 2500;
@@ -111,18 +122,35 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
     const [draggedId, setDraggedId] = useState("");
     const [draftTitle, setDraftTitle] = useState("");
     const [draftHtml, setDraftHtml] = useState("");
+    const [draftText, setDraftText] = useState("");
     const [dirty, setDirty] = useState(false);
+    const activeChapterRef = useRef({ id: selectedId, dirty });
+    activeChapterRef.current = { id: selectedId, dirty };
     const [characterExtractOpen, setCharacterExtractOpen] = useState(false);
     const [storyboardOpen, setStoryboardOpen] = useState(false);
     const [chapterOperations, setChapterOperations] = useState<Record<string, ChapterOperation>>({});
+    const [assetExtractionErrors, setAssetExtractionErrors] = useState<Record<string, string>>({});
     const [completedChapterOperations, setCompletedChapterOperations] = useState<Record<string, true>>({});
     const [operationNow, setOperationNow] = useState(() => Date.now());
     const [storyboardPromptReviews, setStoryboardPromptReviews] = useState<Record<string, string[]>>({});
+    const [chapterSkillAttempts, setChapterSkillAttempts] = useState<Record<string, ChapterSkillAttempt>>({});
     const [pendingStoryboardRecoveries, setPendingStoryboardRecoveries] = useState<Record<string, PendingStoryboardRecovery>>({});
+    const [applyingStoryboardRecoveryChapterId, setApplyingStoryboardRecoveryChapterId] = useState("");
+    const [storyboardRecoveryError, setStoryboardRecoveryError] = useState<Record<string, string>>({});
+    const [storyboardRecoveryReview, setStoryboardRecoveryReview] = useState<{
+        rows: PendingStoryboardRecovery["rows"];
+        detail: ProjectDetail;
+        versions: CharacterReferenceVersion[];
+        impact: ReturnType<typeof chapterStoryboardReplaceImpact>;
+        resolve: (shots: ProjectShotReplacementInput[] | null) => void;
+    } | null>(null);
     const { skills: availableSkills, loading: skillsLoading } = useSkillRuntimeCatalog();
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const storyboardMode = effectiveConfig.projectChapterStoryboardModes?.[detail.project.id] || "standard";
+    const dialogueConstraintMode = effectiveConfig.projectChapterDialogueConstraintModes?.[detail.project.id] || "paced";
+    const systemPresentation = effectiveConfig.projectSystemPresentations?.[detail.project.id] || normalizeSystemPresentationSettings(undefined);
+    const changeSystemPresentation = (value: SystemPresentationSettings) => updateConfig("projectSystemPresentations", { ...useConfigStore.getState().config.projectSystemPresentations, [detail.project.id]: value });
     const selectedSkillIds = effectiveConfig.projectChapterStoryboardSkills?.[detail.project.id] || [];
     const setSelectedSkillIds = (skillIds: string[]) => updateConfig("projectChapterStoryboardSkills", { ...useConfigStore.getState().config.projectChapterStoryboardSkills, [detail.project.id]: skillIds });
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -166,22 +194,13 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         }
         return operations;
     }, [chapterTasksQuery.data]);
-    const serverCompletedOperations = useMemo(() => {
-        const latest = new Map<string, GenerationTask>();
-        for (const task of chapterTasksQuery.data || []) {
-            const identity = chapterTaskIdentity(task);
-            if (!identity) continue;
-            const key = chapterOperationKey(identity.chapterId, identity.kind);
-            if (!latest.has(key)) latest.set(key, task);
-        }
-        return new Set([...latest].filter(([, task]) => task.status === "succeeded").map(([key]) => key));
-    }, [chapterTasksQuery.data]);
     const runningOperationCount = new Set([...Object.keys(chapterOperations), ...serverChapterOperations.keys()]).size;
     const characterOperation = selectedUnit ? chapterOperations[chapterOperationKey(selectedUnit.id, "characters")] || serverChapterOperations.get(chapterOperationKey(selectedUnit.id, "characters")) : undefined;
     const storyboardOperation = selectedUnit ? chapterOperations[chapterOperationKey(selectedUnit.id, "storyboard")] || serverChapterOperations.get(chapterOperationKey(selectedUnit.id, "storyboard")) : undefined;
     const pendingStoryboardRecovery = selectedUnit ? pendingStoryboardRecoveries[selectedUnit.id] : undefined;
-    const charactersGenerated = Boolean(selectedUnit && (completedChapterOperations[chapterOperationKey(selectedUnit.id, "characters")] || serverCompletedOperations.has(chapterOperationKey(selectedUnit.id, "characters")) || detail.assetCandidates.some((candidate) => candidate.unitId === selectedUnit.id && candidate.category === "character")));
-    const storyboardGenerated = Boolean(selectedUnit && (completedChapterOperations[chapterOperationKey(selectedUnit.id, "storyboard")] || serverCompletedOperations.has(chapterOperationKey(selectedUnit.id, "storyboard")) || storyboardImpact.shotCount > 0));
+    const selectedAssetTask = chapterTasksQuery.data?.find((task) => { const identity = chapterTaskIdentity(task); return identity?.chapterId === selectedUnit?.id && identity.kind === "characters"; });
+    const charactersGenerated = Boolean(selectedUnit && (completedChapterOperations[chapterOperationKey(selectedUnit.id, "characters")] || detail.assetCandidates.some((candidate) => candidate.unitId === selectedUnit.id) || detail.assets.some((asset) => asset.unitIds?.includes(selectedUnit.id))));
+    const storyboardGenerated = Boolean(selectedUnit && storyboardImpact.shotCount > 0);
     const visibleUnits = useMemo(() => {
         if (!deferredSearchQuery) return orderedUnits;
         const numericQuery = /^\d+$/.test(deferredSearchQuery) ? deferredSearchQuery.replace(/^0+/, "") || "0" : "";
@@ -297,13 +316,14 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         ],
         content: selectedUnit?.sourceText || "",
         editorProps: { attributes: { class: "project-chapter-editor focus:outline-none" } },
-        onUpdate: ({ editor: nextEditor }) => { setDraftHtml(nextEditor.getHTML()); setDirty(true); },
+        onUpdate: ({ editor: nextEditor }) => { setDraftHtml(nextEditor.getHTML()); setDraftText(nextEditor.getText()); setDirty(true); },
     });
 
     useEffect(() => {
         if (!selectedUnitSummary) return;
         setDraftTitle(selectedUnitSummary.title);
         setDraftHtml("");
+        setDraftText("");
         setDirty(false);
     }, [selectedUnitSummary?.id]);
 
@@ -314,10 +334,39 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         setDraftHtml(loadedUnit.sourceText || "");
         setDirty(false);
         editor.commands.setContent(loadedUnit.sourceText || "", { emitUpdate: false });
+        setDraftText(editor.getText());
         // 只在切换章节时装载服务端内容，避免项目刷新覆盖当前未保存正文。
     }, [editor, selectedUnit?.id]);
 
     const wordCount = useMemo(() => editor?.storage.characterCount?.characters?.() || stripHtml(draftHtml).length || 0, [draftHtml, editor]);
+    const systemInterfaceProps = useMemo(() => extractChapterSystemInterfaceProps(draftText), [draftText]);
+    const hasSystemContent = systemInterfaceProps.length > 0 || extractSystemElementBlocks(draftText).length > 0;
+    const supplementSystemProps = useMutation({
+        mutationFn: async ({ unitId, sourceText, presentation, expectedScope }: { unitId: string; sourceText: string; presentation: SystemPresentationSettings; expectedScope: CapturedUserScope }) => {
+            if (detail.project.status === "archived") throw new Error("项目已归档，请先恢复项目");
+            const { assets } = await listProjectAssets(detail.project.id);
+            if (presentation.mode === "character") {
+                const character = systemCharacterDefinition(presentation);
+                const exists = assets.some((asset) => asset.category === "character" && (asset.title === character.name || (asset.character?.definition.aliases as string[] | undefined)?.includes(character.name)))
+                    || detail.assetCandidates.some((candidate) => candidate.category === "character" && candidate.status === "pending_confirmation" && candidate.name === character.name);
+                if (exists) return { candidates: [] };
+                return createProjectAssetCandidates(detail.project.id, [{ unitId, name: character.name, category: "character", details: { ...character } }], "chapter_character_extract", { expectedScope });
+            }
+            const existing = [
+                ...assets.filter((asset) => asset.category === "prop").map((asset) => ({ name: asset.title })),
+                ...detail.assetCandidates.filter((candidate) => candidate.category === "prop" && candidate.status === "pending_confirmation").map((candidate) => ({ name: candidate.name })),
+            ];
+            const missing = missingChapterSystemInterfaceProps(sourceText, existing);
+            if (!missing.length) return { candidates: [] };
+            return createProjectAssetCandidates(detail.project.id, missing.map((asset) => ({ unitId, name: asset.name, category: "prop", details: { ...asset } })), "manual", { expectedScope });
+        },
+        onSuccess: ({ candidates }) => {
+            refreshProject();
+            setCharacterExtractOpen(false);
+            message.success(candidates.length ? "已补提系统资产，请到“角色与资产”确认并生成形象图" : "系统资产已存在，可到“角色与资产”查看");
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "系统道具补提失败"),
+    });
     const chapterCanvasCount = (unitId: string) => canvasCountByUnitId.get(unitId) || 0;
     const changeTextModel = (model: string) => {
         const preferences = useConfigStore.getState().config.projectWorkflowModels || {};
@@ -327,7 +376,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         const unit = selectedUnit;
         if (!unit) throw new Error("章节正文尚未加载完成");
         if (dirty) throw new Error("请先保存当前章节，再运行 AI 分析");
-        const sourceText = editor?.getText().trim() || stripHtml(unit.sourceText);
+        const sourceText = draftText.trim();
         if (!sourceText) throw new Error("当前章节没有可分析的正文");
         if (!configuredModelMatchesCapability(effectiveConfig, textModel, "text")) throw new Error("请选择可用的文本模型，不会自动切换到其他模型");
         const config = { ...effectiveConfig, model: textModel, textModel };
@@ -343,6 +392,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
             sourceText,
             projectStyle: resolveProjectCanvasStyle(detail.project.stylePresetId, detail.project.styleProfileJson)?.prompt || "",
             config,
+            systemPresentation: normalizeSystemPresentationSettings(systemPresentation),
         };
     };
     const beginChapterOperation = (unitId: string, kind: ChapterOperationKind) => {
@@ -391,19 +441,34 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
             sourceTaskId: write.sourceTaskId,
             expectedScope: write.expectedScope,
         });
+        setAssetExtractionErrors((current) => ({ ...current, [unitId]: "" }));
         markChapterOperationCompleted(unitId, "characters");
-        refreshProject();
-        return created.candidates.length;
+        await queryClient.invalidateQueries({ queryKey: ["project", detail.project.id] });
+        await refreshProject();
+        return created.candidates.filter((candidate) => candidate.status === "pending_confirmation").length;
+    };
+    const showChapterAssets = (unitId: string) => {
+        if (activeChapterRef.current.id === unitId && !activeChapterRef.current.dirty) navigate(`/projects/${detail.project.id}/assets?unitId=${encodeURIComponent(unitId)}`);
     };
     const storeGeneratedStoryboard = async (
         unitId: string,
         rows: ReturnType<typeof chapterStoryboardFromGenerationTask>["rows"],
-        approved: { revision: number; shotIds: string[] },
-        write: { sourceTaskId: string; expectedScope: CapturedUserScope },
+        approved: { revision: number; shotIds: string[] } | undefined,
+        write: {
+            sourceTaskId: string;
+            expectedScope: CapturedUserScope;
+            readCurrentApproval?: () => Promise<{ revision: number; shotIds: string[] }>;
+            preparedShots?: ProjectShotReplacementInput[];
+            promptReview?: string[];
+        },
     ) => {
-        const { assets } = await listProjectAssets(detail.project.id);
-        const shots = storyboardRowsToProjectShots(rows, { ...detail, assets });
-        await replaceProjectUnitShots(detail.project.id, unitId, shots, approved.shotIds, approved.revision, {
+        const shots = write.preparedShots || await (async () => {
+            const [{ assets }, catalog] = await Promise.all([listProjectAssets(detail.project.id), getCharacterReferenceCatalog(detail.project.id, write.expectedScope)]);
+            return storyboardRowsToProjectShots(rows, { ...detail, assets }, catalog.versions);
+        })();
+        const currentApproval = write.readCurrentApproval ? await write.readCurrentApproval() : approved;
+        if (!currentApproval) throw new Error("分镜写入快照缺失，请重新核对后再写入");
+        await replaceProjectUnitShots(detail.project.id, unitId, shots, currentApproval.shotIds, currentApproval.revision, {
             sourceTaskId: write.sourceTaskId,
             expectedScope: write.expectedScope,
         });
@@ -412,8 +477,27 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
             queryClient.invalidateQueries({ queryKey: ["projects"] }),
         ]);
         markChapterOperationCompleted(unitId, "storyboard");
-        setStoryboardPromptReviews((current) => ({ ...current, [unitId]: reviewChapterStoryboardPrompt(rows) }));
+        setStoryboardPromptReviews((current) => ({ ...current, [unitId]: write.promptReview ?? reviewChapterStoryboardPrompt(rows) }));
         return shots.length;
+    };
+
+    const readCurrentStoryboardApproval = async (unitId: string, expectedScope: CapturedUserScope) => {
+        const [core, workspace] = await Promise.all([
+            queryClient.fetchQuery({
+                queryKey: ["project", detail.project.id, "core"],
+                queryFn: ({ signal }) => getProjectCore(detail.project.id, expectedScope, signal),
+                staleTime: 0,
+            }),
+            queryClient.fetchQuery({
+                queryKey: ["project", detail.project.id, "unit-workspace", unitId],
+                queryFn: ({ signal }) => getProjectUnitWorkspace(detail.project.id, unitId, signal),
+                staleTime: 0,
+            }),
+        ]);
+        return {
+            revision: core.project.revision,
+            shotIds: workspace.shots.filter((shot) => shot.unitId === unitId).map((shot) => shot.id),
+        };
     };
     const extractCharacters = async () => {
         let operationUnitId = "";
@@ -422,18 +506,29 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
             if (!input) return;
             const expectedScope = captureUserScope();
             operationUnitId = input.chapterId;
+            setAssetExtractionErrors((current) => ({ ...current, [operationUnitId]: "" }));
             setCharacterExtractOpen(false);
             beginChapterOperation(operationUnitId, "characters");
             message.info("角色、场景与道具提取任务已开始，可继续编辑或切换章节");
-            const assets = await extractChapterAssets(input, { onTaskUpdate: (task) => updateChapterOperation(operationUnitId, "characters", task), expectedScope });
+            const [workspace, catalog] = await Promise.all([getProjectUnitWorkspace(input.projectId, input.chapterId), getCharacterReferenceCatalog(input.projectId, expectedScope)]);
+            const revisionById = new Map(workspace.shotRevisions.map((revision) => [revision.id, revision]));
+            const storyboardContext = workspace.shots.filter((shot) => shot.unitId === input.chapterId).sort((left, right) => left.position - right.position).map((shot) => {
+                const revision = shot.currentRevisionId ? revisionById.get(shot.currentRevisionId) : undefined;
+                return JSON.stringify({ title: shot.title, plotDescription: revision?.plotDescription || shot.description, videoPrompt: revision?.videoPrompt || "", actionBeats: revision?.actionBeatsJson || "" });
+            }).join("\n");
+            const assets = await extractChapterAssets({ ...input, storyboardContext, existingCharacters:catalog.versions }, { onTaskUpdate: (task) => updateChapterOperation(operationUnitId, "characters", task), expectedScope });
             const freshCount = await storeExtractedAssets(operationUnitId, assets, { sourceTaskId: assets.taskId, expectedScope });
             if (!freshCount) {
-                message.info("没有新增资产：提取为空或资产已存在");
+                message.info("本集资产草稿已按最新结果替换；本次没有待确认新资产，已有资产继续沿用");
+                showChapterAssets(operationUnitId);
                 return;
             }
-            message.success(`已提取 ${freshCount} 个角色、场景或道具，请到项目资产确认`);
+            message.success(`已按最新提取替换本集草稿，现有 ${freshCount} 个角色、场景或道具待确认`);
+            showChapterAssets(operationUnitId);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "章节资产提取失败");
+            const description = error instanceof Error ? error.message : "章节资产提取失败";
+            if (operationUnitId) setAssetExtractionErrors((current) => ({ ...current, [operationUnitId]: description }));
+            message.error(description);
         } finally {
             if (operationUnitId) finishChapterOperation(operationUnitId, "characters");
         }
@@ -443,7 +538,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         if (!unit) return message.warning("章节正文尚未加载完成");
         if (dirty) return message.warning("请先保存当前章节，再生成分镜");
         if (detail.project.status === "archived") return message.warning("项目已归档，请先在项目设置中恢复");
-        const sourceText = editor?.getText().trim() || stripHtml(unit.sourceText);
+        const sourceText = draftText.trim();
         if (!sourceText) return message.warning("当前章节没有可用于分镜的正文");
         const projectStyle = resolveProjectCanvasStyle(detail.project.stylePresetId, detail.project.styleProfileJson);
         if (!projectStyle?.prompt.trim()) return message.warning("请先在项目设置中选择项目画风，再生成分镜");
@@ -459,11 +554,14 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         const approvedShotIds = detail.shots.filter((shot) => shot.unitId === unit.id).map((shot) => shot.id);
         if (storyboardImpact.shotCount && !(await confirmStoryboardReplacement(storyboardImpact))) return;
         setStoryboardOpen(false);
+        setChapterSkillAttempts((current) => {
+            return { ...current, [unit.id]: { report: null, preparing: true } };
+        });
         beginChapterOperation(unit.id, "storyboard");
         message.info("分镜生成任务已开始，可继续编辑或切换章节");
         let generated: Awaited<ReturnType<typeof generateChapterStoryboard>> | undefined;
         try {
-            const { assets } = await listProjectAssets(detail.project.id);
+            const [{ assets }, catalog] = await Promise.all([listProjectAssets(detail.project.id), getCharacterReferenceCatalog(detail.project.id, expectedScope)]);
             const storyboardDetail = { ...detail, assets };
             generated = await generateChapterStoryboard({
                 projectId: detail.project.id,
@@ -477,23 +575,43 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                     profileJson: detail.project.styleProfileJson,
                 },
                 characters: chapterStoryboardCharacters(storyboardDetail, unit.id),
-                assets: chapterStoryboardAssets(storyboardDetail),
+                assets: chapterStoryboardAssets(storyboardDetail, catalog.versions),
                 config,
                 skills: availableSkills,
                 selectedSkillIds,
                 storyboardMode,
+                dialogueConstraintMode,
+                systemPresentation: normalizeSystemPresentationSettings(systemPresentation),
                 approvedRevision,
                 approvedShotIds,
-            }, { onTaskUpdate: (task) => updateChapterOperation(unit.id, "storyboard", task), expectedScope });
-            const shotCount = await storeGeneratedStoryboard(unit.id, generated.rows, { revision: approvedRevision, shotIds: approvedShotIds }, { sourceTaskId: generated.taskId, expectedScope });
-            message.success(generated.skillCount ? `已生成 ${shotCount} 个分镜，并应用 ${generated.skillCount} 个技能` : `已生成 ${shotCount} 个分镜`);
+            }, {
+                onSkillLoadReport: (report) => setChapterSkillAttempts((current) => ({ ...current, [unit.id]: { report } })),
+                onTaskUpdate: (task) => {
+                    updateChapterOperation(unit.id, "storyboard", task);
+                    setChapterSkillAttempts((current) => ({ ...current, [unit.id]: { report: current[unit.id]?.report ?? null, task } }));
+                    queryClient.setQueryData<GenerationTask[]>(["project-chapter-generation-tasks", detail.project.id], (current) => [task, ...(current || []).filter((item) => item.id !== task.id)]);
+                },
+                expectedScope,
+            });
+            const shotCount = await storeGeneratedStoryboard(unit.id, generated.rows, { revision: approvedRevision, shotIds: approvedShotIds }, { sourceTaskId: generated.taskId, expectedScope, promptReview: generated.promptReview });
+            clearPendingStoryboardRecovery(unit.id);
+            if (generated.promptReview.length) message.warning(`已保留 ${shotCount} 个分镜，脚本待修订；请在技能调用状态中查看镜数与导演稿问题`);
+            else message.success(generated.skillCount ? `已生成 ${shotCount} 个分镜，${generated.skillCount} 个技能已加入拆解请求，可在结果中查看明细` : `已生成 ${shotCount} 个分镜`);
             navigate(`/projects/${detail.project.id}/workflow/${unit.id}/video`);
         } catch (error) {
+            if (error instanceof SkillRuntimePreparationError) {
+                setChapterSkillAttempts((current) => ({ ...current, [unit.id]: { report: error.report, blocked: true } }));
+            } else {
+                setChapterSkillAttempts((current) => current[unit.id] && !current[unit.id].task
+                    ? { ...current, [unit.id]: { ...current[unit.id], preparing: false, submissionFailed: true } }
+                    : current);
+            }
             if (generated && isStoryboardReplacementConflict(error)) {
                 queuePendingStoryboardRecovery({ taskId: generated.taskId, chapterId: unit.id, rows: generated.rows });
                 message.warning("本章分镜已变化，已生成的结果仍保留。核对当前镜头后再写入。");
                 return;
             }
+            if (generated) queuePendingStoryboardRecovery({ taskId: generated.taskId, chapterId: unit.id, rows: generated.rows });
             refreshProject();
             void queryClient.invalidateQueries({ queryKey: ["project-chapter-generation-tasks", detail.project.id] });
             const reason = error instanceof Error ? error.message : "未知错误";
@@ -519,25 +637,17 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
             onCancel: () => resolve(false),
         });
     });
-    const confirmRecoveredStoryboardWrite = (impact: ReturnType<typeof chapterStoryboardReplaceImpact>, rowCount: number) => new Promise<boolean>((resolve) => {
-        modal.confirm({
-            title: impact.shotCount ? `用已生成的 ${rowCount} 个分镜替换本章当前分镜？` : `把已生成的 ${rowCount} 个分镜写入本章？`,
-            content: (
-                <div className="space-y-2 text-sm leading-6 text-foreground/62">
-                    <p>不会重新生成，也不会再次扣费。确认后才会写入；取消则结果仍保留。</p>
-                    {impact.shotCount ? (
-                        <p>替换会移除 {impact.shotCount} 个镜头、{impact.revisionCount} 个脚本版本、{impact.referenceCount} 个资产引用、{impact.artifactCount} 个生成产物{impact.candidateCount ? `及 ${impact.candidateCount} 个相关候选资产` : ""}，此操作无法撤销。</p>
-                    ) : null}
-                </div>
-            ),
-            okText: "写入已生成的分镜",
-            okButtonProps: { danger: Boolean(impact.shotCount) },
-            cancelText: "先不写入",
-            centered: true,
-            onOk: () => resolve(true),
-            onCancel: () => resolve(false),
+    const confirmRecoveredStoryboardWrite = async (pending: PendingStoryboardRecovery, expectedScope: CapturedUserScope) => {
+        const [{ assets }, catalog, workspace] = await Promise.all([
+            listProjectAssets(detail.project.id),
+            getCharacterReferenceCatalog(detail.project.id, expectedScope),
+            getProjectUnitWorkspace(detail.project.id, pending.chapterId),
+        ]);
+        const currentDetail = { ...detail, ...workspace, assets };
+        return new Promise<ProjectShotReplacementInput[] | null>((resolve) => {
+            setStoryboardRecoveryReview({ rows: pending.rows, detail: currentDetail, versions: catalog.versions, impact: chapterStoryboardReplaceImpact(currentDetail, pending.chapterId), resolve });
         });
-    });
+    };
     const queuePendingStoryboardRecovery = (pending: PendingStoryboardRecovery) => {
         setPendingStoryboardRecoveries((current) => ({ ...current, [pending.chapterId]: pending }));
     };
@@ -551,22 +661,38 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
     };
     const applyPendingStoryboardRecovery = async (pending: PendingStoryboardRecovery) => {
         if (applyingStoryboardRecoveryRef.current) return;
-        const expectedScope = captureUserScope();
-        const reviewedRevision = detail.project.revision;
-        const reviewedShotIds = detail.shots.filter((shot) => shot.unitId === pending.chapterId).map((shot) => shot.id);
-        const impact = chapterStoryboardReplaceImpact(detail, pending.chapterId);
-        if (!(await confirmRecoveredStoryboardWrite(impact, pending.rows.length))) return;
         applyingStoryboardRecoveryRef.current = true;
+        setApplyingStoryboardRecoveryChapterId(pending.chapterId);
+        const expectedScope = captureUserScope();
         try {
-            const shotCount = await storeGeneratedStoryboard(pending.chapterId, pending.rows, { revision: reviewedRevision, shotIds: reviewedShotIds }, { sourceTaskId: pending.taskId, expectedScope });
+            setStoryboardRecoveryError((current) => ({ ...current, [pending.chapterId]: "" }));
+            const preparedShots = await confirmRecoveredStoryboardWrite(pending, expectedScope);
+            if (!preparedShots) return;
+            let shotCount = 0;
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                try {
+                    shotCount = await storeGeneratedStoryboard(pending.chapterId, pending.rows, undefined, {
+                        sourceTaskId: pending.taskId,
+                        expectedScope,
+                        readCurrentApproval: () => readCurrentStoryboardApproval(pending.chapterId, expectedScope),
+                        preparedShots,
+                    });
+                    break;
+                } catch (error) {
+                    if (attempt === 1 || !isStoryboardReplacementConflict(error)) throw error;
+                    await queryClient.invalidateQueries({ queryKey: ["project", detail.project.id] });
+                }
+            }
             clearPendingStoryboardRecovery(pending.chapterId);
             message.success(`已写入 ${shotCount} 个分镜`);
-            navigate(`/projects/${detail.project.id}/workflow/${pending.chapterId}/storyboard`);
+            navigate(`/projects/${detail.project.id}/workflow/${pending.chapterId}/video`);
         } catch (error) {
             refreshProject();
-            message.error(error instanceof Error ? error.message : "分镜写入失败");
+            setStoryboardRecoveryError((current) => ({ ...current, [pending.chapterId]: formatStoryboardRecoveryError(error) }));
+            message.error(formatStoryboardRecoveryError(error));
         } finally {
             applyingStoryboardRecoveryRef.current = false;
+            setApplyingStoryboardRecoveryChapterId("");
         }
     };
 
@@ -599,19 +725,29 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                     }
                     const completedTask = await queryGenerationTask(task.id, { expectedScope });
                     if (kind === "characters") {
-                        await storeExtractedAssets(taskChapterId, { ...chapterAssetsFromGenerationTask(completedTask), taskId: completedTask.id }, { sourceTaskId: completedTask.id, expectedScope });
+                        try {
+                            await storeExtractedAssets(taskChapterId, { ...chapterAssetsFromGenerationTask(completedTask), taskId: completedTask.id }, { sourceTaskId: completedTask.id, expectedScope });
+                        } catch (error) {
+                            setAssetExtractionErrors((current) => ({ ...current, [taskChapterId]: error instanceof Error ? error.message : "章节资产写入失败" }));
+                            throw error;
+                        }
                         message.success("已恢复刷新前完成的章节资产提取结果");
                         recoveredTaskIdsRef.current.add(task.id);
+                        showChapterAssets(taskChapterId);
                         continue;
                     }
-                    const rows = chapterStoryboardFromGenerationTask(completedTask).rows;
+                    const recovered = chapterStoryboardFromGenerationTask(completedTask);
+                    const rows = recovered.rows;
+                    queuePendingStoryboardRecovery({ taskId: completedTask.id, chapterId: taskChapterId, rows });
                     const approved = chapterStoryboardApprovalSnapshot(completedTask.inputJson);
                     const current = { revision: detail.project.revision, shotIds: detail.shots.filter((shot) => shot.unitId === taskChapterId).map((shot) => shot.id) };
                     if (approved && chapterStoryboardRecoveryDecision({ alreadyApplied: false, approved, current }).action === "apply") {
                         try {
-                            await storeGeneratedStoryboard(taskChapterId, rows, approved, { sourceTaskId: completedTask.id, expectedScope });
+                            await storeGeneratedStoryboard(taskChapterId, rows, approved, { sourceTaskId: completedTask.id, expectedScope, promptReview: recovered.promptReview });
+                            clearPendingStoryboardRecovery(taskChapterId);
                             recoveredTaskIdsRef.current.add(task.id);
-                            message.success("已自动取回并保存完成的章节分镜");
+                            if (recovered.promptReview.length) message.warning("已取回并保留章节分镜，脚本待修订，请查看技能调用状态中的具体问题");
+                            else message.success("已自动取回并保存完成的章节分镜");
                             if (taskChapterId === selectedId && !dirty) navigate(`/projects/${detail.project.id}/workflow/${taskChapterId}/video`);
                             continue;
                         } catch (error) {
@@ -744,23 +880,27 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[var(--fs-tiny)] text-foreground/38"><span>{dirty ? "有未保存修改" : `保存于 ${formatTime(selectedUnit.updatedAt)}`}</span><span>·</span><span>{formatCount(wordCount)} 字</span><span>·</span><span>{chapterCanvasCount(selectedUnit.id)} 个画布</span><span>·</span><span>{storyboardImpact.shotCount} 个分镜</span>{charactersGenerated && !storyboardGenerated && !storyboardOperation ? <span>· 资产已提取，分镜尚未生成</span> : null}</div>
                             </div>
                             <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                                <Button size="small" icon={<UsersRound className="size-3.5" />} disabled={!selectedUnit || dirty || Boolean(characterOperation)} loading={Boolean(characterOperation)} onClick={() => setCharacterExtractOpen(true)} aria-label={characterOperation ? `提取角色、场景与道具，已运行 ${formatOperationElapsed(characterOperation.startedAt, operationNow)}` : "提取角色、场景与道具"}>{characterOperation ? `提取资产（已运行${formatOperationElapsed(characterOperation.startedAt, operationNow)}）` : charactersGenerated ? "提取资产（已生成）" : "提取角色、场景与道具"}</Button>
+                                {charactersGenerated && !characterOperation ? <Button size="small" icon={<Check className="size-3.5" />} disabled={dirty} onClick={() => showChapterAssets(selectedUnit.id)}>提取完成 · 查看资产</Button> : null}
+                                <Button size="small" icon={<UsersRound className="size-3.5" />} disabled={!selectedUnit || dirty || Boolean(characterOperation)} loading={Boolean(characterOperation)} onClick={() => setCharacterExtractOpen(true)} aria-label={characterOperation ? `提取角色、场景与道具，已运行 ${formatOperationElapsed(characterOperation.startedAt, operationNow)}` : "提取角色、场景与道具"}>{characterOperation ? `提取资产（已运行${formatOperationElapsed(characterOperation.startedAt, operationNow)}）` : charactersGenerated || selectedAssetTask?.status === "failed" ? "重新提取资产" : "提取角色、场景与道具"}</Button>
                                 <Button size="small" type="primary" icon={<Clapperboard className="size-3.5" />} disabled={!selectedUnit || dirty || Boolean(storyboardOperation)} loading={Boolean(storyboardOperation)} onClick={() => setStoryboardOpen(true)} aria-label={storyboardOperation ? `生成到分镜制作，已运行 ${formatOperationElapsed(storyboardOperation.startedAt, operationNow)}` : "生成到分镜制作"}>{storyboardOperation ? `生成到分镜制作（已运行${formatOperationElapsed(storyboardOperation.startedAt, operationNow)}）` : pendingStoryboardRecovery ? "生成到分镜制作（新结果待保存）" : storyboardGenerated ? "生成到分镜制作（已生成）" : "生成到分镜制作"}</Button>
                                 <Button size="small" type={dirty ? "primary" : "default"} icon={dirty ? <Save className="size-3.5" /> : <Check className="size-3.5" />} disabled={!selectedUnit || !dirty || !draftTitle.trim() || saveMutation.isPending} loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>{dirty ? "保存" : "已保存"}</Button>
                             </div>
                         </header>
+                        {!characterOperation && (assetExtractionErrors[selectedUnit?.id || ""] || selectedAssetTask?.status === "failed") ? <div className="shrink-0 border-b border-border/70 px-4 py-3"><Callout tone="warning" title="本章资产提取未完成">{assetExtractionErrors[selectedUnit?.id || ""] || selectedAssetTask?.error || "模型未返回可用结果，请检查渠道响应后重试。"}{selectedAssetTask ? <div className="mt-1 select-text text-xs">任务 ID：{selectedAssetTask.id}</div> : null}</Callout></div> : null}
                         {pendingStoryboardRecovery ? (
                             <div className="shrink-0 border-b border-border/70 px-4 py-3">
                                 <Callout
                                     tone="warning"
                                     title="有已生成的分镜尚未写入"
-                                    action={<Button size="small" type="primary" onClick={() => void applyPendingStoryboardRecovery(pendingStoryboardRecovery)}>核对后写入</Button>}
+                                    action={<Button size="small" type="primary" loading={applyingStoryboardRecoveryChapterId === selectedUnit.id} disabled={Boolean(applyingStoryboardRecoveryChapterId)} onClick={() => void applyPendingStoryboardRecovery(pendingStoryboardRecovery)}>核对后写入</Button>}
                                 >
                                     已生成的分镜还在，不会重新生成。确认后才会写入本章。
+                                    {storyboardRecoveryError[selectedUnit.id] ? <p role="alert" className="mt-1 text-status-error">写入失败：{storyboardRecoveryError[selectedUnit.id]}</p> : null}
                                 </Callout>
                             </div>
                         ) : null}
                         {storyboardPromptReviews[selectedUnit.id]?.length ? <Callout tone="warning" title="30 秒分镜脚本建议">分镜已原样保存，建议核对提示词字数与镜头结构，不会自动重新生成。<details><summary>查看 {storyboardPromptReviews[selectedUnit.id].length} 段检查建议</summary><div className="max-h-36 space-y-1 overflow-y-auto">{storyboardPromptReviews[selectedUnit.id].map((review) => <p key={review}>{review}</p>)}</div></details></Callout> : null}
+                        <div className="shrink-0 px-4 py-2"><ChapterSkillStatus projectId={detail.project.id} chapterId={selectedUnit.id} attempt={chapterSkillAttempts[selectedUnit.id]} hasStoryboard={storyboardGenerated} /></div>
                         <EditorToolbar editor={editor} />
                         <div className="project-chapter-editor-scroll thin-scrollbar min-h-0 flex-1 overflow-y-auto bg-foreground/[.012]">
                             <div className="project-chapter-editor-wrap min-h-full"><EditorContent editor={editor} /></div>
@@ -768,15 +908,25 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                     </div>
                 ) : <WorkspaceState icon="projects" compact className="h-full" title="请选择章节" description="从左侧章节列表选择一章开始编辑。" />}
             </section>
+            {storyboardRecoveryReview ? <ChapterStoryboardRecoveryReview rows={storyboardRecoveryReview.rows} detail={storyboardRecoveryReview.detail} versions={storyboardRecoveryReview.versions} impact={storyboardRecoveryReview.impact}
+                onCancel={() => { storyboardRecoveryReview.resolve(null); setStoryboardRecoveryReview(null); }}
+                onConfirm={(shots) => { storyboardRecoveryReview.resolve(shots); setStoryboardRecoveryReview(null); }} /> : null}
             <CreateChapterModal open={createOpen} onClose={() => setCreateOpen(false)} loading={createMutation.isPending} onSubmit={(values) => createMutation.mutate(values)} />
             <ImportNovelModal open={importOpen} loading={importMutation.isPending} onClose={() => setImportOpen(false)} onImport={(chapters) => importMutation.mutate(chapters)} />
             <Modal className="library-modal" title="提取章节角色、场景与道具" open={characterExtractOpen} width={500} okText="开始提取" cancelText="取消" okButtonProps={{ disabled: !selectedTextModel || selectedTextModelUnavailable }} onCancel={() => setCharacterExtractOpen(false)} onOk={() => void extractCharacters()} styles={{ body: { paddingTop: 12 } }}>
-                <div className="grid gap-4">
+                <div className="grid max-h-[calc(100dvh-16rem)] gap-4 overflow-y-auto pr-1">
                     <div className="rounded-lg border border-border/70 bg-foreground/[.018] px-3 py-2.5">
                         <div className="text-[var(--fs-tiny)] text-foreground/42">当前章节</div>
                         <div className="mt-1 truncate text-sm font-medium text-foreground/85">{selectedUnit?.title}</div>
-                        <div className="mt-1 text-[var(--fs-tiny)] text-foreground/38">正文会交给本次选择的文本模型分析，提取结果进入“角色与资产”待确认列表。</div>
+                        <div className="mt-1 text-[var(--fs-tiny)] text-foreground/38">提取成功后，以最新结果整体替换本集全部未确认资产草稿，不追加旧草稿；已确认资产及其他集不受影响。提取或保存失败时保留原草稿。</div>
                     </div>
+                    <ProjectSystemPresentationSettings value={systemPresentation} onChange={changeSystemPresentation} />
+                    {(systemPresentation.mode === "character" ? hasSystemContent : systemInterfaceProps.length > 0) ? <Callout tone="info" title={systemPresentation.mode === "character" ? "检测到系统内容" : "检测到系统界面道具"}>
+                        <p>{systemPresentation.mode === "character" ? `将系统提取为“${systemPresentation.characterName || "系统精灵"}”角色，由它承接原文系统台词，后续各章沿用形象和声音。` : `${systemInterfaceProps.map((asset) => asset.name).join("、")}可作为道具生成统一的面板模板。复用外框与布局，数值区域留空；各章状态、文字与数值按本镜原文变化，不照抄参考图。`}</p>
+                        <Button className="mt-2" size="small" loading={supplementSystemProps.isPending} disabled={!selectedUnit || dirty || Boolean(characterOperation) || detail.project.status === "archived"} onClick={() => {
+                            if (selectedUnit && !dirty) supplementSystemProps.mutate({ unitId: selectedUnit.id, sourceText: draftText.trim(), presentation: normalizeSystemPresentationSettings(systemPresentation), expectedScope: captureUserScope() });
+                        }}>{systemPresentation.mode === "character" ? "仅补提系统角色（不调用模型）" : "仅补提系统道具（不调用模型）"}</Button>
+                    </Callout> : null}
                     <label className="block">
                         <span className="mb-1.5 block text-xs font-medium text-foreground/68">文本模型</span>
                         <ModelPicker config={effectiveConfig} capability="text" value={selectedTextModel} onChange={changeTextModel} variant="creation" fullWidth placeholder="选择用于提取角色、场景与道具的文本模型" onMissingConfig={() => navigateToSettings({ continueCreation: true })} />
@@ -785,14 +935,15 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                     {selectedTextModelUnavailable ? <Callout tone="warning" title="文本模型不可用">上次选择的文本模型当前不可用，请重新选择；不会自动切换到其他模型。</Callout> : null}
                 </div>
             </Modal>
-            <Modal className="library-modal" title="生成章节分镜" open={storyboardOpen} width={560} okText={storyboardImpact.shotCount ? "重新生成分镜" : "生成分镜"} cancelText="取消" okButtonProps={{ disabled: !selectedTextModel || selectedTextModelUnavailable }} onCancel={() => setStoryboardOpen(false)} onOk={() => void createStoryboard()} styles={{ body: { paddingTop: 12 } }}>
-                <div className="grid gap-4">
+            <Modal className="library-modal" title="生成章节分镜" open={storyboardOpen} width={560} okText={storyboardImpact.shotCount ? "重新生成分镜" : "生成分镜"} cancelText="取消" okButtonProps={{ disabled: !selectedTextModel || selectedTextModelUnavailable || skillsLoading }} onCancel={() => setStoryboardOpen(false)} onOk={() => void createStoryboard()} styles={{ body: { paddingTop: 12 } }}>
+                <div className="grid max-h-[calc(100dvh-16rem)] gap-4 overflow-y-auto pr-1">
                     <div className="rounded-lg border border-border/70 bg-foreground/[.018] px-3 py-2.5">
                         <div className="text-[var(--fs-tiny)] text-foreground/42">当前章节</div>
                         <div className="mt-1 truncate text-sm font-medium text-foreground/85">{selectedUnit?.title}</div>
                         <div className="mt-1 text-[var(--fs-tiny)] text-foreground/38">正文将作为分镜依据，生成结果会直接写入“分镜制作”。</div>
                     </div>
                     {storyboardImpact.shotCount ? <Callout tone="warning" title={`本章已有 ${storyboardImpact.shotCount} 个分镜`}>继续后会先生成新分镜；生成成功后，再按确认内容整体替换旧镜头及其关联数据。</Callout> : null}
+                    <ProjectSystemPresentationSettings value={systemPresentation} onChange={changeSystemPresentation} />
                     <label className="block">
                         <span className="mb-1.5 block text-xs font-medium text-foreground/68">文本模型</span>
                         <ModelPicker config={effectiveConfig} capability="text" value={selectedTextModel} onChange={changeTextModel} variant="creation" fullWidth placeholder="选择用于生成分镜的文本模型" onMissingConfig={() => navigateToSettings({ continueCreation: true })} />
@@ -804,12 +955,23 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                             <span className="mb-1.5 block text-xs font-medium text-foreground/68">分镜技能</span>
                             <SkillRuntimePicker profile="shortDrama" skills={availableSkills} loading={skillsLoading} value={selectedSkillIds} onChange={setSelectedSkillIds} placeholder="选择本项目分镜默认使用的技能" />
                         </label>
-                        <p className="mt-2 text-[var(--fs-tiny)] leading-5 text-foreground/42">可不选，最多 4 个。已按项目自动记忆，后续各集及重启后沿用；修改后作为本项目新的默认选择。生成时按需读取技能，并记录实际使用的版本和文件。</p>
+                        <p className="mt-2 text-[var(--fs-tiny)] leading-5 text-foreground/42">可不选，最多 5 个，建议选择互补技能，避免重复规则。已按项目自动记忆，后续各集及重启后沿用；修改后作为本项目新的默认选择。生成时按需读取技能，并记录实际使用的版本和文件。</p>
                     </div>
                     <label className="block">
                         <span className="mb-1.5 block text-xs font-medium text-foreground/68">分镜拆解模式</span>
                         <Select className="w-full" aria-label="分镜拆解模式" value={storyboardMode} onChange={(mode: ChapterStoryboardMode) => updateConfig("projectChapterStoryboardModes", { ...useConfigStore.getState().config.projectChapterStoryboardModes, [detail.project.id]: mode })} options={[{ value: "standard", label: "常规精细分镜" }, { value: "continuous_30s", label: "30 秒连续分镜（2.5 视频模型）" }]} />
                         <span className="mt-2 block text-xs leading-5 text-foreground/50">{storyboardMode === "continuous_30s" ? "每段总时长 30 秒，优先按自然语速和完整对白分配剧情；对白密集时增加连续分镜，不强塞 800–1000 字原文。资产与声音说明优先精简至 600 字符以内，镜头已有台词不重复附加；提示词整体不受此字数限制。按整体设定、镜头1 / 镜头2 / 镜头3 …、结尾约束组织，每镜写起幅 → 落幅、单一运镜、动作与声音，不写秒数或阶段。保留场景道具绑定。已记住本项目的选择。" : "按动作与对白拆分短镜头，每镜绑定对应场景和实际可见道具。"}</span>
+                    </label>
+                    <label className="block">
+                        <span className="mb-1.5 block text-xs font-medium text-foreground/68">对白字数规则</span>
+                        <Segmented
+                            block
+                            aria-label="分镜对白限制模式"
+                            value={dialogueConstraintMode}
+                            onChange={(value) => updateConfig("projectChapterDialogueConstraintModes", { ...useConfigStore.getState().config.projectChapterDialogueConstraintModes, [detail.project.id]: value as ChapterDialogueConstraintMode })}
+                            options={[{ value: "paced", label: "当前节奏限制" }, { value: "unrestricted", label: "不限制对白字数" }]}
+                        />
+                        <span className="mt-2 block text-xs leading-5 text-foreground/50">{dialogueConstraintMode === "paced" ? "按当前对白节奏规则评估承载量；仍保留完整台词，超出时在自然边界安排后续分镜。此选择会记住并沿用到本项目后续各集。" : "不套用对白字数区间、语速换算或超字阈值；按剧情和自然话轮拆解，仍保留原文台词，不截断、不删改。此选择会记住并沿用到本项目后续各集。"}</span>
                     </label>
                 </div>
             </Modal>
@@ -833,6 +995,22 @@ function chapterOperationFromTask(task: GenerationTask): ChapterOperation {
 function isStoryboardReplacementConflict(error: unknown) {
     if (!(error instanceof ApiError) || error.status !== 409) return false;
     return error.reason === "project_unit_shots_changed" || error.reason === "project_revision_conflict";
+}
+
+function formatStoryboardRecoveryError(error: unknown) {
+    if (!(error instanceof ApiError)) return error instanceof Error ? error.message : "分镜写入失败";
+    switch (error.reason) {
+        case "project_unit_shots_changed":
+            return "当前章节镜头已发生变化，已重新读取最新数据；请再次点击“核对后写入”。";
+        case "project_revision_conflict":
+            return "项目数据已发生变化，已重新读取最新数据；请再次点击“核对后写入”。";
+        case "operation_id_reused_with_different_payload":
+            return "这份生成结果的写入内容与之前不同，请重新生成后再写入。";
+        case "operation_in_progress":
+            return "这份生成结果正在写入，请稍后再试。";
+        default:
+            return error.reason ? `${error.message}（原因：${error.reason}）` : error.message;
+    }
 }
 
 function formatOperationElapsed(startedAt: number, now: number) {

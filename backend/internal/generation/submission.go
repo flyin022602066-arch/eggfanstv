@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"infinite-canvas/backend/internal/platform"
 )
@@ -28,6 +29,10 @@ func SafeRouteRejection(err error) bool {
 	if errors.As(err, &upstream) {
 		switch upstream.StatusCode {
 		case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests:
+			return true
+		}
+		fields := extractProviderFields(upstream.Body)
+		if strings.EqualFold(fields.Code, "model_not_found") && fields.TaskID == "" && !upstream.IdempotencyReplayed {
 			return true
 		}
 	}

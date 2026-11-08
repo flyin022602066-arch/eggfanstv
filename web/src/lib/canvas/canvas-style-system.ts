@@ -1,8 +1,8 @@
 import type { StyleProfileSnapshot } from "@/lib/canvas/style-profile";
 
-export type ProjectStyleWorldId = "xianxia" | "urban" | "historical" | "suspense" | "science-fiction" | "pastoral";
+export type ProjectStyleWorldId = "xianxia" | "urban" | "historical" | "suspense" | "science-fiction" | "pastoral" | "apocalypse" | "wuxia" | "republican" | "mythology";
 export type ProjectStyleToneId = "epic" | "dark" | "light-comedy" | "romantic" | "healing";
-export type ProjectStyleMediumId = "live-action" | "3d-anime" | "3d-cartoon" | "2d-guoman" | "ink";
+export type ProjectStyleMediumId = "live-action" | "3d-anime" | "3d-realistic" | "3d-cartoon" | "2d-guoman" | "2d-anime" | "ink";
 export type ProjectStyleCharacterId = "realistic" | "semi-real" | "anime" | "stylized";
 
 export type ProjectStyleSelection = {
@@ -103,6 +103,50 @@ export const projectStyleWorlds: Array<StyleOption<ProjectStyleWorldId>> = [
         motion: "风、雨、植物、动物和细小生活动作形成自然节奏",
         forbidden: "商业民宿广告感、欧美乡村替代、随机换季、无生活痕迹和过度航拍空镜",
     },
+    {
+        id: "apocalypse",
+        label: "末世废土",
+        description: "依据灾变类型、资源和聚落规则设计可持续叙事的末世世界。",
+        prompt: "先依据原文确定灾变原因、发生时间、生态变化、资源稀缺程度与幸存者秩序；城市废墟、避难所和交通路线具有连续地理关系，异能与变异只采用原文明示规则，不默认添加丧尸或核辐射。",
+        palette: "水泥灰、锈褐、褪色军绿、沙土色与资源或异能的固定点色",
+        wardrobe: "分层实用衣装、防护装备、背包与工具保留有因果的磨损；伤痕、污渍和装备升级采用明确版本",
+        environment: "破损街区、临时营地、仓储、废弃设施与恢复中的自然具有灾变来源、使用痕迹和资源分布",
+        motion: "人物动作体现警戒、负重、地形与装备限制，异能保留起势、作用范围及环境反馈",
+        forbidden: "无依据的丧尸与变异、全屏烟尘、随机爆炸、服装永远破烂、资源和伤痕状态跳变",
+    },
+    {
+        id: "wuxia",
+        label: "东方武侠",
+        description: "以江湖身份、兵器体系、身体受力和山水空间构建武侠美术。",
+        prompt: "武侠世界先锁定时代、地域、门派和武学尺度，以人的武艺、江湖关系与具体地形组织行动；兵器长度、招式和服装适应同一武学规则，不把武侠自动替换成满屏法术的仙侠。",
+        palette: "墨青、竹绿、麻布白、土褐与门派识别色",
+        wardrobe: "劲装、袍衫、护腕、腰带、刀剑与行囊按门派、职业和生活条件建立资产",
+        environment: "山道、竹林、客栈、渡口、庭院、镖局和城巷具有可辨识的空间与中式结构",
+        motion: "起势、步法、重心转移、碰撞、收势与衣料惯性清晰，轻功和夸张尺度服从原文",
+        forbidden: "无依据的飞天法术、兵器尺寸漂移、人物悬空打滑、现代服饰与朝代混搭",
+    },
+    {
+        id: "republican",
+        label: "民国年代",
+        description: "按具体年代、城市和阶层统一建筑、服装、交通与生活质感。",
+        prompt: "依据故事锁定民国具体年代与地域，结合社会阶层、职业和城乡差异建立统一生活环境；中西混合建筑和服饰必须有当地历史依据，不能用当代城市加复古滤镜冒充年代。",
+        palette: "褪色靛蓝、烟灰、旧木棕、米白与有限暗红或墨绿",
+        wardrobe: "长衫、中山装、旗袍、学生装、工装和制服按年代、地域与身份选择，发型、鞋履和配饰成套统一",
+        environment: "里弄、商铺、报馆、车站、宅院与街道使用同年代门窗、车辆、电器和标识",
+        motion: "表演与日常劳动符合服装限制、职业习惯和时代礼仪，交通工具保留真实重量与速度感",
+        forbidden: "现代LED屏、当代汽车、现代拉链运动鞋、无依据的旧上海霓虹套用、所有场景泛黄",
+    },
+    {
+        id: "mythology",
+        label: "东方神话",
+        description: "以具体神话谱系、礼器和山海意象建立有规则的东方奇观。",
+        prompt: "先依据原文确定神话谱系、人神关系、神职、祭祀和力量边界；奇观来自相应时代的器物、纹样、山川与神兽造型体系，不把不同文化与神话角色随意混拼。",
+        palette: "矿物青绿、朱砂、玄黑、玉白与克制金色，神力与阵营点色职责固定",
+        wardrobe: "神职冠饰、礼服、甲胄、玉石、青铜与织物建立统一纹样尺度和身份等级",
+        environment: "山海地貌、祭台、神域、古城和人间聚落共享明确尺度、材料和礼制结构",
+        motion: "神力变化具有仪式、前兆与环境响应，神兽保持骨架、体量与独特运动特征",
+        forbidden: "西式天使恶魔混入、神话谱系混淆、随机佛道符号、金光覆盖主体和无尺度奇观",
+    },
 ];
 
 export const projectStyleTones: Array<StyleOption<ProjectStyleToneId>> = [
@@ -182,6 +226,15 @@ export const projectStyleMedia: Array<StyleOption<ProjectStyleMediumId> & { char
         characters: ["stylized"],
     },
     {
+        id: "3d-realistic",
+        label: "3D 写实 CG",
+        description: "写实比例的数字角色、物理材质与离线电影渲染，明确区别于真人拍摄。",
+        prompt: "采用电影级写实三维CG媒介：数字角色具有可信骨架、肌肉、皮肤分层和毛发体积，统一PBR粗糙度、次表面散射、全局光照与接触阴影；保留数字角色身份和渲染连续性，不替换成真人摄影，不做游戏截图或塑料手办。",
+        motion: "骨骼、布料、毛发、刚体和流体遵循一致模拟尺度，口型与面部肌肉连续，接触与受力可见",
+        forbidden: "真人照片拼贴、二次元大眼、塑料反光、死鱼眼、皮肤蜡像感、低模游戏过场和渲染闪烁",
+        characters: ["realistic", "semi-real"],
+    },
+    {
         id: "2d-guoman",
         label: "国漫 2D",
         description: "稳定线稿、赛璐璐角色与东方绘景体系。",
@@ -198,6 +251,15 @@ export const projectStyleMedia: Array<StyleOption<ProjectStyleMediumId> & { char
         motion: "轮廓先行、笔势跟随、墨迹生长与消散遵循统一规则，人物结构在变化中保持可识别",
         forbidden: "随机泼墨、角色五官消失、西式水彩、全屏脏灰、廉价纸纹滤镜和随机文字印章",
         characters: ["semi-real", "stylized"],
+    },
+    {
+        id: "2d-anime",
+        label: "二维赛璐璐",
+        description: "精确线稿、稳定色块与二维表演，适合都市、悬疑、科幻等题材。",
+        prompt: "采用二维赛璐璐动画媒介：稳定线宽、明确轮廓、两至三阶阴影、手绘背景和统一作画密度；透视、角色转面和表情遵循同一设定，阴影作为二维色块组织，不使用三维PBR或摄影皮肤。",
+        motion: "关键姿势和中间帧连接准确，口型、视线、发束、衣摆及速度线有统一节奏，角色转面不丢失特征",
+        forbidden: "真人皮肤毛孔、三维塑料质感、低质量立绘平移、线稿爬动、色块闪烁和背景写实照片混入",
+        characters: ["anime", "semi-real", "stylized"],
     },
 ];
 
@@ -246,18 +308,23 @@ export function compatibleProjectStyleCharacters(mediumId: ProjectStyleMediumId)
     return projectStyleCharacters.filter((item) => allowed.includes(item.id));
 }
 
+export function normalizeProjectStyleSelection(selection: ProjectStyleSelection): ProjectStyleSelection {
+    const compatible = compatibleProjectStyleCharacters(selection.medium);
+    if (!compatible.length) throw new Error(`未知项目视觉媒介：${selection.medium}`);
+    return { ...selection, character: compatible.some((item) => item.id === selection.character) ? selection.character : compatible[0].id };
+}
+
 export function compileCanvasStylePreset(selection: ProjectStyleSelection): CanvasStylePreset {
     const world = requiredOption(projectStyleWorlds, selection.world);
     const tone = requiredOption(projectStyleTones, selection.tone);
     const medium = requiredOption(projectStyleMedia, selection.medium);
-    const compatibleCharacters = compatibleProjectStyleCharacters(selection.medium);
-    const character = compatibleCharacters.find((item) => item.id === selection.character) || compatibleCharacters[0];
-    const resolvedSelection = { ...selection, character: character.id };
+    const resolvedSelection = normalizeProjectStyleSelection(selection);
+    const character = requiredOption(projectStyleCharacters, resolvedSelection.character);
     const title = `${world.label} · ${tone.label} · ${medium.label}`;
     const preset = {
         id: styleSelectionId(resolvedSelection),
         title,
-        category: `${world.label} / ${medium.label}`,
+        category: medium.label,
         description: `${world.description}${tone.description}${medium.description}`,
         tags: [world.label, tone.label, medium.label, character.label],
         imageUrl: stylePreviewImage(resolvedSelection),
@@ -322,6 +389,37 @@ const recommendedSelections: ProjectStyleSelection[] = [
     { world: "suspense", tone: "dark", medium: "live-action", character: "realistic" },
     { world: "pastoral", tone: "healing", medium: "3d-cartoon", character: "stylized" },
     { world: "historical", tone: "romantic", medium: "2d-guoman", character: "semi-real" },
+    { world: "historical", tone: "epic", medium: "live-action", character: "realistic" },
+    { world: "urban", tone: "romantic", medium: "3d-anime", character: "semi-real" },
+    { world: "urban", tone: "healing", medium: "3d-realistic", character: "realistic" },
+    { world: "urban", tone: "light-comedy", medium: "2d-anime", character: "anime" },
+    { world: "historical", tone: "epic", medium: "3d-anime", character: "semi-real" },
+    { world: "historical", tone: "epic", medium: "3d-realistic", character: "realistic" },
+    { world: "suspense", tone: "dark", medium: "3d-anime", character: "semi-real" },
+    { world: "suspense", tone: "dark", medium: "3d-realistic", character: "realistic" },
+    { world: "suspense", tone: "dark", medium: "2d-anime", character: "anime" },
+    { world: "science-fiction", tone: "epic", medium: "live-action", character: "realistic" },
+    { world: "science-fiction", tone: "epic", medium: "3d-anime", character: "semi-real" },
+    { world: "science-fiction", tone: "epic", medium: "3d-realistic", character: "realistic" },
+    { world: "science-fiction", tone: "epic", medium: "2d-anime", character: "anime" },
+    { world: "pastoral", tone: "healing", medium: "live-action", character: "realistic" },
+    { world: "pastoral", tone: "healing", medium: "3d-anime", character: "semi-real" },
+    { world: "pastoral", tone: "healing", medium: "2d-guoman", character: "semi-real" },
+    { world: "apocalypse", tone: "dark", medium: "live-action", character: "realistic" },
+    { world: "apocalypse", tone: "dark", medium: "3d-anime", character: "semi-real" },
+    { world: "apocalypse", tone: "dark", medium: "3d-realistic", character: "realistic" },
+    { world: "apocalypse", tone: "dark", medium: "2d-anime", character: "anime" },
+    { world: "wuxia", tone: "epic", medium: "live-action", character: "realistic" },
+    { world: "wuxia", tone: "epic", medium: "3d-anime", character: "semi-real" },
+    { world: "wuxia", tone: "epic", medium: "2d-guoman", character: "semi-real" },
+    { world: "wuxia", tone: "epic", medium: "ink", character: "semi-real" },
+    { world: "republican", tone: "romantic", medium: "live-action", character: "realistic" },
+    { world: "republican", tone: "dark", medium: "3d-anime", character: "semi-real" },
+    { world: "republican", tone: "romantic", medium: "2d-guoman", character: "semi-real" },
+    { world: "mythology", tone: "epic", medium: "live-action", character: "realistic" },
+    { world: "mythology", tone: "epic", medium: "3d-anime", character: "semi-real" },
+    { world: "mythology", tone: "epic", medium: "3d-realistic", character: "realistic" },
+    { world: "mythology", tone: "epic", medium: "2d-guoman", character: "semi-real" },
 ];
 
 export const recommendedCanvasStylePresets = recommendedSelections.map(compileCanvasStylePreset);
@@ -331,18 +429,16 @@ function styleSelectionId(selection: ProjectStyleSelection) {
 }
 
 function stylePreviewImage(selection: ProjectStyleSelection) {
-    if (selection.world === "xianxia") {
-        if (selection.medium === "live-action") return "/short-drama-styles/period-live-action.jpg";
-        if (selection.medium === "3d-cartoon") return "/short-drama-styles/three-d-cartoon.jpg";
-        if (selection.medium === "2d-guoman") return "/short-drama-styles/chinese-2d.jpg";
-        if (selection.medium === "ink") return "/short-drama-styles/ink-narrative.jpg";
-        return "/short-drama-styles/fantasy-3d.jpg";
-    }
+    if (selection.medium === "3d-anime" || selection.medium === "3d-realistic") return "/short-drama-styles/medium-3d.svg";
+    if (selection.medium === "3d-cartoon") return "/short-drama-styles/three-d-cartoon.jpg";
+    if (selection.medium === "2d-guoman" || selection.medium === "2d-anime") return "/short-drama-styles/medium-2d.svg";
+    if (selection.medium === "ink") return "/short-drama-styles/ink-narrative.jpg";
+    if (["xianxia", "historical", "wuxia", "mythology"].includes(selection.world)) return "/short-drama-styles/period-live-action.jpg";
     if (selection.world === "suspense") return "/short-drama-styles/suspense-noir.jpg";
     if (selection.world === "science-fiction") return "/short-drama-styles/future-tech.jpg";
     if (selection.world === "pastoral") return "/short-drama-styles/nature-healing.jpg";
-    if (selection.world === "historical") return selection.medium === "2d-guoman" ? "/short-drama-styles/chinese-2d.jpg" : "/short-drama-styles/period-live-action.jpg";
-    return selection.medium === "3d-cartoon" ? "/short-drama-styles/three-d-cartoon.jpg" : "/short-drama-styles/urban-live-action.jpg";
+    if (selection.world === "republican") return "/short-drama-styles/retro-hong-kong.jpg";
+    return "/short-drama-styles/real-life.jpg";
 }
 
 function requiredOption<T extends string>(options: Array<StyleOption<T>>, id: T) {

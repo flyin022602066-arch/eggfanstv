@@ -359,6 +359,68 @@ test("lost ack of the same document is recovered without a permanent 409", async
     expect(server.conversations.get("replay")?.document?.title).toBe("原稿");
 });
 
+test("backend text completion is merged before saving the next streamed turn", async () => {
+    const original = {
+        id: "streamed", title: "创作", messages: [
+            { id: "user-1", role: "user" as const, content: "写剧本" },
+            { id: "reply-1", role: "assistant" as const, mode: "text", status: "streaming", content: "草稿", taskIds: ["task-1"] },
+        ],
+    };
+    await saveCreationConversations([original]);
+    server.conversations.set("streamed", {
+        id: "streamed", revision: 2, updatedAt: "2026-10-28T01:42:13Z",
+        document: { ...original, messages: [original.messages[0], { ...original.messages[1], status: "done", content: "完整剧本", generationEffectKeys: ["attach-message:task-1:reply-1:0"] }] },
+    });
+    const next = {
+        ...original, messages: [
+            original.messages[0], { ...original.messages[1], content: "最后一段流式草稿" },
+            { id: "user-2", role: "user" as const, content: "继续" },
+            { id: "reply-2", role: "assistant" as const, mode: "text", status: "streaming", content: "", taskIds: ["task-2"] },
+        ],
+    };
+    await saveCreationConversations([next]);
+    const saved = server.conversations.get("streamed");
+    expect(saved?.document?.messages).toHaveLength(4);
+    expect(saved?.document?.messages[1]).toMatchObject({ status: "done", content: "完整剧本", generationEffectKeys: ["attach-message:task-1:reply-1:0"] });
+    expect(saved?.document?.messages[3]).toMatchObject({ id: "reply-2", taskIds: ["task-2"] });
+    expect((await loadLocalCreationConversationDrafts())?.find((item) => item.id === "streamed")?.conflictRemote).toBeUndefined();
+});
+
+test("a user edit on the remote conversation still requires conflict resolution", async () => {
+    const original = { id: "edited", title: "原稿", messages: [{ id: "reply-1", role: "assistant" as const, status: "streaming", content: "草稿", taskIds: ["task-1"] }] };
+    await saveCreationConversations([original]);
+    server.conversations.set("edited", { id: "edited", revision: 2, updatedAt: "2026-10-28T01:42:13Z", document: { ...original, title: "另一个窗口改的标题" } });
+    await expect(saveCreationConversations([{ ...original, title: "本地标题" }])).rejects.toMatchObject({ status: 409 });
+    expect(server.conversations.get("edited")?.document?.title).toBe("另一个窗口改的标题");
+});
+
+test("backend confirmation of an already displayed text result does not block the next turn", async () => {
+    const result = { id: "reply-1", role: "assistant" as const, mode: "text", status: "done", content: "完整剧本", taskIds: ["task-1"] };
+    const original = { id: "confirmed", title: "创作", messages: [result] };
+    await saveCreationConversations([original]);
+    server.conversations.set("confirmed", {
+        id: "confirmed", revision: 2, updatedAt: "2026-10-28T01:42:13Z",
+        document: { ...original, messages: [{ ...result, generationEffectKeys: ["attach-message:task-1:reply-1:0"] }] },
+    });
+    await saveCreationConversations([{ ...original, messages: [result, { id: "user-2", role: "user" as const, content: "继续" }] }]);
+    expect(server.conversations.get("confirmed")?.document?.messages).toHaveLength(2);
+    expect((await loadLocalCreationConversationDrafts())?.find((item) => item.id === "confirmed")?.conflictRemote).toBeUndefined();
+});
+
+test("a saved conflict draft can resume after the previous text result was bound", async () => {
+    const completed = { id: "reply-1", role: "assistant" as const, mode: "text", status: "done", content: "完整剧本", taskIds: ["task-1"], generationEffectKeys: ["attach-message:task-1:reply-1:0"] };
+    const canonical = { id: "resume", title: "创作", messages: [completed] };
+    server.conversations.set("resume", { id: "resume", revision: 6, updatedAt: "2026-10-28T01:42:13Z", document: canonical });
+    const draft = { ...canonical, messages: [completed, { id: "reply-2", role: "assistant" as const, mode: "text", status: "error", content: "生成失败", taskIds: ["task-2"] }] };
+    stored.set("guest:creation-conversation-drafts-v1:resume", JSON.stringify({ baseRevision: 5, document: draft, remote: { revision: 6, document: canonical } }));
+    stored.set("guest:creation-conversation-drafts-v1:index", JSON.stringify(["resume"]));
+    const loaded = await loadCreationConversations();
+    expect(loaded?.[0]?.conflictRemote).toBeUndefined();
+    await saveCreationConversations(loaded!);
+    expect(server.conversations.get("resume")?.document?.messages).toHaveLength(2);
+    expect((await loadLocalCreationConversationDrafts())?.find((item) => item.id === "resume")?.conflictRemote).toBeUndefined();
+});
+
 test("blob-only attachment is a recoverable persist failure", async () => {
     const draft = {
         id: "blob-only",

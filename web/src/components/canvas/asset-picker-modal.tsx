@@ -1,11 +1,12 @@
-import { useMemo } from "react";
+import { useContext, useMemo } from "react";
 
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
 import { ASSET_CATEGORY_LABELS, normalizeAssetCategory } from "@/lib/asset-category";
 import type { ExternalAssetPickerReference } from "@/lib/plugins/plugin-types";
 import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
-import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import type { Asset } from "@/stores/use-asset-store";
+import { CanvasAssetLibraryContext, usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 
 type InsertableAsset = Extract<Asset, { kind: "text" | "image" | "video" | "audio" }>;
 
@@ -31,6 +32,7 @@ export type InsertAssetPayload =
       };
 
 type Props = {
+    canvasId?: string;
     open: boolean;
     multiple?: boolean;
     onInsert: (payloads: InsertAssetPayload[], expectedScope: CapturedUserScope) => Promise<void> | void;
@@ -39,8 +41,10 @@ type Props = {
 
 const categoryLabels: Record<string, string> = { all: "全部素材", ...ASSET_CATEGORY_LABELS };
 
-export function AssetPickerModal({ open, multiple = true, onInsert, onClose }: Props) {
-    const assets = useAssetStore((state) => state.assets);
+export function AssetPickerModal({ canvasId, open, multiple = true, onInsert, onClose }: Props) {
+    const contextCanvasId = useContext(CanvasAssetLibraryContext);
+    const activeCanvasId = canvasId ?? contextCanvasId;
+    const assets = usePersonalAssetLibrary(activeCanvasId);
     const externalAssetSources = useExternalAssetSources(open);
     const insertableAssets = useMemo(() => assets.filter((asset): asset is InsertableAsset => asset.kind === "text" || asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"), [assets]);
     const items = useMemo<AssetLibraryPickerItem[]>(
@@ -62,7 +66,7 @@ export function AssetPickerModal({ open, multiple = true, onInsert, onClose }: P
 
     return (
         <AssetLibraryPickerModal
-            remoteLibrary
+            remoteLibrary={activeCanvasId === undefined}
             open={open}
             mediaKinds={["image", "video", "audio", "text"]}
             items={items}
@@ -73,8 +77,8 @@ export function AssetPickerModal({ open, multiple = true, onInsert, onClose }: P
             confirmLabel={(count) => `插入已选素材${count ? `（${count}）` : ""}`}
             emptyDescription="先在素材库中添加图片、视频、音频或文本。"
             onClose={onClose}
-            onConfirm={async (ids, expectedScope) => {
-                await onInsert(assetPickerItemsToInsertPayloads(ids, items), expectedScope);
+            onConfirm={async (ids, expectedScope, selectedItems) => {
+                await onInsert(assetPickerItemsToInsertPayloads(ids, selectedItems), expectedScope);
                 assertUserScope(expectedScope);
                 onClose();
             }}

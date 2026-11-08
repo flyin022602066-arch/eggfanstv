@@ -7,7 +7,7 @@ import { createContext, useContext } from "react";
 import type { StoreApi, UseBoundStore } from "zustand";
 
 import type { EditorStore } from "@/stores/editor/editor-store";
-import type { ProjectAsset } from "@/services/api/projects";
+import type { ProjectAsset, ProjectDetail } from "@/services/api/projects";
 
 type EditorStoreHook = UseBoundStore<StoreApi<EditorStore>>;
 
@@ -15,6 +15,7 @@ export type EditorHostContextValue = {
     projectId: string;
     /** 当前用户、当前项目的资产快照；由编辑器宿主获取，素材导入插件只消费和触发刷新。 */
     assets: ProjectAsset[];
+    episodeContext?: Pick<ProjectDetail, "units" | "shots" | "shotArtifacts">;
     /** 重新拉取项目资产（导入媒体后刷新列表）。 */
     refreshAssets: () => Promise<ProjectAsset[] | null>;
     openExport?: () => void;

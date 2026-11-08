@@ -1,5 +1,5 @@
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
+import { canvasNodeCharacterCoverStorageKey, canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
@@ -326,7 +326,7 @@ export function buildCanvasAgentMentionReferences(nodes: CanvasNodeData[]): Canv
                   : node.type === CanvasNodeType.Video
                     ? canvasNodeVideoPreviewUrl(node)
                     : node.metadata?.previewContent || node.metadata?.content,
-            storageKey: node.metadata?.storageKey,
+            storageKey: node.metadata?.workflowKind === "character" ? canvasNodeCharacterCoverStorageKey(node) : node.metadata?.storageKey,
             previewStorageKey: node.type === CanvasNodeType.Video ? node.metadata?.videoPreview?.storageKey : undefined,
             drawingId: node.type === CanvasNodeType.Drawing ? node.metadata?.drawingId : undefined,
             drawingRevision: node.type === CanvasNodeType.Drawing ? node.metadata?.drawingRevision : undefined,
@@ -492,7 +492,7 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                       : node.type === CanvasNodeType.Video
                         ? canvasNodeVideoPreviewUrl(node)
                         : node.metadata?.previewContent || node.metadata?.content,
-                storageKey: node.metadata?.storageKey,
+                storageKey: node.metadata?.workflowKind === "character" ? canvasNodeCharacterCoverStorageKey(node) : node.metadata?.storageKey,
                 previewStorageKey: node.type === CanvasNodeType.Video ? node.metadata?.videoPreview?.storageKey : undefined,
                 drawingId: node.type === CanvasNodeType.Drawing ? node.metadata?.drawingId : undefined,
                 drawingRevision: node.type === CanvasNodeType.Drawing ? node.metadata?.drawingRevision : undefined,

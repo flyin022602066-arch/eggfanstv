@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
-import { uploadResourceFile } from "@/services/api/resources";
+import { getResourceBlob, ownedResourceIdFromMediaRef, uploadResourceFile } from "@/services/api/resources";
 
 export type OwnedMediaSaveResult = "saved" | "cancelled";
 
@@ -25,6 +25,13 @@ export async function downloadOwnedOrBrowserMedia(options: { fileName: string; r
         return saved ? "saved" : "cancelled";
     }
     const browserUrl = options.browserUrl?.trim();
+    const resourceId = options.resourceId?.trim() || ownedResourceIdFromMediaRef(undefined, browserUrl);
+    if (resourceId) {
+        const blob = await getResourceBlob(`resource:${resourceId}`);
+        if (!blob) throw new Error("无法读取下载文件，资源可能已删除或无权访问，请刷新后重试");
+        saveAs(blob, fileName);
+        return "saved";
+    }
     if (!browserUrl) throw new Error("没有可导出的文件");
     saveAs(browserUrl, fileName);
     return "saved";

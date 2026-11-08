@@ -149,7 +149,7 @@ func userAssetFilteredQuery(query *gorm.DB, filter UserAssetPageFilter, includeS
 		query = query.Where(userAssetProjectLabelSQL()+" = ?", value)
 	}
 	if value := strings.TrimSpace(filter.ProjectID); value != "" {
-		query = query.Where("EXISTS (SELECT 1 FROM project_asset_links WHERE project_asset_links.asset_id = assets.id AND project_asset_links.project_id = ?)", value)
+		query = query.Where("EXISTS (SELECT 1 FROM project_asset_links WHERE (project_asset_links.asset_id = assets.id OR project_asset_links.asset_id = json_extract(assets.payload_json, '$.metadata.sourceAssetId')) AND project_asset_links.project_id = ?)", value)
 	}
 	if filter.Generated {
 		query = query.Where(userAssetGeneratedSQL())

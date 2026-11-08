@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" fill="none">
+  <defs>
+    <linearGradient id="bg" x2="640" y2="360" gradientUnits="userSpaceOnUse"><stop stop-color="#102a3c"/><stop offset="1" stop-color="#15202b"/></linearGradient>
+    <radialGradient id="sphere" cx="0" cy="0" r="1" gradientTransform="translate(385 104) rotate(61) scale(153)" gradientUnits="userSpaceOnUse"><stop stop-color="#ddf4ff"/><stop offset=".35" stop-color="#7db6cc"/><stop offset="1" stop-color="#1c455c"/></radialGradient>
+    <linearGradient id="front" x1="170" y1="160" x2="245" y2="280" gradientUnits="userSpaceOnUse"><stop stop-color="#90c3d3"/><stop offset="1" stop-color="#35586e"/></linearGradient>
+  </defs>
+  <path fill="url(#bg)" d="M0 0h640v360H0z"/>
+  <g stroke="#497086" opacity=".3"><path d="M0 275 320 158 640 275M0 310 320 193 640 310M0 345 320 228 640 345M40 360 320 256 600 360M0 240l320 120 320-120M80 210l320 150M560 210 160 360"/></g>
+  <ellipse cx="398" cy="264" rx="96" ry="21" fill="#0a1722" opacity=".6"/>
+  <circle cx="402" cy="160" r="86" fill="url(#sphere)"/>
+  <path d="m144 180 87-42 87 42-87 43z" fill="#b8dce7"/>
+  <path d="m144 180 87 43v91l-87-44z" fill="url(#front)"/>
+  <path d="m231 223 87-43v90l-87 44z" fill="#294b63"/>
+  <g stroke="#b8dce7" opacity=".65"><path d="m117 161 114-55 114 55M117 154v14m228-14v14M492 72v180m-6-180h12m-12 180h12"/></g>
+  <text x="30" y="40" fill="#d9edf5" font-size="14" font-family="sans-serif" letter-spacing="4">3D · VOLUME / MATERIAL / LIGHT</text>
+  <text x="30" y="337" fill="#8cafc1" font-size="13" font-family="sans-serif">三维媒介规范示意 · 非成片预览</text>
+</svg>

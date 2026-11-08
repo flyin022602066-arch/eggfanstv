@@ -6,6 +6,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { nanoid } from "nanoid";
 
 import { StyleProfileEditorModal } from "@/components/canvas/style-profile-editor-modal";
+import { ProjectStyleComposerModal } from "@/components/canvas/project-style-composer-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { createStyleProfileSnapshot, parseStyleProfile, serializeStyleProfile, type StyleProfileSnapshot } from "@/lib/canvas/style-profile";
 import {
@@ -388,7 +389,7 @@ const resolvedLegacyCanvasStylePresets = legacyCanvasStylePresets.map((preset) =
     const upgrade = legacyStyleUpgrades[preset.id];
     if (!upgrade) return preset;
     const compiled = compileCanvasStylePreset(upgrade);
-    const upgraded = { ...compiled, id: preset.id, imageUrl: preset.imageUrl };
+    const upgraded = { ...compiled, id: preset.id };
     return { ...upgraded, profile: createStyleProfileSnapshot({ ...compiled.profile!, presetId: preset.id }) };
 });
 
@@ -448,6 +449,8 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     const [systemFavoriteIds, setSystemFavoriteIds] = useState<string[]>([]);
     const [recentIds, setRecentIds] = useState<string[]>([]);
     const [editor, setEditor] = useState<StyleEditorState | null>(null);
+    const [composerOpen, setComposerOpen] = useState(false);
+    const composerInitialSelection = useMemo(() => resolveCanvasStylePreset(value)?.selection, [value]);
     const [localProfiles, setLocalProfiles] = useState<UserStyleProfile[]>(readLocalStyleProfiles);
     const profilesQuery = useQuery({ queryKey: ["style-profiles"], queryFn: listStyleProfiles, enabled: open && !localMode });
     const profileEntities = localMode ? localProfiles : profilesQuery.data?.profiles || [];
@@ -457,6 +460,7 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
         setTab("system");
         setQuery("");
         setCategory("全部");
+        setComposerOpen(false);
         setSystemFavoriteIds(readStyleIds(STYLE_FAVORITES_KEY));
         setRecentIds(readStyleIds(STYLE_RECENT_KEY));
         if (localMode) setLocalProfiles(readLocalStyleProfiles());
@@ -485,8 +489,8 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     const visibleItems = useMemo(() => {
         const keyword = query.trim().toLocaleLowerCase("zh-CN");
         let source: StyleLibraryItem[] = tab === "system" ? systemItems : tab === "mine" ? userItems : tab === "favorites"
-            ? [...systemItems.filter((item) => systemFavoriteIds.includes(item.preset.id)), ...userItems.filter((item) => item.kind === "user" && item.entity.favorite)]
-            : [...userItems.filter((item) => item.kind === "user" && item.entity.lastUsedAt).sort((a, b) => String(b.entity.lastUsedAt).localeCompare(String(a.entity.lastUsedAt))), ...recentIds.flatMap((id) => systemItems.filter((item) => item.preset.id === id))];
+            ? [...systemFavoriteIds.flatMap((id) => { const preset = resolveCanvasStylePreset(id); return preset ? [{ kind: "system" as const, preset }] : []; }), ...userItems.filter((item) => item.kind === "user" && item.entity.favorite)]
+            : [...userItems.filter((item) => item.kind === "user" && item.entity.lastUsedAt).sort((a, b) => String(b.entity.lastUsedAt).localeCompare(String(a.entity.lastUsedAt))), ...recentIds.flatMap((id) => { const preset = resolveCanvasStylePreset(id); return preset ? [{ kind: "system" as const, preset }] : []; })];
         if (tab === "system" && category !== "全部") source = source.filter((item) => item.preset.category === category);
         if (keyword) source = source.filter((item) => `${item.preset.title} ${item.preset.category} ${item.preset.description} ${item.preset.tags.join(" ")}`.toLocaleLowerCase("zh-CN").includes(keyword));
         return source;
@@ -599,8 +603,9 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
                             <h2 className="text-base font-semibold">风格中心</h2>
                             <p className="mt-0.5 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>系统规范 · 个人风格 · 项目快照</p>
                         </div>
-                        <div className="flex min-w-0 gap-2 sm:items-center">
-                            <Input allowClear className="style-center-search min-w-0 flex-1" prefix={<Search className="size-3.5 text-foreground/35" />} value={query} placeholder="搜索风格、题材或媒介" onChange={(event) => setQuery(event.target.value)} />
+                        <div className="flex min-w-0 flex-wrap gap-2 sm:items-center">
+                            <Input allowClear className="style-center-search min-w-0 flex-1 basis-full sm:basis-auto" prefix={<Search className="size-3.5 text-foreground/35" />} value={query} placeholder="搜索风格、题材或媒介" onChange={(event) => setQuery(event.target.value)} />
+                            <Button className="shrink-0" icon={<SlidersHorizontal className="size-3.5" />} onClick={() => setComposerOpen(true)}>组合画风</Button>
                             <Button type="primary" className="shrink-0" icon={<Plus className="size-3.5" />} onClick={createNewStyle}>新建风格</Button>
                         </div>
                     </header>
@@ -649,7 +654,8 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
                     </div>
                 </div>
             </AppModal>
-            <CanvasStyleDetailModal open={Boolean(detailPreset)} preset={detailPreset} selected={detailPreset?.id === value} onClose={() => setDetailPreset(null)} onSelect={(preset) => { setDetailPreset(null); const item = [...systemItems, ...userItems].find((candidate) => candidate.preset.id === preset.id); if (item) selectItem(item); }} />
+            <CanvasStyleDetailModal open={Boolean(detailPreset)} preset={detailPreset} selected={detailPreset?.id === value} onClose={() => setDetailPreset(null)} onSelect={(preset) => { setDetailPreset(null); selectItem([...systemItems, ...userItems].find((candidate) => candidate.preset.id === preset.id) || { kind: "system", preset }); }} />
+            <ProjectStyleComposerModal open={open && composerOpen} initialSelection={composerInitialSelection} applying={applying} onClose={() => setComposerOpen(false)} onApply={(preset) => { setComposerOpen(false); selectItem({ kind: "system", preset }); }} onEdit={(preset) => { setComposerOpen(false); setEditor({ profile: editableCopy(preset.profile!, undefined, preset.title, preset.imageUrl) }); }} />
             <StyleProfileEditorModal open={Boolean(editor)} initialProfile={editor?.profile || null} saving={saveMutation.isPending} onClose={() => setEditor(null)} onSave={(profile, apply) => saveMutation.mutate({ profile, apply })} />
         </>
     );

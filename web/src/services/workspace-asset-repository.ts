@@ -261,6 +261,7 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
         return;
     }
 
+    const previousDraft = peekAssetStoreDraft(expected.userScope, assetId);
     recordAssetStoreDraft(assetId, "delete", expected);
     const submittedVersion = peekAssetStoreDraft(expected.userScope, assetId)?.version ?? 0;
     options?.onDraftRecorded?.(submittedVersion);
@@ -274,7 +275,16 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
                 ...(options?.expectedStatus ? { params: { expectedStatus: options.expectedStatus } } : {}),
             });
         } catch (error) {
-            if (!isNotFoundAssetError(error)) throw error;
+            if (!isNotFoundAssetError(error)) {
+                // A definitive refusal must not leave a tombstone hiding an asset that still exists.
+                const rejected = error instanceof ApiError && !error.retryable && [error.status, error.code].some((code) => code !== undefined && code >= 400 && code < 500);
+                if (rejected && userScopeMatches(expected) && peekAssetStoreDraft(expected.userScope, assetId)?.version === submittedVersion) {
+                    ackAssetStoreDraft(expected, assetId, submittedVersion);
+                    if (previousDraft?.kind === "upsert") recordAssetStoreDraft(assetId, "upsert", expected);
+                    await flushAssetStorePersistence(expected);
+                }
+                throw error;
+            }
         }
         if (!userScopeMatches(expected)) throw new UserScopeAbandonedError();
         const later = peekAssetStoreDraft(expected.userScope, assetId);

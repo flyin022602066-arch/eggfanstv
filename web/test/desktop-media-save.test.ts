@@ -77,6 +77,27 @@ describe("native media save", () => {
         expect(fetched).toBe(false);
     });
 
+    test("browser owned images use the authenticated original resource endpoint", async () => {
+        Object.assign(globalThis, { window: { location: { protocol: "http:" } } });
+        configureApiRuntime("/api", "offline-download-token");
+        const requests: string[] = [];
+        apiClient.defaults.adapter = async (config) => {
+            requests.push(config.url!);
+            expect(config.url).toBe("/resources/selected-original/file?proxy=1");
+            expect(config.responseType).toBe("blob");
+            expect(config.headers.get("X-Desktop-Token")).toBe("offline-download-token");
+            return { data: new Blob(["original image"], { type: "image/png" }), status: 200, statusText: "OK", headers: {}, config };
+        };
+        expect(await downloadOwnedOrBrowserMedia({ fileName: "角色.png", resourceId: "selected-original" })).toBe("saved");
+        expect(requests).toEqual(["/resources/selected-original/file?proxy=1"]);
+    });
+
+    test("browser missing owned images reject instead of silently opening a failed URL", async () => {
+        Object.assign(globalThis, { window: { location: { protocol: "http:" } } });
+        apiClient.defaults.adapter = async () => { throw new Error("missing original"); };
+        await expect(downloadOwnedOrBrowserMedia({ fileName: "角色.png", resourceId: "missing-original", browserUrl: "/api/resources/missing-original/file" })).rejects.toThrow("无法读取下载文件");
+    });
+
     test("browser path keeps saveAs and does not require a Wails binding", () => {
         Object.assign(globalThis, { window: { location: { protocol: "http:" } } });
         expect(isWailsNativeShell()).toBe(false);

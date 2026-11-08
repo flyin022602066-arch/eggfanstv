@@ -10,6 +10,8 @@ import (
 
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
+	"infinite-canvas/backend/internal/provider/hanbao"
 )
 
 type appResourcePort struct{ service *Service }
@@ -195,6 +197,12 @@ func (p appConfigPort) ApplyCapabilities(ctx context.Context, input *generation.
 	if p.service == nil || input == nil {
 		return nil
 	}
+	if input.Config.InterfaceType == hanbao.Protocol {
+		if input.Mode != "video" { return errors.New("憨包只支持视频生成") }
+		profile := modelcatalog.DefaultModelCapabilityConfigForModel(hanbao.Protocol, input.Config.Model)
+		input.Config.CapabilityConfig, input.VideoCapability = profile, profile.Video
+		return nil
+	}
 	switch input.Mode {
 	case "image":
 		return p.service.validateResolvedImageCapability(input)
@@ -290,6 +298,8 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 		Receipts:  appReceiptPort{service: s},
 		Images:    appImagePort{service: s},
 		Workflow:  appWorkflowPort{service: s},
+		Hanbao:    s.HanbaoDomain(),
+		LocalVideoReceipts: hanbaoReceipt{service: s},
 		Prompt:    appPromptPort{service: s},
 		Config:    appConfigPort{service: s},
 		Style:     appStylePort{service: s},

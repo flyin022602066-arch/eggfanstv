@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useContext, useMemo } from "react";
 
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem, type AssetPickerMediaKind } from "@/components/assets/asset-library-picker-modal";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
@@ -10,13 +10,15 @@ import type { ProjectAsset, ProjectDetail } from "@/services/api/projects";
 import { getWorkspaceAsset } from "@/services/api/workspace-data";
 import { usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
 import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
-import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import type { Asset } from "@/stores/use-asset-store";
+import { CanvasAssetLibraryContext, usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 
 const categoryLabels: Record<string, string> = { all: "全部资产", ...ASSET_CATEGORY_LABELS };
 type ProjectPickerItem = { id: string; category: string; folderId?: string; project?: ProjectAsset; character?: ProjectAsset; media?: Asset };
 
 export function CanvasProjectAssetModal({
     open,
+    canvasId,
     detail,
     initialCategory = "all",
     initialFolderId = "all",
@@ -25,6 +27,7 @@ export function CanvasProjectAssetModal({
     onInsertFolder,
 }: {
     open: boolean;
+    canvasId?: string;
     detail?: ProjectDetail;
     initialCategory?: string;
     initialFolderId?: string;
@@ -32,7 +35,9 @@ export function CanvasProjectAssetModal({
     onInsert: (payloads: InsertAssetPayload[], expectedScope: CapturedUserScope) => Promise<void> | void;
     onInsertFolder?: (folderId: string, expectedScope: CapturedUserScope) => Promise<void> | void;
 }) {
-    const mediaAssets = useAssetStore((state) => state.assets);
+    const contextCanvasId = useContext(CanvasAssetLibraryContext);
+    const activeCanvasId = canvasId ?? contextCanvasId;
+    const mediaAssets = usePersonalAssetLibrary(activeCanvasId);
     const externalAssetSources = useExternalAssetSources(open);
     const items = useMemo<ProjectPickerItem[]>(() => {
         const mediaById = new Map(mediaAssets.map((asset) => [asset.id, asset]));
@@ -43,9 +48,9 @@ export function CanvasProjectAssetModal({
             return asset.mediaType === "model" || asset.mediaType === "entity" ? [] : [{ id: asset.id, category: normalizeAssetCategory(asset.category || media?.category), folderId: asset.folderId, project: asset, media }];
         });
         if (detail) return projectItems;
-        // 自由画布未关联项目时回退到个人素材库。
+        // 自由画布按所属工作区项目筛选，避免跨项目混入资产。
         return mediaAssets.filter((asset) => asset.kind !== "model" && asset.kind !== "entity" && asset.status !== "archived").map((media): ProjectPickerItem => ({ id: media.id, category: normalizeAssetCategory(media.category), media }));
-    }, [detail?.assets, mediaAssets]);
+    }, [detail, mediaAssets]);
     const localPickerItems = useMemo<AssetLibraryPickerItem[]>(
         () =>
             items.map((item) => {
@@ -80,7 +85,7 @@ export function CanvasProjectAssetModal({
 
     return (
         <AssetLibraryPickerModal
-            remoteLibrary={!detail && usesWorkspaceAssetLibraryApi()}
+            remoteLibrary={!detail && activeCanvasId === undefined && usesWorkspaceAssetLibraryApi()}
             open={open}
             mediaKinds={["image", "video", "audio", "text"]}
             items={pickerItems}
@@ -104,12 +109,13 @@ export function CanvasProjectAssetModal({
                     : undefined
             }
             onClose={onClose}
-            onConfirm={async (ids, expectedScope) => {
+            onConfirm={async (ids, expectedScope, selectedItems) => {
                 const payloads = await Promise.all(
                     ids.map(async (id) => {
                         const external = externalAssetSources.items.find((item) => item.id === id)?.external;
                         if (external) return externalAssetToInsertPayload(external);
-                        const item = items.find((candidate) => candidate.id === id);
+                        const selected = selectedItems.find((candidate) => candidate.id === id);
+                        const item = items.find((candidate) => candidate.id === id) || (selected?.asset ? { id, category: selected.category, media: selected.asset } : undefined);
                         if (!item) throw new Error("所选资产已不存在，请重新选择");
                         if (item.media || item.character || !item.project) return toInsertPayload(item);
                         const { asset } = await getWorkspaceAsset(item.project.id, undefined, { expectedScope });

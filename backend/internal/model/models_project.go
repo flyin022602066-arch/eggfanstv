@@ -140,15 +140,16 @@ type ProjectAssetCandidate struct {
 }
 
 type AssetVersion struct {
-	ID             string             `json:"id" gorm:"primaryKey;size:36"`
-	AssetID        string             `json:"assetId" gorm:"index;size:80;uniqueIndex:idx_asset_versions_number,priority:1"`
-	Version        int                `json:"version" gorm:"uniqueIndex:idx_asset_versions_number,priority:2"`
-	Status         AssetVersionStatus `json:"status" gorm:"index;size:24"`
-	DefinitionJSON string             `json:"definitionJson" gorm:"type:text"`
-	Prompt         string             `json:"prompt" gorm:"type:text"`
-	Note           string             `json:"note" gorm:"size:500"`
-	CreatedAt      time.Time          `json:"createdAt"`
-	UpdatedAt      time.Time          `json:"updatedAt"`
+	ID                   string             `json:"id" gorm:"primaryKey;size:36"`
+	AssetID              string             `json:"assetId" gorm:"index;size:80;uniqueIndex:idx_asset_versions_number,priority:1"`
+	Version              int                `json:"version" gorm:"uniqueIndex:idx_asset_versions_number,priority:2"`
+	Status               AssetVersionStatus `json:"status" gorm:"index;size:24"`
+	DefinitionJSON       string             `json:"definitionJson" gorm:"type:text"`
+	Prompt               string             `json:"prompt" gorm:"type:text"`
+	Note                 string             `json:"note" gorm:"size:500"`
+	ReferenceProfileJSON string             `json:"referenceProfileJson,omitempty" gorm:"type:text"`
+	CreatedAt            time.Time          `json:"createdAt"`
+	UpdatedAt            time.Time          `json:"updatedAt"`
 }
 
 type AssetRepresentation struct {
@@ -312,12 +313,17 @@ type ShotArtifact struct {
 }
 
 type ShotAssetReference struct {
-	ID             string    `json:"id" gorm:"primaryKey;size:36"`
-	ShotID         string    `json:"shotId" gorm:"index;size:36;uniqueIndex:idx_shot_asset_reference_unique,priority:1"`
-	AssetVersionID string    `json:"assetVersionId" gorm:"index;size:36;uniqueIndex:idx_shot_asset_reference_unique,priority:2"`
-	Role           string    `json:"role" gorm:"index;size:32;uniqueIndex:idx_shot_asset_reference_unique,priority:3"`
-	Status         string    `json:"status" gorm:"index;size:24"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID                  string    `json:"id" gorm:"primaryKey;size:36"`
+	ShotID              string    `json:"shotId" gorm:"index;size:36;uniqueIndex:idx_shot_asset_reference_unique,priority:1"`
+	AssetVersionID      string    `json:"assetVersionId" gorm:"index;size:36;uniqueIndex:idx_shot_asset_reference_unique,priority:2"`
+	Role                string    `json:"role" gorm:"index;size:32;uniqueIndex:idx_shot_asset_reference_unique,priority:3"`
+	Status              string    `json:"status" gorm:"index;size:24"`
+	SelectionStatus     string    `json:"selectionStatus,omitempty" gorm:"size:24"`
+	SelectionSource     string    `json:"selectionSource,omitempty" gorm:"size:24"`
+	SelectionLocked     bool      `json:"selectionLocked"`
+	SelectionReason     string    `json:"selectionReason,omitempty" gorm:"type:text"`
+	SelectionRevisionID string    `json:"selectionRevisionId,omitempty" gorm:"size:36"`
+	CreatedAt           time.Time `json:"createdAt"`
 }
 
 type WorkflowTemplateVersion struct {

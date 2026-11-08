@@ -35,7 +35,7 @@ export type ImageSizeParameter = "none" | "size" | "aspect_ratio";
 export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 8000;
 
 export function hasAutomaticVideoAudio(protocol: ModelProtocol | undefined) {
-    return protocol === "jiasu-video" || protocol === "eggfans-sd2-video";
+    return protocol === "jiasu-video" || protocol === "towo-sd25-video" || protocol === "eggfans-sd2-video";
 }
 
 export type ImageCapabilityConfig = {
@@ -622,6 +622,34 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
             video.resolutions = ["2k"];
             video.defaultResolution = "2k";
         }
+    }
+    if (protocol === "hanbao-video") {
+        video.references.maxImages = 9;
+        video.references.maxImageBytes = 4 * 1024 * 1024;
+        video.references.maxVideos = 0;
+        video.references.maxAudios = 0;
+        video.duration = { selection: "range", min: 4, max: 30, step: 1, default: 5 };
+        video.ratios = ["16:9", "9:16", "1:1", "4:3", "3:4"];
+        video.defaultRatio = "16:9";
+        video.resolutions = [];
+        video.defaultResolution = "";
+        video.generateAudio = { supported: false, default: false };
+        video.watermark = { supported: false, default: false };
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+        video.defaultOperation = "text_to_video";
+    }
+    if (protocol === "towo-sd25-video") {
+        video.references.maxImages = 30;
+        video.references.maxImageBytes = 0;
+        video.references.maxVideos = 10;
+        video.references.maxAudios = 10;
+        video.duration = { selection: "range", min: 4, max: 30, step: 1, default: 5 };
+        video.ratios = ["16:9", "9:16", "4:3", "3:4", "1:1", "21:9", "adaptive"];
+        video.defaultRatio = "16:9";
+        video.resolutions = ["480p", "720p", "1080p"];
+        video.defaultResolution = "720p";
+        video.generateAudio = { supported: true, default: true };
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video", "audio_to_video"];
     }
     if (protocol === "eggfans-sd2-video") {
         video.references.maxImages = 10;

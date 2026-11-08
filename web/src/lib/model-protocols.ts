@@ -48,7 +48,7 @@ const STANDARD_PROTOCOLS: Record<ProtocolCapability, ModelProtocol[]> = {
 const BUILTIN_PROTOCOL_CAPABILITIES: Record<ProtocolCapability, ModelProtocol[]> = {
     text: [...STANDARD_PROTOCOLS.text, "gemini-api", "claude-api"],
     image: [...STANDARD_PROTOCOLS.image, "gemini-image", "grok-image", "volcengine-ark-image", "volcengine-ark-agent-plan-image", "volcengine-jimeng-image"],
-    video: [...STANDARD_PROTOCOLS.video, "newapi-channel-1", "eggfans-sd2-video", "jiasu-video", "mints-seedance-video", "eggfans-seedance-video", "eggfans-volc-video", "gemini-veo", "volcengine-ark-video", "volcengine-ark-agent-plan-video", "volcengine-jimeng-video", "ark-task-gateway-video", "ark-task-gateway-video-25", "novita-video", "minimax-video", "xai-video"],
+    video: [...STANDARD_PROTOCOLS.video, "hanbao-video", "newapi-channel-1", "eggfans-sd2-video", "jiasu-video", "towo-sd25-video", "mints-seedance-video", "eggfans-seedance-video", "eggfans-volc-video", "gemini-veo", "volcengine-ark-video", "volcengine-ark-agent-plan-video", "volcengine-jimeng-video", "ark-task-gateway-video", "ark-task-gateway-video-25", "novita-video", "minimax-video", "xai-video"],
     audio: [...STANDARD_PROTOCOLS.audio, "async-audio"],
 };
 

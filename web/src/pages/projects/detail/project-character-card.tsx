@@ -44,7 +44,7 @@ export function ProjectCharacterCard({ asset, folderItems, generating, removing,
                 <div className="flex items-start justify-between gap-3"><button type="button" className="project-character-title-button" onClick={onOpen}><h3 className="truncate text-sm font-semibold">{asset.title}</h3><p className="mt-0.5 truncate text-[var(--fs-label)] text-foreground/48">{role}</p></button><Button type="text" size="small" className="!h-7 !px-1.5" icon={<Pencil className="size-3.5" />} onClick={onEdit} aria-label={`编辑 ${asset.title}`} /></div>
                 <p className="mt-2 line-clamp-2 min-h-9 text-[var(--fs-label)] leading-[18px] text-foreground/55">{appearance}</p>
                 <div className="mt-2 grid gap-1.5">
-                    <StatusLine icon={<ImageIcon className="size-3.5" />} ready={character?.visualStatus === "ready"} label={imageStatus} action={character?.visualStatus === "ready" ? "更换" : "生成图片"} onClick={character?.visualStatus === "ready" ? onBindImages : onGenerate} />
+                    <StatusLine icon={<ImageIcon className="size-3.5" />} ready={character?.visualStatus === "ready"} label={imageStatus} action={character?.visualStatus === "ready" ? "更换" : "选择素材"} onClick={onBindImages} />
                     <StatusLine icon={<Volume2 className="size-3.5" />} ready={character?.voiceStatus === "ready"} label={voiceStatus} action={character?.voiceStatus === "ready" ? "调整" : "选择"} onClick={onBindVoice} />
                 </div>
                 <div className="mt-3 flex min-w-0 gap-2 border-t border-border/60 pt-2">

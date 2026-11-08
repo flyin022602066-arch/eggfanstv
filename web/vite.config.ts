@@ -2,7 +2,7 @@ import { dirname, resolve } from "node:path";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 
 import { resolveHeavyMediaEnabled } from "./media-build-mode";
 import { resolvePackagedWindowsBuild } from "./desktop-build-mode";
@@ -12,6 +12,43 @@ const appVersion = process.env.CANVAS_BUILD_VERSION?.trim() || readFileSync(reso
 const apiProxyTarget = process.env.VITE_API_PROXY_TARGET?.trim() || "http://127.0.0.1:8080";
 const desktopLaunchToken = process.env.VITE_DESKTOP_LAUNCH_TOKEN?.trim();
 const heavyMediaEnabled = resolveHeavyMediaEnabled(process.env.BEEFTV_FULL_MEDIA_RESOURCES);
+const shikiWasmModuleId = "virtual:beeftv-shiki-onig-wasm";
+const resolvedShikiWasmModuleId = `\0${shikiWasmModuleId}`;
+
+// Shiki's browser bundle base64-inlines WASM; emit it separately to keep JS chunks lean.
+function shikiWasmAssetPlugin(command: "build" | "serve"): Plugin {
+    const wasmModulePath = resolve(webDir, "node_modules/@shikijs/engine-oniguruma/dist/wasm-inlined.mjs");
+    const wasmModule = readFileSync(wasmModulePath, "utf8");
+    const encodedWasm = wasmModule.match(/Uint8Array\.from\(atob\("([^"]+)"\)/)?.[1];
+    if (!encodedWasm) throw new Error("Unable to extract Shiki Oniguruma WebAssembly payload");
+    const wasmBytes = Buffer.from(encodedWasm, "base64");
+    let wasmReference: string | undefined;
+
+    return {
+        name: "beeftv-shiki-wasm-asset",
+        resolveId(source: string) {
+            if (source === shikiWasmModuleId) return resolvedShikiWasmModuleId;
+        },
+        buildStart() {
+            if (command === "build") wasmReference = this.emitFile({ type: "asset", name: "shiki-onig.wasm", source: wasmBytes });
+        },
+        load(id: string) {
+            if (id !== resolvedShikiWasmModuleId) return null;
+            if (command === "serve") return 'export default "/__beeftv-shiki-onig.wasm";';
+            if (!wasmReference) throw new Error("Shiki WebAssembly asset was not emitted");
+            return `export default import.meta.ROLLUP_FILE_URL_${wasmReference};`;
+        },
+        configureServer(server) {
+            server.middlewares.use((request, response, next) => {
+                if (request.url?.split("?")[0] !== "/__beeftv-shiki-onig.wasm") return next();
+                response.statusCode = 200;
+                response.setHeader("Content-Type", "application/wasm");
+                response.setHeader("Content-Length", String(wasmBytes.byteLength));
+                response.end(wasmBytes);
+            });
+        },
+    };
+}
 
 function pruneOptionalMediaPlugin() {
     return {
@@ -34,7 +71,7 @@ function pruneOptionalMediaPlugin() {
 }
 
 export default defineConfig(({ command, mode }) => ({
-    plugins: [react(), pruneOptionalMediaPlugin()],
+    plugins: [shikiWasmAssetPlugin(command), react(), pruneOptionalMediaPlugin()],
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),
         __BEEFTV_HEAVY_MEDIA_ENABLED__: JSON.stringify(heavyMediaEnabled),
@@ -69,7 +106,64 @@ export default defineConfig(({ command, mode }) => ({
                     // pulls unrelated pages into the initial modulepreload graph.
                     includeDependenciesRecursively: false,
                     minSize: 40 * 1024,
+                    maxSize: 450 * 1024,
                     groups: [
+                        {
+                            name: "canvas-runtime",
+                            test: /src[\\/]components[\\/]canvas[\\/]|src[\\/]pages[\\/]canvas[\\/](?!project\.tsx$)|src[\\/]lib[\\/]canvas[\\/]|src[\\/]lib[\\/]art-critique[\\/]|src[\\/]services[\\/]canvas[^\\/]*|src[\\/]stores[\\/]canvas[\\/]/,
+                            minSize: 0,
+                            maxSize: 450 * 1024,
+                            entriesAware: true,
+                            priority: 35,
+                        },
+                        {
+                            name: "vendor-three",
+                            test: /node_modules[\\/]three[\\/]/,
+                            minSize: 0,
+                            maxSize: 450 * 1024,
+                            entriesAware: true,
+                            priority: 25,
+                        },
+                        {
+                            name: "vendor-leafer",
+                            test: /node_modules[\\/](?:@leafer(?:-ui)?[\\/][^\\/]+|leafer-ui)[\\/]/,
+                            minSize: 0,
+                            maxSize: 450 * 1024,
+                            entriesAware: true,
+                            priority: 24,
+                        },
+                        {
+                            name: "vendor-charts",
+                            test: /node_modules[\\/](?:recharts|decimal\.js-light)[\\/]/,
+                            minSize: 0,
+                            maxSize: 450 * 1024,
+                            entriesAware: true,
+                            priority: 23,
+                        },
+                        {
+                            name: "vendor-state",
+                            test: /node_modules[\\/](?:@reduxjs[\\/]toolkit|immer|react-redux|reselect)[\\/]/,
+                            minSize: 0,
+                            maxSize: 450 * 1024,
+                            entriesAware: true,
+                            priority: 22,
+                        },
+                        {
+                            name: "vendor-shiki-languages",
+                            test: /node_modules[\\/]@shikijs[\\/]langs[\\/]/,
+                            minSize: 0,
+                            maxSize: 450 * 1024,
+                            entriesAware: true,
+                            priority: 18,
+                        },
+                        {
+                            name: "vendor-pako",
+                            test: /node_modules[\\/]pako[\\/]/,
+                            minSize: 0,
+                            maxSize: 450 * 1024,
+                            entriesAware: true,
+                            priority: 17,
+                        },
                         {
                             // Shared interop helpers must not be emitted into a route entry:
                             // AntD would import that entry back and execute its bootstrap early.

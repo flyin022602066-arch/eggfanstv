@@ -1,0 +1,249 @@
+{
+  "files": [
+    {
+      "path": "bin/doubao.exe",
+      "size": 26305180,
+      "sha256": "1e548f69030af8790d20a0fcd42ec2207a3e35b15ecb4c70021f4e24aad72866"
+    },
+    {
+      "path": "capabilities.json",
+      "size": 997,
+      "sha256": "b7e54b9b191c7b68714d2efbe90367f9ac0b6e26a7cf7e5a04559a0137693c3d"
+    },
+    {
+      "path": "cli_json.py",
+      "size": 1390,
+      "sha256": "edcc94d21012e0671eb0256fc04c42d2147a3356c5a64747311a4c381b834079"
+    },
+    {
+      "path": "evidence/backend-doubao-api-disassembly.txt",
+      "size": 73150,
+      "sha256": "514604b2af86192ea4ae2d8d3137eab924e9783b3efadee5725c9b6dbb43a3a5"
+    },
+    {
+      "path": "evidence/backend-doubao-routes.json",
+      "size": 905,
+      "sha256": "cf942c6215103e7a4ce7b5b49a30dcc65120ed03deecb605f6ef97d382f9527c"
+    },
+    {
+      "path": "evidence/canvas-disassembly.txt",
+      "size": 79573,
+      "sha256": "ed174ee099f62a97175a7406d71c6dbc437fd4019b649004083f6499a49e843e"
+    },
+    {
+      "path": "evidence/canvas-summary.json",
+      "size": 19364,
+      "sha256": "3ef980c0ed027ebb4c8e93c456b5c9103961e0c206a2e4850910303741eef757"
+    },
+    {
+      "path": "evidence/cdp-disassembly.txt",
+      "size": 123221,
+      "sha256": "c192b41c24bf53167ffac09ceec7657c888f4842365ca70e24a4c5d23f2c39df"
+    },
+    {
+      "path": "evidence/cdp-summary.json",
+      "size": 23225,
+      "sha256": "57eec6e51ea0b9b49cf7ab59a341425db8feaf5b16e8a1488b18da84f9aa085c"
+    },
+    {
+      "path": "evidence/doubao-cli-constants.json",
+      "size": 122357,
+      "sha256": "5299e2229a372b194a2f806fc157a823e49335a5fae803c8cd3bc4d1c075b7b1"
+    },
+    {
+      "path": "evidence/doubao-cli-disassembly.txt",
+      "size": 741018,
+      "sha256": "b27fbf6f1da959fea6152042784c9105ea5e4bff40f3bb96d7ac11a4690e7716"
+    },
+    {
+      "path": "evidence/doubao-cli-summary.json",
+      "size": 102279,
+      "sha256": "b143a863bee475d659bcf77c21eb529d7cbceaf21c426af472d7ffef47ef4efe"
+    },
+    {
+      "path": "evidence/embedded-parameters-and-constants.json",
+      "size": 210859,
+      "sha256": "4625fd82236621441ea0363862668bf6365235a3a0cc2e686a6cda2fb77178e4"
+    },
+    {
+      "path": "evidence/frontend-doubao-snippets.json",
+      "size": 5874,
+      "sha256": "f2b7803f3f9c0dffe24f8db0f68701489e199a8fd6e34d9d9ebe7daa1dbd11b1"
+    },
+    {
+      "path": "evidence/help/_selftest.txt",
+      "size": 130,
+      "sha256": "6beddb8ac920b763ff6c7923924345af98649e23042550dc869c08fe42e00e79"
+    },
+    {
+      "path": "evidence/help/accounts.txt",
+      "size": 92,
+      "sha256": "2974879a0f78f263473d1e1641a074c4e0259aaf878c4cededa2531bf3b17a27"
+    },
+    {
+      "path": "evidence/help/base-dir.txt",
+      "size": 92,
+      "sha256": "37ef3770e58952f415b2fad2562b9e9b687f9af28a8ac43f60d14992e924ff73"
+    },
+    {
+      "path": "evidence/help/checklogin.txt",
+      "size": 214,
+      "sha256": "f764435cfa7940554db7a60ca881762f9445be2b139864a2e32193332b532d7d"
+    },
+    {
+      "path": "evidence/help/delete-account.txt",
+      "size": 282,
+      "sha256": "a0aff9261f3f2ce7cc8beb6e07ac2f773728fe7ffb97b930d4723c4f9ec68648"
+    },
+    {
+      "path": "evidence/help/image2video.txt",
+      "size": 544,
+      "sha256": "6180bb8a1a3a3562d7424dc30fe3b27881ddd14523e15e27fbbc0cff314575a0"
+    },
+    {
+      "path": "evidence/help/list_task.txt",
+      "size": 267,
+      "sha256": "7a8a2487b0d0a1fa7ac2c2800159561bc8ceb7f969a67f7adcdcd4fd14f0372c"
+    },
+    {
+      "path": "evidence/help/login.txt",
+      "size": 436,
+      "sha256": "abfb6bca9a9d3b3776810f3f8eb8a4a8f163d4f7b7ca195de65b845296d9abe0"
+    },
+    {
+      "path": "evidence/help/logout.txt",
+      "size": 210,
+      "sha256": "20c863d004f738476b9fdf45761c621307711e96e7e59ae60dd3a365441962cf"
+    },
+    {
+      "path": "evidence/help/open.txt",
+      "size": 208,
+      "sha256": "3f9bdba08a5a7cc5b804f5b812484a6d474629f68f4f518a2200221a43709d7d"
+    },
+    {
+      "path": "evidence/help/probe.txt",
+      "size": 385,
+      "sha256": "d432be1b68d9ee570459ffbd254f7a01289eba496f8769a73051e993cfa094f1"
+    },
+    {
+      "path": "evidence/help/query_result.txt",
+      "size": 543,
+      "sha256": "9ecfcd635db75ec4b035fb163cdd07c5e7afcea7330c004b9510f706e1e1e74e"
+    },
+    {
+      "path": "evidence/help/reset-quota.txt",
+      "size": 215,
+      "sha256": "72ddcc609f622a4271fff2a23c5757906cede16040c29810e4f88343318ad297"
+    },
+    {
+      "path": "evidence/help/root.txt",
+      "size": 482,
+      "sha256": "9a1f43beaf99cf491c2667d48a8474643569177f1c2fbbe559b71dd12ec2a1a5"
+    },
+    {
+      "path": "evidence/help/set-plan.txt",
+      "size": 525,
+      "sha256": "f60c1a88714294dffc87fa2b5989836bebfcd7370d573180c77fa340a0c755bb"
+    },
+    {
+      "path": "evidence/help/text2video.txt",
+      "size": 474,
+      "sha256": "703aa450d9649303525f832631796e0e5474dda574aed47bb2eaf732ccac958f"
+    },
+    {
+      "path": "evidence/help-check.json",
+      "size": 2580,
+      "sha256": "f179d79c0c86e01ce315a612820d8ea6460d1711a5cd34691aacaa7827b64dde"
+    },
+    {
+      "path": "evidence/services.video_providers.doubao-disassembly.txt",
+      "size": 117521,
+      "sha256": "c7104597a521f60ec96f628825f5444fbba7b7e02ec673dac92ec53213805385"
+    },
+    {
+      "path": "evidence/services.video_providers.doubao-summary.json",
+      "size": 20349,
+      "sha256": "e406065e9e86628bf184f09c134ba7f49ca9154c5c9cb5fe9b57fc91f1e214da"
+    },
+    {
+      "path": "evidence/upload-disassembly.txt",
+      "size": 141493,
+      "sha256": "b773366161785c98c5d29ce6bb8eb041ac2a83f0b426ca97442524d5a428b337"
+    },
+    {
+      "path": "evidence/upload-summary.json",
+      "size": 27439,
+      "sha256": "b3bf50f8895d46119215c685af7424fd96ab5ffd919e13fa56dc6b8630b72fc4"
+    },
+    {
+      "path": "evidence/内部函数参数.json",
+      "size": 66174,
+      "sha256": "e759f03d2adf43df7f752df5591d31a8c5ec995e84a4b6302fe3c07b14a52b3d"
+    },
+    {
+      "path": "evidence/离线测试输出.txt",
+      "size": 3254,
+      "sha256": "c2eb804001d16dbcac71b362714184adb292db52aafda8244e134ffd01ad2171"
+    },
+    {
+      "path": "evidence/隔离运行结果.json",
+      "size": 800,
+      "sha256": "72bb162c15c2ff0da61511d09452a5bb26c73eba2ce54698edfd59ed43ab7e6c"
+    },
+    {
+      "path": "examples/node_example.mjs",
+      "size": 1590,
+      "sha256": "558145fdc0cedcc6c84c8440d7167f1827dfd913113989216886100f70ad9e87"
+    },
+    {
+      "path": "examples/python_example.py",
+      "size": 1617,
+      "sha256": "7f7106fecfb0c1ea2dcaf982dc364c9e584c2a9e82ed7e7e46532d622eb92eba"
+    },
+    {
+      "path": "http_bridge.py",
+      "size": 4148,
+      "sha256": "8438364aa8da325da92125e90c76f65a1622bbd32bbbe639cf9c87e6a3058e50"
+    },
+    {
+      "path": "README.md",
+      "size": 8869,
+      "sha256": "543dcfe24502b253a08342ef1b0a32ca23196e52db5afdf592ec62004a878f1f"
+    },
+    {
+      "path": "sdk/__init__.py",
+      "size": 180,
+      "sha256": "d00b238024ef484185aa0771c041958d0e8ab2695263f67a26676e2e9c9c0f3a"
+    },
+    {
+      "path": "sdk/doubao_client.py",
+      "size": 12787,
+      "sha256": "99d703f426a85f6265f59f472bf01874a8f7e6dcf5c2b6ac4e81ed36b9cd5ca7"
+    },
+    {
+      "path": "tests/test_integration.py",
+      "size": 13532,
+      "sha256": "3b732e80724985f7412c98a6fd4a2d2da73a4c8820282b6dd3c190982b522ceb"
+    },
+    {
+      "path": "参数清单.json",
+      "size": 15898,
+      "sha256": "dfd4ec2ffb1dd2430d28b3bbc2379ed02eee63575e82ec627f5e4008cb8093bc"
+    },
+    {
+      "path": "参数说明.md",
+      "size": 15470,
+      "sha256": "a669c897016590807782ebed009f9759a54bc2139eff5e3f7af826f9d84d11f3"
+    },
+    {
+      "path": "网页协议参数.json",
+      "size": 15457,
+      "sha256": "82f3f9e9677c532149019b364a6866e2a874a395fd47c074997c83941444fc8e"
+    },
+    {
+      "path": "验证结果.json",
+      "size": 1171,
+      "sha256": "c3550a848c0ac09a397423583afcadf7bba31a0f4046d432d43e5c6116b900ef"
+    }
+  ]
+}

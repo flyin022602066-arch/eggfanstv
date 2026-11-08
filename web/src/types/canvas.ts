@@ -127,8 +127,11 @@ export type StoryboardRow = {
     sceneName?: string;
     sceneChange?: boolean;
     propNames?: string[];
+    systemElements?: string[];
+    systemPresentation?: import("@/lib/chapter-system-presentation").SystemPresentationSettings;
     imageGenerationPrompt: string;
     videoMotionPrompt: string;
+    directorScript?: import("@/lib/chapter-director-script").ChapterDirectorScript;
     imagePromptTemplateVariables?: Record<string, string>;
     videoPromptTemplateVariables?: Record<string, string>;
     mustHave: string[];
@@ -189,6 +192,9 @@ export type CanvasSkillSnapshot = {
 };
 
 export type CanvasNodeMetadata = {
+    referenceTemplates?: import('@/lib/canvas/canvas-reference-templates').CanvasReferenceTemplateBinding[];
+    referenceTemplateMediaId?: string;
+    referenceTemplateStorageKey?: string;
     /** Media interaction role. `generator` owns generation controls; `result` is an inspect/process object. */
     nodeRole?: CanvasMediaNodeRole;
     /** How a media result entered the canvas. Only meaningful when nodeRole is `result`. */
@@ -389,6 +395,8 @@ export type CanvasNodeMetadata = {
     jiasuFaceMasks?: JiasuFaceMaskOverrides;
     sd2FaceMask?: string;
     sd2FaceMasks?: JiasuFaceMaskOverrides;
+    towoFaceMask?: string;
+    towoFaceMasks?: JiasuFaceMaskOverrides;
     videoCameraMoveId?: string;
     videoCameraMovePrompt?: string;
     videoStartFrameNodeId?: string;

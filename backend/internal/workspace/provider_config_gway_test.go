@@ -12,7 +12,7 @@ func TestJiasuGatewayMigrationPreservesSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveLocalModelConfig([]byte(`{"videoModel":"jiasu-video::sd-2.5-J3-doubao","videoSeconds":"30","channels":[{"id":"jiasu-video","baseUrl":"https://ai.jiasuapi.com/","catalogUrl":"https://ai.jiasuapi.com/pricing","apiKey":"gway-test-key","models":["sd-2.5-J3-doubao"]},{"id":"separate","interfaceType":"eggfans-sd2-video","baseUrl":"https://vip.eggfans.asia","apiKey":"separate-test-key","models":["sd-2.5-D"]},{"id":"custom-jiasu","interfaceType":"jiasu-video","baseUrl":"https://custom.example.com","catalogUrl":"https://custom.example.com/catalog","apiKey":"custom-test-key","models":["custom-video"]}]}`)); err != nil {
+	if err := store.SaveLocalModelConfig([]byte(`{"videoModel":"jiasu-video::sd-2.5-J3-doubao","videoSeconds":"30","channels":[{"id":"jiasu-video","name":"佳速视频","baseUrl":"https://ai.jiasuapi.com/","catalogUrl":"https://ai.jiasuapi.com/pricing","apiKey":"gway-test-key","models":["sd-2.5-J3-doubao"]},{"id":"separate","interfaceType":"eggfans-sd2-video","baseUrl":"https://vip.eggfans.asia","apiKey":"separate-test-key","models":["sd-2.5-D"]},{"id":"custom-jiasu","interfaceType":"jiasu-video","baseUrl":"https://custom.example.com","catalogUrl":"https://custom.example.com/catalog","apiKey":"custom-test-key","models":["custom-video"]}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	for iteration := 0; iteration < 2; iteration++ {
@@ -25,6 +25,7 @@ func TestJiasuGatewayMigrationPreservesSettings(t *testing.T) {
 			VideoSeconds string `json:"videoSeconds"`
 			Channels     []struct {
 				ID         string   `json:"id"`
+				Name       string   `json:"name"`
 				BaseURL    string   `json:"baseUrl"`
 				CatalogURL string   `json:"catalogUrl"`
 				APIKey     string   `json:"apiKey"`
@@ -40,7 +41,7 @@ func TestJiasuGatewayMigrationPreservesSettings(t *testing.T) {
 		for _, channel := range config.Channels {
 			switch channel.ID {
 			case "jiasu-video":
-				if channel.BaseURL != "https://www.gway.dev" || channel.CatalogURL != "https://www.gway.dev/pricing" || channel.APIKey != "gway-test-key" {
+				if channel.Name != "极途 Gway" || channel.BaseURL != "https://www.gway.dev" || channel.CatalogURL != "https://www.gway.dev/pricing" || channel.APIKey != "gway-test-key" {
 					t.Fatal("Jiasu endpoint migration failed or changed credentials")
 				}
 			case "separate":

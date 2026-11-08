@@ -64,7 +64,7 @@ export function removeCreationConversationSnapshot<T extends { id: string }>(con
 
 function isRecoverableCreationMessage(message: PendingCreationMessage) {
     if (message.role !== "assistant" || !message.taskIds?.length) return false;
-    return message.mode === "text" ? message.status === "streaming" || message.status === "pending" : message.status === "pending";
+    return message.mode === "text" ? message.status === "streaming" || message.status === "pending" || message.status === "error" : message.status === "pending";
 }
 
 export function pendingCreationTaskKey(conversations: StoredCreationConversation[]) {
@@ -150,6 +150,55 @@ function samePersistable(left: unknown, right: unknown) {
     } catch {
         return false;
     }
+}
+
+const generationResultFields = new Set(["status", "content", "reasoning", "resultUrls", "generationEffectKeys", "error", "generationErrorCode", "generationStage"]);
+
+function mergeGenerationCompletion(base: StoredCreationConversation, pending: StoredCreationConversation, canonical: StoredCreationConversation) {
+    const withoutResults = (document: StoredCreationConversation) => {
+        const { updatedAt: _updatedAt, ...rest } = persistableDocument(document);
+        return {
+            ...rest,
+            messages: rest.messages.map((message) => message.role === "assistant" && Array.isArray(message.taskIds) && message.taskIds.length
+                ? Object.fromEntries(Object.entries(message).filter(([field]) => !generationResultFields.has(field)))
+                : message),
+        };
+    };
+    if (!samePersistable(withoutResults(base), withoutResults(canonical))) return null;
+    const previous = messageMap(base.messages);
+    const completed = new Map<string, Record<string, unknown>>();
+    for (const message of canonical.messages as Array<Record<string, unknown>>) {
+        const original = previous.get(String(message.id));
+        if (!original || samePersistable(original, message)) continue;
+        if (original.role !== "assistant" || !["pending", "streaming", "error", "done"].includes(String(original.status)) || message.status !== "done") return null;
+        if (!Array.isArray(message.generationEffectKeys) || !message.generationEffectKeys.length) return null;
+        if (original.status === "done" && ["content", "reasoning", "resultUrls"].some((field) => !samePersistable(original[field], message[field]))) return null;
+        completed.set(String(message.id), message);
+    }
+    if (!completed.size) return null;
+    const projected = projectPendingOnCanonical(base, pending, canonical);
+    return {
+        ...projected,
+        messages: (projected.messages as Array<Record<string, unknown>>).map((message) => {
+            const result = completed.get(String(message.id));
+            if (!result || !samePersistable(message.taskIds, result.taskIds)) return message;
+            const merged = { ...message };
+            for (const field of generationResultFields) {
+                if (field in result) merged[field] = result[field];
+                else delete merged[field];
+            }
+            return merged;
+        }),
+    } as StoredCreationConversation;
+}
+
+function mergeCompletedGenerationDraft(pending: StoredCreationConversation, canonical: StoredCreationConversation) {
+    const messages = new Map(pending.messages.map((message) => [message.id, message]));
+    if (!canonical.messages.length || canonical.messages.some((message) => !messages.has(message.id))) return null;
+    const base = { ...pending, updatedAt: canonical.updatedAt, messages: canonical.messages.map((message) => messages.get(message.id)!) } as StoredCreationConversation;
+    const confirmedResult = (canonical.messages as Array<Record<string, unknown>>).some((message) => message.role === "assistant" && message.status === "done" && Array.isArray(message.generationEffectKeys) && message.generationEffectKeys.length);
+    if (confirmedResult && samePersistable(persistableDocument(base), persistableDocument(canonical))) return pending;
+    return mergeGenerationCompletion(base, pending, canonical);
 }
 
 function projectPendingOnCanonical(sent: StoredCreationConversation, pending: StoredCreationConversation, canonical: StoredCreationConversation): StoredCreationConversation {
@@ -580,6 +629,13 @@ export async function loadCreationConversations<T extends StoredCreationConversa
                 continue;
             }
             if (draft.baseRevision !== record.revision || draft.remote || !draftFingerprint) {
+                const merged = mergeCompletedGenerationDraft(draft.document, document);
+                if (merged) {
+                    await withScopeStorage(scope, () => writeDraft(scope, record.id, { baseRevision: record.revision, document: merged }));
+                    rejectIfScopeChanged(epoch);
+                    loaded.push(merged as T);
+                    continue;
+                }
                 const remote = draft.remote || { revision: record.revision, document };
                 await withScopeStorage(scope, () => writeDraft(scope, record.id, { ...draft, remote }));
                 loaded.push(withConflict(draft.document, remote) as T);
@@ -609,7 +665,7 @@ function isConflictError(error: unknown) {
     return error instanceof ApiError && (error.status === 409 || error.reason === "conflict");
 }
 
-async function recoverLostAck(scope: string, epoch: UserScopeEpoch, id: string, document: StoredCreationConversation): Promise<CreationConversationRecord | null> {
+async function recoverLostAck(scope: string, epoch: UserScopeEpoch, id: string, document: StoredCreationConversation, base?: StoredCreationConversation): Promise<{ record: CreationConversationRecord; rebased?: boolean } | null> {
     rejectIfScopeChanged(epoch);
     let remote: CreationConversationRecord;
     try {
@@ -624,7 +680,17 @@ async function recoverLostAck(scope: string, epoch: UserScopeEpoch, id: string, 
     const localFingerprint = persistableFingerprint(document);
     const remoteFingerprint = persistableFingerprint(remoteDocument);
     if (localFingerprint && remoteFingerprint && localFingerprint === remoteFingerprint) {
-        return remote;
+        return { record: remote };
+    }
+    if (base) {
+        const key = scopeKey(scope, id);
+        const latest = pendingWrites.get(key);
+        const merged = mergeGenerationCompletion(base, latest?.document ?? document, remoteDocument);
+        if (merged && latest && commitIfCurrent(scope, id, remote.revision, remoteDocument)) {
+            pendingWrites.set(key, { generation: latest.generation, document: merged });
+            await withScopeStorage(scope, () => writeDraft(scope, id, { baseRevision: remote.revision, document: merged }));
+            return { record: remote, rebased: true };
+        }
     }
     await withScopeStorage(scope, async () => {
         const existing = await readDraft(scope, id);
@@ -654,7 +720,16 @@ async function flushConversation(scope: string, epoch: UserScopeEpoch, id: strin
         }
         const draft = await withScopeStorage(scope, () => readDraft(scope, id));
         rejectIfScopeChanged(epoch);
-        if (!resolveConflict && draft?.remote) return;
+        if (!resolveConflict && draft?.remote) {
+            const latest = pendingWrites.get(key);
+            if (!latest || (committed.get(key)?.revision ?? 0) > draft.remote.revision) return;
+            const merged = mergeCompletedGenerationDraft(latest.document, draft.remote.document);
+            if (!merged) return;
+            commitIfCurrent(scope, id, draft.remote.revision, draft.remote.document);
+            pendingWrites.set(key, { generation: latest.generation, document: merged });
+            await withScopeStorage(scope, () => writeDraft(scope, id, { baseRevision: draft.remote!.revision, document: merged }));
+            continue;
+        }
         const expectedRevision = resolveConflict
             ? (draft?.remote?.revision ?? committed.get(key)?.revision ?? 0)
             : await draftBaseRevision(scope, id);
@@ -664,9 +739,10 @@ async function flushConversation(scope: string, epoch: UserScopeEpoch, id: strin
             saved = await putConversation(id, expectedRevision, snapshot.document);
         } catch (error) {
             if (!isConflictError(error)) throw error;
-            const recovered = await recoverLostAck(scope, epoch, id, snapshot.document);
+            const recovered = await recoverLostAck(scope, epoch, id, snapshot.document, state?.document);
             if (!recovered) throw error;
-            saved = recovered;
+            if (recovered.rebased) continue;
+            saved = recovered.record;
         }
         rejectIfScopeChanged(epoch);
         const canonical = documentFromRecord(saved);

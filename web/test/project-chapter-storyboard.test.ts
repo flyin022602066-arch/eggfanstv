@@ -7,9 +7,109 @@ import {
     storyboardRowsToProjectShots,
 } from "@/pages/projects/detail/chapter-storyboard-production";
 import type { ProjectDetail } from "@/services/api/projects";
+import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
 import type { StoryboardRow } from "@/types/canvas";
 
 describe("章节分镜写入分镜制作", () => {
+    test("拆解提供历史造型定稿并按所选版本绑定，排除缺图或未定稿版本", () => {
+        const detail = projectDetail();
+        const historical: CharacterReferenceVersion = {
+            ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", versionId: "historical-look", updatedAt: "",
+            representations: [{ id: "rep", resourceId: "historical-image", role: "primary", mediaType: "image" }],
+            referenceProfile: { lookId: "school", name: "校服少年", description: "少年时期的蓝白校服", matchHints: "少年时期", excludeHints: "成年", enabled: true, preferred: true, default: false },
+        };
+        const versions = [historical, { ...historical, versionId: "unreviewed", version: 2, referenceProfile: { ...historical.referenceProfile!, preferred: false } }, { ...historical, versionId: "missing-image", version: 3, representations: [] }];
+        expect(chapterStoryboardAssets(detail, versions)[0]?.characterLooks).toEqual([expect.objectContaining({ versionId: "historical-look", name: "校服少年" })]);
+        const [shot] = storyboardRowsToProjectShots([{ ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: "historical-look" }] }], detail, versions);
+        expect(shot!.assetVersionIds).toContain("historical-look");
+        expect(shot!.assetVersionIds).not.toContain("asset-version-1");
+    });
+
+    test("写入前拒绝其他角色的版本及同人多版本同框", () => {
+        const detail = projectDetail();
+        const versions: CharacterReferenceVersion[] = [{ ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" }];
+        const wrong = { characterName: "林默", characterAssetId: "character-1", characterVersionId: "foreign-version" };
+        expect(() => storyboardRowsToProjectShots([{ ...storyboardRow(), characters: [wrong] }], detail, versions)).toThrow("不属于该角色");
+        const valid = { ...wrong, characterVersionId: "asset-version-1" };
+        expect(() => storyboardRowsToProjectShots([{ ...storyboardRow(), characters: [valid, valid] }], detail, versions)).toThrow("拆镜头");
+    });
+
+    test("模型写错场景 ID 时按本项目唯一场景名称回填，不阻断整章分镜", () => {
+        const detail = projectDetail();
+        detail.assets.push({ ...detail.assets[1]!, id: "bedroom", title: "纪昼房间", category: "environment", primaryVersionId: "bedroom-v1" });
+        const shots = storyboardRowsToProjectShots([
+            { ...storyboardRow(), sceneAssetId: "hallucinated-id", sceneName: "纪家住所晚餐处、纪昼房间" },
+            { ...storyboardRow(), sceneAssetId: "hallucinated-id", sceneName: "纪昼房间" },
+        ], detail);
+        expect(shots).toHaveLength(2);
+        for (const shot of shots) {
+            expect(shot.assetVersionIds).toContain("bedroom-v1");
+            expect(shot.revision.actionBeats).toContainEqual(expect.objectContaining({ type: "asset_context", sceneAssetId: "bedroom" }));
+        }
+        expect(shots[0]!.revision.actionBeats).toContainEqual(expect.objectContaining({ sceneName: "纪家住所晚餐处、纪昼房间" }));
+    });
+
+    test("生成结果中未建的场景保留名称待补齐，不捏造绑定或丢弃剧情", () => {
+        const [shot] = storyboardRowsToProjectShots([{ ...storyboardRow(), sceneAssetId: "unknown", sceneName: "训练区更衣空间" }], projectDetail());
+        expect(shot!.revision.actionBeats).toContainEqual(expect.objectContaining({ type: "asset_context", sceneAssetId: "", sceneName: "训练区更衣空间" }));
+        expect(shot!.revision.videoPrompt).toContain(storyboardRow().videoMotionPrompt);
+    });
+
+    test("场景名称重名时仍要求核对，不能把错误 ID 绑定到任意场景", () => {
+        const detail = projectDetail();
+        for (const id of ["bedroom-a", "bedroom-b"]) detail.assets.push({ ...detail.assets[1]!, id, title: "纪昼房间", category: "environment", primaryVersionId: `${id}-v1` });
+        expect(() => storyboardRowsToProjectShots([{ ...storyboardRow(), sceneAssetId: "unknown", sceneName: "纪昼房间" }], detail)).toThrow("重名");
+    });
+
+    test("没有场景名称的错误 ID 仍需核对，真实场景 ID 不被旧名称覆盖", () => {
+        const detail = projectDetail();
+        expect(() => storyboardRowsToProjectShots([{ ...storyboardRow(), sceneAssetId: "unknown" }], detail)).toThrow("场景");
+        detail.assets.push({ ...detail.assets[1]!, id: "bedroom", title: "纪昼房间", category: "environment", primaryVersionId: "bedroom-v1" });
+        const [shot] = storyboardRowsToProjectShots([{ ...storyboardRow(), sceneAssetId: "bedroom", sceneName: "旧房间名" }], detail);
+        expect(shot!.assetVersionIds).toContain("bedroom-v1");
+    });
+
+    test("按明确名称核对模型写错的资产 ID 后再持久化提示词与真实绑定", () => {
+        const detail = projectDetail();
+        const prompt = "将@[asset:wrong-character]定义为<林默>，将@[asset:wrong-prop]定义为<旧信封>。\n镜头1：@[asset:wrong-character]递出@[asset:wrong-prop]。";
+        const [shot] = storyboardRowsToProjectShots([{ ...storyboardRow(), videoMotionPrompt: prompt, imageGenerationPrompt: prompt }], detail);
+
+        expect(shot!.revision.videoPrompt).not.toContain("wrong-");
+        expect(shot!.revision.imagePrompt).not.toContain("wrong-");
+        expect(shot!.revision.videoPrompt).toContain("@[asset:character-1]递出@[asset:prop-1]");
+        expect(shot!.assetVersionIds).toEqual(expect.arrayContaining(["asset-version-1", "asset-version-2"]));
+    });
+
+    test("资产白名单把场景道具标准名称及别名一起交给分镜模型", () => {
+        const detail = projectDetail();
+        detail.assets.push({ ...detail.assets[1]!, id: "classroom", title: "文化楼教室", category: "environment", primaryVersionId: "classroom-v1", definitionJson: JSON.stringify({ aliases: ["文化楼核心班教室"] }) });
+        expect(chapterStoryboardAssets(detail).find((asset) => asset.id === "classroom")).toMatchObject({ title: "文化楼教室", aliases: ["文化楼核心班教室"] });
+    });
+
+    test("已匹配主场景不覆盖分镜里的复合地点名称，后续仍能补齐第二个场景", () => {
+        const detail = projectDetail();
+        detail.assets.push({ ...detail.assets[1]!, id: "clinic", title: "医务楼诊室", category: "environment", primaryVersionId: "clinic-v1" });
+        const [shot] = storyboardRowsToProjectShots([{ ...storyboardRow(), sceneName: "监控室与医务楼诊室" }], detail);
+        expect(shot!.assetVersionIds).toContain("clinic-v1");
+        expect(shot!.revision.actionBeats).toContainEqual(expect.objectContaining({ type: "asset_context", sceneAssetId: "clinic", sceneName: "监控室与医务楼诊室" }));
+    });
+
+    test("拟人化系统只绑定角色，不自动补绑同项目旧面板", () => {
+        const detail = projectDetail();
+        detail.assets.push({ ...detail.assets[0]!, id: "sprite", title: "小白", primaryVersionId: "sprite-v1", character: { ...detail.assets[0]!.character!, versionId: "sprite-v1" } });
+        detail.assets.push({ ...detail.assets[1]!, id: "panel", title: "进化系统面板", primaryVersionId: "panel-v1" });
+        const [shot] = storyboardRowsToProjectShots([{
+            ...storyboardRow(), characters: [{ characterName: "小白" }], assetBindings: [], propNames: [],
+            systemElements: ["【宿主：苏夜】\n【等级：D级】"],
+            systemPresentation: { mode: "character", characterName: "小白", characterAppearance: "白色狐狸精灵", characterVoice: "清亮少女音" },
+        }], detail);
+        expect(shot!.assetVersionIds).toContain("sprite-v1");
+        expect(shot!.assetVersionIds).not.toContain("panel-v1");
+        expect(shot!.revision.videoPrompt).toContain("小白");
+        expect(shot!.revision.videoPrompt).not.toContain("作为本镜画面内的系统界面");
+        expect(shot!.revision.actionBeats).toContainEqual(expect.objectContaining({ type: "system_elements", presentation: expect.objectContaining({ mode: "character" }) }));
+    });
+
     test("将分镜任务结果完整映射为镜头脚本", () => {
         const shots = storyboardRowsToProjectShots([storyboardRow()], projectDetail());
 
@@ -98,6 +198,47 @@ describe("章节分镜写入分镜制作", () => {
         expect(shot!.revision.actionBeats).toEqual([{ description: timeline }, { type: "asset_context", sceneAssetId: "scene-1", sceneName: "雨夜旧屋", sceneChange: false, propNames: ["旧信封"] }]);
         expect(shot!.revision.videoPrompt).toContain("@[asset:scene-1]");
         expect(shot!.revision.action).toContain("镜头序列：");
+    });
+
+    test("系统面板原文进入图片、视频提示词和镜头元数据", () => {
+        const elements = ["【宿主：苏夜】", "【状态：蛋（进度：0%）】"];
+        const [shot] = storyboardRowsToProjectShots([{
+            ...storyboardRow(),
+            imageGenerationPrompt: "苏夜惊讶地看着前方。",
+            videoMotionPrompt: "苏夜抬头，面前亮起提示面板。",
+            systemElements: elements,
+        }]);
+
+        expect(shot!.revision.imagePrompt).toContain("【系统/界面元素】");
+        expect(shot!.revision.imagePrompt).toContain(elements[0]!);
+        expect(shot!.revision.videoPrompt).toContain(elements[1]!);
+        expect(shot!.revision.action).toContain("系统/界面元素");
+        expect(shot!.revision.actionBeats).toContainEqual({ type: "system_elements", elements });
+    });
+
+    test("模型漏写道具清单时仍按状态面板原文绑定界面道具，不误绑字段中提及的实体", () => {
+        const detail = projectDetail();
+        detail.assets.push({ ...detail.assets[1]!, id: "system-ui", title: "进化系统面板", primaryVersionId: "system-ui-v1" });
+        const [shot] = storyboardRowsToProjectShots([{
+            ...storyboardRow(), assetBindings: [], propNames: [], characters: [],
+            plotDescription: "面板亮起。", imageGenerationPrompt: "属性面板亮起。", videoMotionPrompt: "面板数据逐行亮起。",
+            narrativeIntent: "展现状态", performanceBlocking: "", continuityOut: "", timeBeats: "",
+            systemElements: ["【进化系统启动中】\n【宿主：苏夜】\n【等级：D级】\n【装备：旧信封】"],
+        }], detail);
+        expect(shot!.assetVersionIds).toEqual(["system-ui-v1"]);
+        expect(shot!.revision.videoPrompt).toContain("@[asset:system-ui]");
+    });
+
+    test("纯声音系统提示不自动绑定面板或要求首帧画出面板", () => {
+        const detail = projectDetail();
+        detail.assets.push({ ...detail.assets[1]!, id: "system-ui", title: "进化系统面板", primaryVersionId: "system-ui-v1" });
+        const [shot] = storyboardRowsToProjectShots([{
+            ...storyboardRow(), assetBindings: [], propNames: [],
+            systemElements: ["【叮！任务完成！】"],
+        }], detail);
+        expect(shot!.assetVersionIds).not.toContain("system-ui-v1");
+        expect(shot!.revision.imagePrompt).toContain("提示音或播报");
+        expect(shot!.revision.imagePrompt).not.toContain("作为本镜画面内的系统界面");
     });
 
     test("30秒整章覆盖保留超过六个资产的完整绑定", () => {

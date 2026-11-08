@@ -61,6 +61,7 @@ export type GenerationTask = {
         conversationId?: string;
         messageId?: string;
         nodeId?: string;
+        characterVersionId?: string;
         batchIndex?: number;
         batchCount?: number;
         domainProjectId?: string;

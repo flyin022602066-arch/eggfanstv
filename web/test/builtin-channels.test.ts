@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { BUILTIN_CHANNEL_SEEDS, isChannelVisibleInPackagedSettings } from "@/lib/builtin-channels";
+import { BUILTIN_CHANNEL_SEEDS, isChannelVisibleInPackagedSettings, isFixedModelCatalogChannel } from "@/lib/builtin-channels";
 import { createModelChannel, modelOptionsFromChannels, normalizeConfigSnapshot } from "@/stores/use-config-store";
 
 /**
@@ -9,6 +9,12 @@ import { createModelChannel, modelOptionsFromChannels, normalizeConfigSnapshot }
  */
 describe("builtin channel seeds", () => {
     const seed = BUILTIN_CHANNEL_SEEDS[0];
+
+    test("Towo uses a fixed built-in model list instead of remote discovery", () => {
+        expect(isFixedModelCatalogChannel("towo-sd25-video")).toBe(true);
+        expect(isFixedModelCatalogChannel("jiasu-video")).toBe(false);
+        expect(isFixedModelCatalogChannel("beefapi")).toBe(false);
+    });
 
     test("外发模型选项排除中转网关但不删除渠道或影响其他渠道", () => {
         const channels = [

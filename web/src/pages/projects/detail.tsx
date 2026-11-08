@@ -1,15 +1,16 @@
 import { lazy, Suspense } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, App } from "antd";
+import { Alert, App, Button } from "antd";
 import { ArrowLeft, Plus } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 
-import { getProjectCore, getProjectOverview, getProjectUnitWorkspace, linkCanvasUnit, listProjectUnits } from "@/services/api/projects";
+import { getProject, getProjectCore, getProjectOverview, getProjectUnitWorkspace, linkCanvasUnit, listProjectUnits } from "@/services/api/projects";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import type { ProjectDetail } from "@/services/api/projects";
 
 import { WorkflowChapterNavigator } from "./detail/workflow-chapter-navigator";
+import { isProjectAccessError, projectReadBlocksView, projectReadErrorDescription, retryProjectRead } from "./detail/project-workspace-query";
 import { createLocalCanvasProject } from "@/services/local-workspace-repository";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
@@ -41,11 +42,12 @@ export default function ProjectDetailPage() {
     const activeView: DetailView = unitId || view === "workflow" ? "workflow" : chapterId ? "chapters" : views.some((item) => item.key === view) ? view as DetailView : "overview";
     const coreQuery = useQuery({
         queryKey: ["project", projectId, "core"],
-        queryFn: () => getProjectCore(projectId),
+        queryFn: ({ signal }) => getProjectCore(projectId, undefined, signal),
         enabled: Boolean(projectId),
         refetchOnMount: "always",
+        retry: retryProjectRead,
     });
-    const unitsQuery = useQuery({ queryKey: ["project", projectId, "units"], queryFn: () => listProjectUnits(projectId), enabled: Boolean(projectId) });
+    const unitsQuery = useQuery({ queryKey: ["project", projectId, "units"], queryFn: ({ signal }) => listProjectUnits(projectId, signal), enabled: Boolean(projectId), retry: retryProjectRead });
     const units = unitsQuery.data?.units || [];
     const firstUnitId = units.slice().sort((left, right) => left.position - right.position)[0]?.id || "";
     const requestedUnitId = chapterId || unitId || "";
@@ -53,12 +55,24 @@ export default function ProjectDetailPage() {
     const overviewQuery = useQuery({ queryKey: ["project", projectId, "overview"], queryFn: () => getProjectOverview(projectId), enabled: Boolean(projectId) && activeView === "overview" });
     const workspaceQuery = useQuery({
         queryKey: ["project", projectId, "unit-workspace", activeUnitId],
-        queryFn: () => getProjectUnitWorkspace(projectId, activeUnitId),
+        queryFn: ({ signal }) => getProjectUnitWorkspace(projectId, activeUnitId, signal),
         enabled: Boolean(projectId && activeUnitId) && (activeView === "chapters" || activeView === "workflow"),
         refetchInterval: (query) => (query.state.data?.tasks || []).some((task) => task.clientContext?.shotId && (task.status === "queued" || task.status === "running")) ? 2_000 : false,
+        retry: retryProjectRead,
+    });
+    const editorQuery = useQuery({
+        queryKey: ["project", projectId, "editor-workspace"],
+        queryFn: () => getProject(projectId),
+        enabled: Boolean(projectId) && activeView === "editor",
+        refetchOnMount: "always",
     });
     const project = coreQuery.data?.project;
     const workspace = workspaceQuery.data;
+    const readErrorQuery = [coreQuery, unitsQuery].find((query) => query.isError)
+        || ((activeView === "chapters" || activeView === "workflow") && workspaceQuery.isError ? workspaceQuery : undefined);
+    const refreshReads = async () => {
+        await Promise.all([coreQuery.refetch(), unitsQuery.refetch(), ...(activeUnitId && (activeView === "chapters" || activeView === "workflow") ? [workspaceQuery.refetch()] : [])]);
+    };
     const detail: ProjectDetail | undefined = project ? {
         project,
         units: workspace?.unit ? units.map((unit) => unit.id === workspace.unit.id ? workspace.unit : unit) : units,
@@ -127,7 +141,11 @@ export default function ProjectDetailPage() {
     const chapterHref = detail ? projectChapterHref(detail.units, projectId, chapterId) : `/projects/${projectId}/chapters`;
     const workflowHref = detail ? projectWorkflowHref(detail.units, projectId, unitId, stage) : `/projects/${projectId}/workflow`;
     if (coreQuery.isLoading || unitsQuery.isLoading) return <WorkspacePage><WorkspaceLoadingState label="正在打开项目工作台" detail="读取项目与章节索引" /></WorkspacePage>;
-    if (coreQuery.isError || unitsQuery.isError || !detail) return <WorkspacePage><WorkspaceErrorState title="项目不可用" description="项目不存在、已被删除，或当前账号没有访问权限。" actionLabel="返回项目中心" onRetry={() => navigate("/projects")} /></WorkspacePage>;
+    if (projectReadBlocksView(coreQuery) || projectReadBlocksView(unitsQuery) || !detail) {
+        const blockedQuery = [coreQuery, unitsQuery].find((query) => projectReadBlocksView(query));
+        const accessDenied = isProjectAccessError(blockedQuery?.error);
+        return <WorkspacePage><WorkspaceErrorState title={accessDenied ? "项目不可用" : "项目读取失败"} description={projectReadErrorDescription(blockedQuery?.error)} actionLabel="重试读取" onRetry={() => void refreshReads()} /><div className="text-center"><Link to="/projects">返回项目中心</Link></div></WorkspacePage>;
+    }
     if (!chapterId && !unitId && (!view || !views.some((item) => item.key === view))) return <Navigate to={`/projects/${projectId}/overview`} replace />;
     if (chapterId && !units.some((unit) => unit.id === chapterId)) return <Navigate to={firstUnitId ? `/projects/${projectId}/chapters/${firstUnitId}` : `/projects/${projectId}/chapters`} replace />;
     if (unitId && !units.some((unit) => unit.id === unitId)) return <Navigate to={firstUnitId ? `/projects/${projectId}/workflow/${firstUnitId}/${stage || "video"}` : `/projects/${projectId}/workflow`} replace />;
@@ -146,17 +164,18 @@ export default function ProjectDetailPage() {
                     onCreateCanvas={createCanvas}
                 />
                 {detail.project.status === "archived" ? <Alert type="warning" showIcon banner message="项目已归档，恢复后才能创建画布和生成任务" className="!border-x-0 !border-t-0" /> : null}
+                {readErrorQuery ? <Alert type="warning" showIcon title="项目数据刷新失败" description={projectReadErrorDescription(readErrorQuery.error)} action={<Button size="small" loading={coreQuery.isFetching || unitsQuery.isFetching || workspaceQuery.isFetching} onClick={() => void refreshReads()}>重试读取</Button>} /> : null}
                 <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                     <div className={activeView === "chapters" || activeView === "workflow" || activeView === "editor" ? "min-h-0 flex-1" : "thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 lg:px-8 lg:py-7"}>
                         <Suspense fallback={<WorkspaceLoadingState label="正在准备当前项目视图" detail="只加载当前使用的工作区模块" />}>
                             <div className={activeView === "overview" ? "w-full" : activeView === "chapters" || activeView === "workflow" || activeView === "editor" ? "h-full w-full" : "w-full"}>
                                 {activeView === "overview" ? overviewQuery.isLoading ? <WorkspaceLoadingState label="正在统计制作进度" detail="只读取聚合数据，不加载全部镜头历史" /> : overviewQuery.data ? <ProjectOverviewView detail={detail} overview={overviewQuery.data} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : <WorkspaceErrorState title="制作概览读取失败" description="请稍后重试。" onRetry={() => void overviewQuery.refetch()} /> : null}
-                                {activeView === "chapters" ? workspaceQuery.isLoading ? <WorkspaceLoadingState label="正在读取当前章节" detail="正文与制作数据按章节加载" /> : workspaceQuery.isError ? <WorkspaceErrorState title="章节读取失败" description="当前章节可能已被删除，或服务暂时不可用。" onRetry={() => void workspaceQuery.refetch()} /> : <ProjectChaptersView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
-                                {activeView === "workflow" ? workspaceQuery.isLoading ? <WorkspaceLoadingState label="正在读取当前章节分镜" detail="仅加载本章镜头、版本和产物" /> : workspaceQuery.isError ? <WorkspaceErrorState title="分镜工作区读取失败" description="当前章节制作数据暂时不可用。" onRetry={() => void workspaceQuery.refetch()} /> : <ProjectWorkflowView detail={detail} projectId={projectId} unitId={unitId || ""} stage={stage || "video"} /> : null}
+                                {activeView === "chapters" ? workspaceQuery.isLoading ? <WorkspaceLoadingState label="正在读取当前章节" detail="正文与制作数据按章节加载" /> : projectReadBlocksView(workspaceQuery) ? <WorkspaceErrorState title="章节读取失败" description={projectReadErrorDescription(workspaceQuery.error)} onRetry={() => void workspaceQuery.refetch()} /> : <ProjectChaptersView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
+                                {activeView === "workflow" ? workspaceQuery.isLoading ? <WorkspaceLoadingState label="正在读取当前章节分镜" detail="仅加载本章镜头、版本和产物" /> : projectReadBlocksView(workspaceQuery) ? <WorkspaceErrorState title="分镜工作区读取失败" description={projectReadErrorDescription(workspaceQuery.error)} onRetry={() => void workspaceQuery.refetch()} /> : <ProjectWorkflowView detail={detail} projectId={projectId} unitId={unitId || ""} stage={stage || "video"} /> : null}
                                 {activeView === "canvases" ? <ProjectCanvasesView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
                                 {activeView === "assets" ? <ProjectAssetsView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
                                 {activeView === "settings" ? <ProjectSettingsView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
-                                {activeView === "editor" ? <ProjectEditorView detail={detail} /> : null}
+                                {activeView === "editor" ? editorQuery.isLoading ? <WorkspaceLoadingState label="正在读取各集视频" detail="加载全项目的章节、镜头与已采用产物" /> : editorQuery.isError || !editorQuery.data ? <WorkspaceErrorState title="剪辑素材读取失败" description="未能读取完整的分集视频，请重试。" onRetry={() => void editorQuery.refetch()} /> : <ProjectEditorView detail={editorQuery.data} /> : null}
                             </div>
                         </Suspense>
                     </div>

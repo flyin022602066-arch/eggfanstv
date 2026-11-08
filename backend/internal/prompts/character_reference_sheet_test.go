@@ -57,6 +57,15 @@ func TestCharacterReferenceSheetRulesSurviveSavedPrompts(t *testing.T) {
 				if operation != OperationCharacterTurnaround && (!strings.Contains(compiled.Content, "multiViewPrompt") || !strings.Contains(compiled.Content, "角色甲走进院子")) {
 					t.Errorf("%s lost extraction contract or chapter", operation)
 				}
+				if operation != OperationCharacterTurnaround && !strings.Contains(compiled.Content, "系统/界面事实处理") {
+					t.Errorf("%s must preserve system UI facts without extracting them as character assets", operation)
+				}
+				if operation == OperationChapterAssetsExtract && !strings.Contains(compiled.Content, chapterSystemInterfaceAssetRule) {
+					t.Error("system UI prop extraction rule must survive saved templates and customizations")
+				}
+				if operation != OperationCharacterTurnaround && !strings.Contains(compiled.Content, "说话人不等于对白中被提及的人") {
+					t.Errorf("%s lost protected character visibility rules", operation)
+				}
 				if operation == OperationCharacterTurnaround && !strings.Contains(compiled.Content, "青色长袍") {
 					t.Error("turnaround lost confirmed character definition")
 				}

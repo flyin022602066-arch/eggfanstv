@@ -204,6 +204,7 @@ type CharacterRepresentationInput struct {
 
 type ReplaceCharacterRepresentationsRequest struct {
 	Representations []CharacterRepresentationInput `json:"representations"`
+	BaseVersionID   string                         `json:"baseVersionId,omitempty"`
 }
 
 type BindCharacterVoiceRequest struct {
@@ -248,24 +249,25 @@ type CharacterCardSummary struct {
 }
 
 type AssetSummary struct {
-	ID               string                   `json:"id"`
-	Title            string                   `json:"title"`
-	MediaType        string                   `json:"mediaType"`
-	Category         model.AssetCategory      `json:"category"`
-	Status           model.AssetVersionStatus `json:"status"`
-	PrimaryVersionID string                   `json:"primaryVersionId,omitempty"`
-	VersionCount     int                      `json:"versionCount"`
-	Usages           []string                 `json:"usages"`
-	UnitIDs          []string                 `json:"unitIds,omitempty"`
-	FolderID         string                   `json:"folderId,omitempty"`
-	Position         int                      `json:"position"`
-	StorageKey       string                   `json:"storageKey,omitempty"`
-	DurationMs       int64                    `json:"durationMs,omitempty"`
-	PreviewText      string                   `json:"previewText,omitempty"`
-	DefinitionJSON   string                   `json:"definitionJson,omitempty"`
-	UpdatedAt        time.Time                `json:"updatedAt"`
-	Source           string                   `json:"source,omitempty"`
-	Character        *CharacterCardSummary    `json:"character,omitempty"`
+	ID                 string                   `json:"id"`
+	Title              string                   `json:"title"`
+	MediaType          string                   `json:"mediaType"`
+	Category           model.AssetCategory      `json:"category"`
+	Status             model.AssetVersionStatus `json:"status"`
+	PrimaryVersionID   string                   `json:"primaryVersionId,omitempty"`
+	VersionCount       int                      `json:"versionCount"`
+	CharacterLookCount int                      `json:"characterLookCount,omitempty"`
+	Usages             []string                 `json:"usages"`
+	UnitIDs            []string                 `json:"unitIds,omitempty"`
+	FolderID           string                   `json:"folderId,omitempty"`
+	Position           int                      `json:"position"`
+	StorageKey         string                   `json:"storageKey,omitempty"`
+	DurationMs         int64                    `json:"durationMs,omitempty"`
+	PreviewText        string                   `json:"previewText,omitempty"`
+	DefinitionJSON     string                   `json:"definitionJson,omitempty"`
+	UpdatedAt          time.Time                `json:"updatedAt"`
+	Source             string                   `json:"source,omitempty"`
+	Character          *CharacterCardSummary    `json:"character,omitempty"`
 }
 
 type CharacterDetail struct {
@@ -373,10 +375,13 @@ type ShotAssetReference struct {
 }
 
 type ShotAssetReferenceVersion struct {
-	ID              string                           `json:"id"`
-	AssetID         string                           `json:"assetId"`
-	Version         int                              `json:"version"`
-	Representations []CharacterRepresentationSummary `json:"representations"`
+	ID               string                           `json:"id"`
+	AssetID          string                           `json:"assetId"`
+	Version          int                              `json:"version"`
+	Representations  []CharacterRepresentationSummary `json:"representations"`
+	ReferenceProfile *CharacterReferenceProfile       `json:"referenceProfile,omitempty"`
+	Definition       map[string]any                   `json:"definition,omitempty"`
+	Voice            *CharacterVoiceSummary           `json:"voice,omitempty"`
 }
 
 type UnitWorkspace struct {

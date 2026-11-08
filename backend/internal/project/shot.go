@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/characterlooks"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
@@ -299,15 +300,50 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 		return nil, kernel.BadAuthRequest("资产候选数量必须在 1 到 100 之间")
 	}
 	source := strings.TrimSpace(req.Source)
+	applyUnitID := characterApplyUnitID(req)
+	applySource, err := s.resolveChapterApplySource(userID, projectID, applyUnitID, sourceTaskID, chapterApplyCharacters, characterApplyPayloadFromRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	if applySource.TaskID != "" {
+		for _, input := range req.Candidates {
+			if strings.TrimSpace(input.UnitID) != applySource.UnitID {
+				return nil, kernel.Forbidden("不能把其他章节的生成结果写入本章")
+			}
+		}
+	}
 	existingCandidates, err := s.repo.ProjectAssetCandidates(projectID)
 	if err != nil {
 		return nil, err
+	}
+	if applySource.TaskID != "" {
+		shots, err := s.repo.ProjectUnitShots(projectID, applySource.UnitID)
+		if err != nil {
+			return nil, err
+		}
+		shotIDs := make(map[string]bool, len(shots))
+		for _, shot := range shots {
+			shotIDs[shot.ID] = true
+		}
+		retained := make([]model.ProjectAssetCandidate, 0, len(existingCandidates))
+		for _, candidate := range existingCandidates {
+			belongsToUnit := candidate.UnitID == applySource.UnitID || candidate.UnitID == "" && shotIDs[candidate.ShotID]
+			if !belongsToUnit || candidate.Status != "pending_confirmation" {
+				retained = append(retained, candidate)
+			}
+		}
+		existingCandidates = retained
 	}
 	projectAssets, err := s.repo.ProjectAssets(userID, projectID)
 	if err != nil {
 		return nil, err
 	}
 	knownKeys := projectAssetCandidateIdentityKeys(existingCandidates, projectAssets)
+	knownLooks, err := s.projectCharacterLookKeys(existingCandidates, projectAssets)
+	if err != nil {
+		return nil, err
+	}
+	characterMatches := map[string][]model.Asset{}
 	now := time.Now()
 	pending := make([]model.ProjectAssetCandidate, 0, len(req.Candidates))
 	for _, input := range req.Candidates {
@@ -343,23 +379,132 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 			}
 		}
 		identityKeys := assetCandidateInputIdentityKeys(name, input.Details)
-		if assetCandidateIdentityExists(knownKeys, category, identityKeys) {
+		candidateStatus, resolvedAssetID := "pending_confirmation", ""
+		if category == model.AssetCategoryCharacter {
+			definition := make(map[string]any, len(input.Details))
+			for key, value := range input.Details {
+				if key != "_characterMatch" {
+					definition[key] = value
+				}
+			}
+			identityCacheKey, _ := json.Marshal(identityKeys)
+			matches, cached := characterMatches[string(identityCacheKey)]
+			if !cached {
+				var matchErr error
+				matches, matchErr = s.matchingProjectCharactersWithCandidates(projectAssets, existingCandidates, name, definition)
+				if matchErr != nil {
+					return nil, matchErr
+				}
+				characterMatches[string(identityCacheKey)] = matches
+			}
+			matches = confirmedChapterCharacterTarget(matches, existingCandidates, input.UnitID, name)
+			lookIdentityKeys := []string{nameKey}
+			if len(matches) == 1 {
+				lookIdentityKeys = []string{matches[0].ID, model.AssetCandidateNameKey(matches[0].Title)}
+			}
+			var match *characterCandidateMatch
+			if len(matches) == 1 {
+				unit, unitErr := s.repo.ProjectUnit(projectID, input.UnitID)
+				if unitErr != nil {
+					return nil, unitErr
+				}
+				changed, hasChange, changeErr := provenCharacterLookChanges(definition, unit.SourceText)
+				if changeErr != nil {
+					return nil, kernel.BadAuthRequest(changeErr.Error())
+				}
+				match = &characterCandidateMatch{AssetID: matches[0].ID, Title: matches[0].Title, Mode: "reuse", Description: "沿用项目已确认角色及造型；未发现有原文依据的新造型差异"}
+				if hasChange {
+					definition = changed
+					match.Mode, match.Description = "new_look", characterCandidateDescription(changed)
+				} else {
+					candidateStatus, resolvedAssetID = "confirmed", matches[0].ID
+				}
+			} else if len(matches) > 1 {
+				match = &characterCandidateMatch{Title: name, Mode: "ambiguous", Description: "项目中已有多个同名或同别名角色，请明确选择归并目标，不会再次创建同名角色"}
+			}
+			details, hasNew, lookErr := newCharacterCandidateLooks(definition, lookIdentityKeys, knownLooks)
+			if lookErr != nil {
+				return nil, lookErr
+			}
+			if !hasNew && match != nil && match.Mode == "new_look" {
+				confirmedLooks, confirmedErr := s.projectCharacterLookKeys(nil, matches)
+				if confirmedErr != nil {
+					return nil, confirmedErr
+				}
+				_, missingConfirmed, confirmedErr := newCharacterCandidateLooks(definition, lookIdentityKeys, confirmedLooks)
+				if confirmedErr != nil {
+					return nil, confirmedErr
+				}
+				if missingConfirmed {
+					continue
+				}
+				match.Mode, match.Description = "reuse", "本章造型已在项目角色库中，沿用已有版本"
+				candidateStatus, resolvedAssetID = "confirmed", match.AssetID
+			}
+			if !hasNew && (match == nil || match.Mode == "ambiguous") {
+				continue
+			}
+			if candidateStatus == "confirmed" {
+				alreadyLinked := false
+				for _, previous := range append(existingCandidates, pending...) {
+					if previous.UnitID == input.UnitID && previous.ResolvedAssetID == resolvedAssetID && previous.Status == "confirmed" {
+						alreadyLinked = true
+						break
+					}
+				}
+				if alreadyLinked {
+					continue
+				}
+			}
+			if details == nil {
+				details = definition
+			}
+			if match != nil {
+				details["_characterMatch"] = match
+			}
+			detailsJSON, err = marshalProjectDetails(details)
+			if err != nil {
+				return nil, err
+			}
+			if match == nil || match.Mode == "new_look" {
+				addCharacterLookKeys(knownLooks, lookIdentityKeys, details)
+			}
+		} else if strings.TrimSpace(input.UnitID) != "" {
+			matches := map[string]bool{}
+			for _, asset := range projectAssets {
+				if asset.Category == category && model.AssetCandidateNameKey(asset.Title) == nameKey {
+					matches[asset.ID] = true
+				}
+			}
+			for _, previous := range existingCandidates {
+				if previous.Category == category && previous.NameKey == nameKey && previous.Status == "confirmed" && previous.ResolvedAssetID != "" {
+					for _, asset := range projectAssets {
+						if asset.ID == previous.ResolvedAssetID && asset.Category == category {
+							matches[asset.ID] = true
+						}
+					}
+				}
+			}
+			if len(matches) == 1 {
+				for assetID := range matches {
+					candidateStatus, resolvedAssetID = "confirmed", assetID
+				}
+			}
+			alreadyLinked := false
+			for _, previous := range append(existingCandidates, pending...) {
+				if previous.UnitID == input.UnitID && previous.Category == category && (previous.NameKey == nameKey || resolvedAssetID != "" && previous.ResolvedAssetID == resolvedAssetID) {
+					alreadyLinked = true
+					break
+				}
+			}
+			if alreadyLinked {
+				continue
+			}
+		} else if assetCandidateIdentityExists(knownKeys, category, identityKeys) {
 			continue
 		}
-		pending = append(pending, model.ProjectAssetCandidate{ID: kernel.NewID(), ProjectID: projectID, UnitID: strings.TrimSpace(input.UnitID), ShotID: strings.TrimSpace(input.ShotID), Name: name, NameKey: nameKey, Category: category, Status: "pending_confirmation", Source: source, DetailsJSON: detailsJSON, CreatedAt: now, UpdatedAt: now})
+		pending = append(pending, model.ProjectAssetCandidate{ID: kernel.NewID(), ProjectID: projectID, UnitID: strings.TrimSpace(input.UnitID), ShotID: strings.TrimSpace(input.ShotID), Name: name, NameKey: nameKey, Category: category, Status: candidateStatus, ResolvedAssetID: resolvedAssetID, Source: source, DetailsJSON: detailsJSON, CreatedAt: now, UpdatedAt: now})
 		addAssetCandidateIdentityKeys(knownKeys, category, identityKeys)
-	}
-	applyUnitID := characterApplyUnitID(req)
-	applySource, err := s.resolveChapterApplySource(userID, projectID, applyUnitID, sourceTaskID, chapterApplyCharacters, characterApplyPayloadFromRequest(req))
-	if err != nil {
-		return nil, err
-	}
-	if applySource.TaskID != "" {
-		for _, input := range req.Candidates {
-			if unitID := strings.TrimSpace(input.UnitID); unitID != "" && unitID != applySource.UnitID {
-				return nil, kernel.Forbidden("不能把其他章节的生成结果写入本章")
-			}
-		}
 	}
 	if applySource.TaskID == "" {
 		inserted, err := s.repo.CreateProjectAssetCandidatesAndBump(userID, projectID, pending)
@@ -370,7 +515,7 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 	}
 	var inserted []model.ProjectAssetCandidate
 	outcome, err := operations.NewStore(s.repo.DB()).Run(context.Background(), applySource.runRequest(userID), func(tx *gorm.DB) ([]byte, error) {
-		created, runErr := s.repo.CreateProjectAssetCandidatesAndBumpTx(tx, userID, projectID, pending)
+		created, runErr := s.repo.ReplaceProjectUnitAssetDraftsTx(tx, userID, projectID, applySource.UnitID, pending)
 		if runErr != nil {
 			return nil, runErr
 		}
@@ -496,6 +641,9 @@ func marshalProjectDetails(value map[string]any) (string, error) {
 }
 
 func validateCharacterCandidateDetails(details map[string]any) error {
+	if _, err := characterlooks.Extract(details); err != nil {
+		return kernel.BadAuthRequest(err.Error())
+	}
 	text := func(key string) string {
 		value, _ := details[key].(string)
 		return strings.TrimSpace(value)

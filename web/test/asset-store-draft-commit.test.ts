@@ -5,7 +5,7 @@ import localforage from "localforage";
 import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
-import { apiClient } from "@/services/api/request";
+import { ApiError, apiClient } from "@/services/api/request";
 import { deleteWorkspaceAsset, persistWorkspaceAssetChanges, persistWorkspaceAssetLink, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
 import {
     flushAssetStorePersistence,
@@ -99,6 +99,52 @@ afterEach(async () => {
 });
 
 describe("asset store draft commit identity", () => {
+    test("rejected deletion does not hide a referenced asset after the next library read", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        useAssetStore.setState({ assets: [textAsset("referenced")] });
+        try {
+            await withAdapter(async () => { throw new ApiError("Asset is referenced", { status: 409, code: 409 }); }, async () => {
+                await expect(deleteWorkspaceAsset("referenced", captureUserScope())).rejects.toThrow("Asset is referenced");
+            });
+            expect(peekAssetStoreDraft("owner-a", "referenced")).toBeUndefined();
+            expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual(["referenced"]);
+        } finally { restore(); }
+    });
+
+    test("rejected deletion restores an earlier edit and keeps newer edits", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        useAssetStore.setState({ assets: [textAsset("edited")] });
+        try {
+            useAssetStore.getState().updateAsset("edited", { title: "Unsaved edit" });
+            await withAdapter(async () => { throw new ApiError("Asset is referenced", { status: 400 }); }, async () => {
+                await expect(deleteWorkspaceAsset("edited", captureUserScope())).rejects.toThrow("Asset is referenced");
+            });
+            expect(peekAssetStoreDraft("owner-a", "edited")?.kind).toBe("upsert");
+            expect(useAssetStore.getState().assets[0].title).toBe("Unsaved edit");
+            await withAdapter(async () => {
+                useAssetStore.getState().updateAsset("edited", { title: "Newer edit" });
+                throw new ApiError("Asset is referenced", { status: 400 });
+            }, async () => {
+                await expect(deleteWorkspaceAsset("edited", captureUserScope())).rejects.toThrow();
+            });
+            expect(peekAssetStoreDraft("owner-a", "edited")?.asset?.title).toBe("Newer edit");
+        } finally { restore(); }
+    });
+
+    test("transient deletion failure retains the retryable delete intent", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        useAssetStore.setState({ assets: [textAsset("retryable")] });
+        try {
+            await withAdapter(async () => { throw new ApiError("Unavailable", { status: 503 }); }, async () => {
+                await expect(deleteWorkspaceAsset("retryable", captureUserScope())).rejects.toThrow("Unavailable");
+            });
+            expect(peekAssetStoreDraft("owner-a", "retryable")?.kind).toBe("delete");
+        } finally { restore(); }
+    });
+
     for (const receipt of [{}, { asset: { id: "wrong-asset" } }]) {
         test(`invalid asset receipt preserves the submitted draft: ${JSON.stringify(receipt)}`, async () => {
             const restore = switchScope("owner-a");

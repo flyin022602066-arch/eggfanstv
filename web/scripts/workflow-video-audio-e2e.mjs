@@ -17,12 +17,13 @@ const sequenceFixture = process.argv.includes("--storyboard-sequence");
 const reviewFixture = densityFixture || sequenceFixture;
 const overwriteFixture = reviewFixture || process.argv.includes("--chapter-overwrite");
 const promptFixture = process.argv.includes("--prompt-preview");
+const mentionRepairFixture = process.argv.includes("--asset-mention-repair");
 const rememberModelFixture = process.argv.includes("--remember-model");
 const chapterModelFixture = process.argv.includes("--chapter-model-memory");
 const workflowRetryFixture = process.argv.includes("--workflow-retry");
 const workflowRouteFixture = process.argv.includes("--workflow-route");
 const jiasuFixture = workflowRetryFixture || promptFixture || jiasuJ2Fixture || jiasuJ3Fixture || sceneBindingFixture || process.argv.includes("--jiasu");
-const bindingFixture = workflowRetryFixture || promptFixture || jiasuJ2Fixture || jiasuJ3Fixture || sceneBindingFixture || overwriteFixture || process.argv.includes("--asset-binding");
+const bindingFixture = mentionRepairFixture || workflowRetryFixture || promptFixture || jiasuJ2Fixture || jiasuJ3Fixture || sceneBindingFixture || overwriteFixture || process.argv.includes("--asset-binding");
 const skillDefinitions = promptFixture ? JSON.parse(await readFile(resolve(root, "backend/internal/skills/seed/skills.json"), "utf8")).filter(skill => ["14811816982540", "14889899551756", "14889899552012"].includes(skill.skill_id)) : [];
 const videoGuides = new Map(await Promise.all([["14811816982540", "world"], ["14889899551756", "character"], ["14889899552012", "performance"]].filter(() => promptFixture).map(async ([id, name]) => [id, await readFile(resolve(root, `backend/internal/skills/seed/video/${name}.md`), "utf8")])));
 const originalImages = new Map(jiasuJ2Fixture ? [
@@ -33,7 +34,7 @@ const imageResources = new Map(originalImages);
 const maskedUploads = [];
 let failNextMaskUpload = false;
 const dist = resolve(root, ".local/cache/workflow-video-audio-harness");
-const output = resolve(root, chapterModelFixture ? "output/playwright/chapter-model-memory" : sequenceFixture ? "output/playwright/storyboard-sequence" : densityFixture ? "output/playwright/storyboard-density" : promptFixture ? "output/playwright/video-prompt-preview" : overwriteFixture ? "output/playwright/chapter-overwrite" : sceneBindingFixture ? "output/playwright/scene-binding-30s" : rememberModelFixture ? "output/playwright/workflow-model-memory" : jiasuJ2Fixture ? "output/playwright/workflow-jiasu-reference" : bindingFixture ? "output/playwright/workflow-asset-binding" : jiasuFixture ? "output/playwright/workflow-jiasu-audio" : "output/playwright/workflow-video-audio");
+const output = resolve(root, mentionRepairFixture ? "output/playwright/asset-mention-repair" : chapterModelFixture ? "output/playwright/chapter-model-memory" : sequenceFixture ? "output/playwright/storyboard-sequence" : densityFixture ? "output/playwright/storyboard-density" : promptFixture ? "output/playwright/video-prompt-preview" : overwriteFixture ? "output/playwright/chapter-overwrite" : sceneBindingFixture ? "output/playwright/scene-binding-30s" : rememberModelFixture ? "output/playwright/workflow-model-memory" : jiasuJ2Fixture ? "output/playwright/workflow-jiasu-reference" : bindingFixture ? "output/playwright/workflow-asset-binding" : jiasuFixture ? "output/playwright/workflow-jiasu-audio" : "output/playwright/workflow-video-audio");
 await mkdir(output, { recursive: true });
 await build({ configFile: resolve(root, "web/vite.config.ts"), root: resolve(root, "web"), plugins: [{ name: "skip-media-prune", enforce: "post", configResolved(config) { config.plugins = config.plugins.filter(plugin => plugin.name !== "beeftv-prune-optional-media"); } }], build: { outDir: dist, emptyOutDir: true, rolldownOptions: { input: resolve(root, "web/test/fixtures/project-asset-images.html") } } });
 const server = createServer(async (request, response) => {
@@ -98,7 +99,15 @@ await context.route("**/*", async route => {
         workspace.assets = catalog.filter(candidate => workspace.shotReferences.some(item => item.assetVersionId === candidate.primaryVersionId));
         return json({ reference });
     }
-    if (request.method() === "POST" && /\/projects\/fixture-project\/shots$/.test(url.pathname)) { savedRevisions.push(request.postDataJSON()); return json({ shot: { ...request.postDataJSON(), currentRevisionId: "saved-revision" } }); }
+    if (request.method() === "POST" && /\/projects\/fixture-project\/shots$/.test(url.pathname)) {
+        const input = request.postDataJSON();
+        savedRevisions.push(input);
+        if (mentionRepairFixture) {
+            workspace.shots = workspace.shots.map(shot => shot.id === input.id ? { ...shot, currentRevisionId: "saved-revision" } : shot);
+            workspace.shotRevisions = [{ ...input.revision, id: "saved-revision", shotId: input.id, version: 2 }];
+        }
+        return json({ shot: { ...input, currentRevisionId: "saved-revision" } });
+    }
     if ((sceneBindingFixture || overwriteFixture) && request.method() === "PUT" && /\/units\/unit\/shots$/.test(url.pathname)) {
         replacementAttempts++;
         const input = request.postDataJSON();
@@ -638,6 +647,52 @@ try {
         assert.equal(remote, 0);
         assert.deepEqual(errors, []);
         const result = { passed: ["J2-V sends the same provider settings as canvas, including both bound images", "J2-V local detection and 75% masks run before submission and preserve reference names", "Failed processing blocks submission; reopening reuses processed references and the saved mask preference", "Dola heavy and original-image modes match the working canvas settings", "Face preference persists without clearing unsaved prompt", "Other channels' face flags are absent"], submissions: submissions.length, processedImages: maskedUploads.length, externalRequests: remote, errors };
+        await writeFile(resolve(output, "report.json"), JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(result, null, 2));
+    } else if (mentionRepairFixture) {
+        const prompt = page.getByRole("textbox", { name: "视频提示词，可使用 @ 引用已绑定资产", exact: true });
+        await page.getByRole("button", { name: "按规则匹配", exact: true }).click();
+        await page.getByText("已绑定 2 项", { exact: true }).waitFor();
+        const unknownId = "34b36520b211ce34b097ed322f013aee1";
+        await prompt.fill(`镜头1：@[asset:${unknownId}]挥手。对白：你好。`);
+        const repair = page.getByLabel("修复镜头资产引用", { exact: true });
+        await repair.waitFor();
+        assert.match(await repair.innerText(), new RegExp(unknownId));
+        assert.match(await repair.innerText(), /挥手。对白：你好/);
+        assert.equal(submissions.length, 0);
+        await page.getByRole("alert").filter({ hasText: "提示词尚未就绪" }).waitFor();
+        await repair.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: resolve(output, "unresolved-dark.png"), animations: "disabled" });
+        await page.getByRole("combobox", { name: `替换资产引用 ${unknownId}`, exact: true }).click();
+        await page.getByTitle("角色原图甲 · characte", { exact: true }).click();
+        await repair.waitFor({ state: "hidden" });
+        await page.getByRole("button", { name: "保存脚本", exact: true }).click();
+        await page.waitForFunction(() => !Array.from(document.querySelectorAll("button")).some(button => button.textContent === "保存脚本" && button.classList.contains("ant-btn-loading")));
+        assert.match(savedRevisions.at(-1).revision.videoPrompt, /@\[asset:character-ready\]/);
+        assert.ok(!savedRevisions.at(-1).revision.videoPrompt.includes(unknownId));
+        await page.getByRole("button", { name: "测试资产页", exact: true }).click();
+        await page.getByRole("button", { name: "测试视频页", exact: true }).click();
+        assert.equal(await repair.count(), 0);
+        const finalPrompt = page.getByRole("textbox", { name: "最终提交提示词全文", exact: true });
+        await finalPrompt.waitFor();
+        await page.waitForFunction(() => document.querySelector('[aria-label="最终提交提示词全文"]')?.value.includes("镜头1：图片1挥手。对白：你好。"));
+        assert.match(await finalPrompt.inputValue(), /镜头1：图片1挥手。对白：你好。/);
+        await submit("true");
+        assert.ok(!submissions.at(-1).input.prompt.includes("@[asset:"));
+        assert.deepEqual(submissions.at(-1).input.referenceImages.map(image => image.storageKey), ["resource:character-original", "resource:scene-original"]);
+        await prompt.fill("镜头2：@[asset:extra]多余引用，风吹衣摆。对白：继续走。");
+        await repair.getByRole("button", { name: "移除此引用", exact: true }).click();
+        await repair.waitFor({ state: "hidden" });
+        assert.match(await prompt.innerText(), /风吹衣摆。对白：继续走/);
+        await prompt.fill("将@[asset:obsolete]定义为<角色原图甲>。\n镜头3：@[asset:obsolete]抬头。");
+        await page.waitForFunction(() => document.querySelector('[aria-label="最终提交提示词全文"]')?.value.includes("镜头3：图片1抬头"));
+        assert.equal(await repair.count(), 0);
+        await page.getByRole("button", { name: "切换主题", exact: true }).click();
+        await finalPrompt.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: resolve(output, "repaired-light.png"), animations: "disabled" });
+        assert.equal(remote, 0);
+        assert.deepEqual(errors, []);
+        const result = { passed: ["Unknown references expose their full ID and surrounding text", "Explicit replacement preserves dialogue and saves the real asset ID", "The submitted prompt uses the selected original image and contains no unresolved tokens", "Removing an extra reference preserves other text", "Unique named material definitions recover automatically", "Dark and light layouts render"], submissions: submissions.length, externalRequests: remote, errors };
         await writeFile(resolve(output, "report.json"), JSON.stringify(result, null, 2));
         console.log(JSON.stringify(result, null, 2));
     } else if (bindingFixture) {

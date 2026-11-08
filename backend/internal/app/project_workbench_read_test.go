@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -29,6 +30,32 @@ func newProjectWorkbenchReadTestService(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	return &Service{repo: repository.New(db)}, db
+}
+
+func TestProjectUnitWorkspaceWithoutShotsReturnsEmptyArrays(t *testing.T) {
+	service, db := newProjectWorkbenchReadTestService(t)
+	project := seedWorkbenchProject(t, db)
+	unit := model.ProjectUnit{ID: "unit-empty", ProjectID: project.ID, Title: "尚未拆解", SourceText: "人物走进旧屋。"}
+	if err := db.Create(&unit).Error; err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := service.ProjectUnitWorkspace("user-1", project.ID, unit.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"workflows", "shots", "shotRevisions", "shotArtifacts", "shotReferences", "assetCandidates", "assets", "tasks"} {
+		if string(fields[name]) != "[]" {
+			t.Errorf("empty workspace %s = %s, want []", name, fields[name])
+		}
+	}
 }
 
 func TestProjectUnitWorkspaceResolvesHistoricalVisualAndCurrentCharacterVoice(t *testing.T) {

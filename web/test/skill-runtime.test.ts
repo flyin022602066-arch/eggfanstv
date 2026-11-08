@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Skill, SkillPackageFile, SkillPackageFileContent } from "../src/services/api/skills";
-import { createSkillRuntime, resolveCanvasAgentSkillIds, resolveSkillMentions } from "../src/services/skill-runtime";
+import { createSkillRuntime, resolveCanvasAgentSkillIds, resolveSkillMentions, SKILL_RUNTIME_PROFILES } from "../src/services/skill-runtime";
 
 function skill(overrides: Partial<Skill> = {}): Skill {
     return {
@@ -54,6 +54,61 @@ function file(path: string, content: string, kind: SkillPackageFile["kind"] = "m
 }
 
 describe("skill runtime", () => {
+    test("failed skill preparation retains successful and failed outcomes without submitting partial context", async () => {
+        const runtime = createSkillRuntime({
+            listFiles: async () => ({ files: [] }),
+            getFile: async (id) => {
+                if (id === "lighting") throw new Error("connection unavailable");
+                return { file: file("SKILL.md", "# Camera rules") };
+            },
+        });
+        let failure: unknown;
+        try {
+            await runtime.prepare({ profile: "shortDrama", prompt: "story", skills: [skill(), skill({ skillId: "lighting", skillName: "Lighting" })], selectedSkillIds: ["director", "lighting"] });
+        } catch (error) { failure = error; }
+        expect((failure as Error)?.name).toBe("SkillRuntimePreparationError");
+        expect((failure as Error & { report: unknown }).report).toMatchObject([
+            { skillId: "director", status: "loaded", files: ["SKILL.md"], version: "2.0.0" },
+            { skillId: "lighting", status: "failed", reason: "file_read_failed" },
+        ]);
+    });
+
+    test("unavailable selected skills cannot silently disappear from the request", async () => {
+        const runtime = createSkillRuntime({ listFiles: async () => ({ files: [] }), getFile: async () => ({ file: file("SKILL.md", "# Rules") }) });
+        let failure: unknown;
+        try {
+            await runtime.prepare({ profile: "shortDrama", prompt: "story", skills: [skill({ isAdded: false })], selectedSkillIds: ["director", "missing"] });
+        } catch (error) { failure = error; }
+        expect((failure as Error | undefined)?.name).toBe("SkillRuntimePreparationError");
+        expect((failure as Error & { report: unknown }).report).toMatchObject([
+            { skillId: "director", status: "failed", reason: "unavailable" },
+            { skillId: "missing", status: "failed", reason: "unavailable" },
+        ]);
+    });
+
+    test("empty skill entries fail and selected skills beyond the limit are explicitly skipped", async () => {
+        const skills = ["a", "b", "c", "d", "e", "f"].map((id) => skill({ skillId: id }));
+        const runtime = createSkillRuntime({ listFiles: async () => ({ files: [] }), getFile: async (id) => ({ file: file("SKILL.md", id === "b" ? "  " : "# Rules") }) });
+        let failure: unknown;
+        try { await runtime.prepare({ profile: "shortDrama", prompt: "story", skills, selectedSkillIds: skills.map((item) => item.skillId) }); }
+        catch (error) { failure = error; }
+        expect((failure as Error)?.name).toBe("SkillRuntimePreparationError");
+        expect((failure as Error & { report: unknown }).report).toMatchObject([
+            { skillId: "a", status: "loaded" }, { skillId: "b", status: "failed", reason: "empty_entry" },
+            { skillId: "c", status: "loaded" }, { skillId: "d", status: "loaded" },
+            { skillId: "e", status: "loaded" },
+            { skillId: "f", status: "skipped", reason: "selection_limit" },
+        ]);
+    });
+
+    test("successful preparation persists actual files and warns when context was truncated", async () => {
+        const budget = SKILL_RUNTIME_PROFILES.shortDrama.maxContextChars;
+        const runtime = createSkillRuntime({ listFiles: async () => ({ files: [] }), getFile: async () => ({ file: file("SKILL.md", "x".repeat(budget + 1_000)) }) });
+        const result = await runtime.prepare({ profile: "shortDrama", prompt: "story", skills: [skill()], selectedSkillIds: ["director"] });
+        expect(result.metadata.skillLoadReport).toMatchObject([{ skillId: "director", skillName: "AI导演", status: "loaded", files: ["SKILL.md"], truncated: true }]);
+        expect(result.prompt).not.toContain("x".repeat(budget + 1));
+    });
+
     test("视频生成使用技能的专用规则而不发送整份 Agent 工作流", async () => {
         const entry = "# 导演工作流\n" + "分析世界观并输出表格。".repeat(1800);
         const guidance = "保持参考图身份与服装，按已确认节拍连续表演。";

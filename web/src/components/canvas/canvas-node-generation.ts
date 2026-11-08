@@ -17,6 +17,7 @@ import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import { audioFileExtension } from "@/lib/character-voice-formats";
 import type { ModelReferenceLimits } from "@/lib/model-selection";
 import type { Asset } from "@/stores/use-asset-store";
+import { templateReferenceInstructions, REFERENCE_TEMPLATE_LABELS } from '@/lib/canvas/canvas-reference-templates';
 
 export type CharacterGenerationReference = {
     nodeId: string;
@@ -66,6 +67,24 @@ export type NodeGenerationInput = {
 };
 
 export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, assets: Asset[], promptOnly = false): NodeGenerationContext {
+    const context = buildBaseNodeGenerationContext(nodeId, nodes, connections, prompt, assets, promptOnly);
+    const bindings = nodes.find(node => node.id === nodeId)?.metadata?.referenceTemplates;
+    if (!bindings?.length) return context;
+    const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
+    const referenceImages = [...context.referenceImages];
+    const instructions: string[] = [];
+    for (const binding of bindings) for (const item of binding.items) {
+        const direct = connections.some(edge => edge.fromNodeId === item.nodeId && edge.toNodeId === nodeId) ? nodes.find(node => node.id === item.nodeId) : undefined;
+        const image = inputs.find(input => input.nodeId === item.nodeId)?.image || (direct ? readReferenceImage(direct, nodes, connections) : null);
+        if (!image) continue;
+        let index = referenceImages.findIndex(value => value.id === image.id);
+        if (index < 0) { index = referenceImages.length; referenceImages.push(image); }
+        instructions.push(`@${imageReferenceLabel(index)}（${REFERENCE_TEMPLATE_LABELS[item.role]}参考）：${templateReferenceInstructions(item.role)}${item.angle ? ` 视角：${item.angle}。` : ''}${item.instruction ? ` ${item.instruction}` : ''}`);
+    }
+    return { ...context, referenceImages, imageCount: referenceImages.length, prompt: instructions.length ? `${context.prompt}\n\n参考模板用途：\n${instructions.join('\n')}` : context.prompt };
+}
+
+function buildBaseNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, assets: Asset[], promptOnly = false): NodeGenerationContext {
     const pendingConversion = findPendingMediaConversionInput(nodeId, nodes, connections);
     if (pendingConversion) {
         const status = pendingConversion.metadata?.mediaConversion?.status;

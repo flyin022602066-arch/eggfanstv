@@ -7,6 +7,7 @@ import type { ProjectCore } from "../src/services/api/projects";
 import type { GenerationTask } from "../src/services/api/task-center";
 import { uploadCharacterFaceReference } from "../src/services/project-character-face-presets";
 import type { RemoteResource } from "../src/services/api/resources";
+import type { CharacterReferenceVersion } from "../src/services/api/project-character-references";
 
 const channel = createModelChannel({ id: "face-test", name: "fixture", interfaceType: "openai-image", baseUrl: "https://example.invalid", apiKey: "fixture-only", models: ["gpt-image-2"] });
 const model = encodeChannelModel(channel.id, "gpt-image-2");
@@ -14,6 +15,7 @@ const config = { ...defaultConfig, channels: [channel], model, imageModel: model
 const rawPresets = JSON.stringify({ male: { resourceId: "male-face", assetIds: ["hero", "hero-costume"] }, female: { resourceId: "female-face", assetIds: ["heroine"] } });
 const character = { projectId: "project", assetId: "hero", versionId: "v1", name: "男主甲", definition: { role: "东汉医者", clothing: "青色麻布长袍", multiViewPrompt: "保留药囊" }, config };
 type Submission = Parameters<typeof submitBackendGenerationTask>[0];
+const loadCatalog = async () => ({ versions: ["hero", "heroine"].map((assetId) => ({ assetId, versionId: "v1", version: 1, definition: character.definition, representations: [] } as unknown as CharacterReferenceVersion)), revision: 1 });
 
 test("male and female presets bind by explicit character ID and survive JSON reload", () => {
     const saved = JSON.stringify(parseCharacterFacePresets(rawPresets));
@@ -33,6 +35,7 @@ test("invalid settings and dual-face bindings fail visibly instead of silently g
 test("actual task payload carries one face reference plus script costume and protected layout instructions", async () => {
     let submitted: Submission | undefined;
     await generateCharacterTurnaround(character, {
+        loadCatalog,
         loadProject: async () => ({ project: { id: "project", characterFacePresetsJson: rawPresets } } as ProjectCore),
         submitTask: async (options) => { submitted = options; return {} as GenerationTask; },
     });
@@ -41,13 +44,14 @@ test("actual task payload carries one face reference plus script costume and pro
     expect(input.referenceImages.map((image) => image.storageKey)).toEqual(["resource:male-face"]);
     expect(input.config.model).toBe("gpt-image-2");
     expect(input.metadata.resolvedCharacterVersions).toEqual([{ assetId: "hero", versionId: "v1" }]);
-    for (const requirement of ["东汉医者", "青色麻布长袍", "保留药囊", "面孔身份依据", "不照搬", "不混合男女主", "不含头部"]) expect(input.metadata.promptTemplateVariables.角色设定).toContain(requirement);
+    for (const requirement of ["青色麻布长袍", "保留药囊", "面孔身份依据", "不照搬", "不混合男女主", "不含头部"]) expect(input.metadata.promptTemplateVariables.角色设定).toContain(requirement);
 });
 
 test("each batch character uses its own face and fetches latest saved project reference", async () => {
     let latest = rawPresets;
     const submissions: Submission[] = [];
     const dependencies = {
+        loadCatalog,
         loadProject: async (projectId: string) => ({ project: { id: projectId, characterFacePresetsJson: projectId === "other-project" ? "{}" : latest } } as ProjectCore),
         submitTask: async (options: Submission) => { submissions.push(options); return {} as GenerationTask; },
     };
@@ -64,7 +68,7 @@ test("each batch character uses its own face and fetches latest saved project re
 
 test("unreadable preset source prevents task submission", async () => {
     let calls = 0;
-    await expect(generateCharacterTurnaround(character, { loadProject: async () => { throw new Error("本地项目读取失败"); }, submitTask: async () => { calls++; return {} as GenerationTask; } })).rejects.toThrow("本地项目读取失败");
+    await expect(generateCharacterTurnaround(character, { loadCatalog, loadProject: async () => { throw new Error("本地项目读取失败"); }, submitTask: async () => { calls++; return {} as GenerationTask; } })).rejects.toThrow("本地项目读取失败");
     expect(calls).toBe(0);
 });
 

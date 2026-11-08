@@ -10,6 +10,7 @@ from windows_utf8_manifest import enable_utf8_manifest
 
 PRIVATE_FILE_NAMES = {'.env', '.env.local', '.settings-key'}
 PRIVATE_FILE_SUFFIXES = {'.key', '.pem', '.p12', '.pfx'}
+BUNDLED_SKILL_FILES = tuple('skill-packages/' + name + '.zip' for name in json.loads(Path(__file__).with_name('bundled-skill-packages.json').read_text(encoding='utf-8')))
 
 
 def digest(path):
@@ -22,11 +23,12 @@ def collect_runtime_tree(sources, source_root):
         'agent-host/server.mjs': source_root / 'agent-host' / 'server.mjs',
         'agent-host/runtime/node.exe': source_root / 'agent-host' / 'runtime' / 'node.exe',
         'cli/beeftv.exe': source_root / 'cli' / 'beeftv.exe',
+        **{name: source_root / name for name in BUNDLED_SKILL_FILES},
     }
     for name, source in required.items():
         if not source.is_file() or source.stat().st_size == 0:
             raise ValueError('Required release input missing: ' + name)
-    for directory in ('agent-host', 'cli'):
+    for directory in ('agent-host', 'cli', 'skill-packages'):
         tree = source_root / directory
         for source in sorted(tree.rglob('*')):
             if not source.is_file():

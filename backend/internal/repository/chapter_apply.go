@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -21,4 +23,25 @@ func (r *Repository) ReplaceProjectUnitShotsTx(tx *gorm.DB, userID, projectID, u
 
 func (r *Repository) CreateProjectAssetCandidatesAndBumpTx(tx *gorm.DB, userID, projectID string, candidates []model.ProjectAssetCandidate) ([]model.ProjectAssetCandidate, error) {
 	return createProjectAssetCandidatesAndBumpTx(tx, userID, projectID, candidates)
+}
+
+func (r *Repository) ReplaceProjectUnitAssetDraftsTx(tx *gorm.DB, userID, projectID, unitID string, candidates []model.ProjectAssetCandidate) ([]model.ProjectAssetCandidate, error) {
+	if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
+		return nil, err
+	}
+	if err := tx.Where("id = ? AND project_id = ?", unitID, projectID).First(&model.ProjectUnit{}).Error; err != nil {
+		return nil, err
+	}
+	deleted := tx.Where("project_id = ? AND status = ? AND (unit_id = ? OR (unit_id = '' AND shot_id IN (SELECT id FROM shots WHERE project_id = ? AND unit_id = ?)))", projectID, "pending_confirmation", unitID, projectID, unitID).Delete(&model.ProjectAssetCandidate{})
+	if deleted.Error != nil {
+		return nil, deleted.Error
+	}
+	inserted, err := createProjectAssetCandidatesAndBumpTx(tx, userID, projectID, candidates)
+	if err != nil {
+		return nil, err
+	}
+	if deleted.RowsAffected > 0 && len(inserted) == 0 {
+		return inserted, bumpProjectRevisionTx(tx, projectID, time.Now())
+	}
+	return inserted, nil
 }

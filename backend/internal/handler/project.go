@@ -13,6 +13,7 @@ import (
 
 func RegisterProjectRoutes(r *gin.RouterGroup, svc *app.Service) {
 	RegisterStyleProfileRoutes(r, svc)
+	RegisterCharacterReferenceRoutes(r, svc)
 	r.GET("/project-folders", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -756,6 +757,25 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *app.Service) {
 			return
 		}
 		ok(c, gin.H{"version": version})
+	})
+	r.POST("/projects/:id/assets/:assetId/replace-image", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+		var req app.ReplaceProjectAssetImageRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		asset, err := svc.ReplaceProjectAssetImage(user.ID, c.Param("id"), c.Param("assetId"), req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"asset": asset})
 	})
 	r.POST("/projects/:id/workflows", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"infinite-canvas/backend/internal/provider/hanbao"
 )
 
 // ResourceInfo is the executor view of an owned workspace asset.
@@ -156,6 +157,8 @@ type Runtime struct {
 	Stages     StagePort
 	Images     ImageSubmissionPort
 	Workflow   WorkflowPort
+	Hanbao     HanbaoPort
+	LocalVideoReceipts LocalVideoReceiptPort
 	Prompt     PromptPort
 	Config     ConfigPort
 	Style      StylePort
@@ -163,4 +166,15 @@ type Runtime struct {
 	References ReferencePreparationPort
 	Call       CallMeta
 	Endpoints  Endpoints
+}
+
+type HanbaoPort interface {
+	Acquire() (func(), error)
+	Submit(context.Context, hanbao.VideoRequest) (hanbao.TaskRef, error)
+	Query(context.Context, hanbao.TaskRef) (map[string]any, error)
+}
+
+type LocalVideoReceiptPort interface {
+	Ready(context.Context) error
+	RecordAccepted(context.Context, string) error
 }

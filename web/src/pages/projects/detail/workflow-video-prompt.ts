@@ -1,6 +1,7 @@
 import { skillRuntime, type SkillRuntimeMetadata } from "@/services/skill-runtime";
 import type { Skill } from "@/services/api/skills";
 import { resolveShotAssetMentionPrompt, type ShotAssetReferenceContext } from "./workflow-shot-references";
+import { systemInterfaceIdentity, systemInterfaceReferenceRule } from "@/lib/chapter-system-interface";
 
 type VideoPromptValues = {
     videoPrompt?: string;
@@ -39,6 +40,7 @@ export function buildWorkflowVideoPrompt(values: VideoPromptValues, context: Sho
     append("机位", values.cameraAngle);
     append("运镜", values.cameraMovement);
     append("排除内容", values.negativePrompt);
+    if (context.assetReferences.some((asset) => asset.category === "prop" && systemInterfaceIdentity(asset.title))) append("系统界面动态内容", systemInterfaceReferenceRule);
     const resolvedScript = resolveShotAssetMentionPrompt(script, { ...context, assetReferences: [] }, { interfaceType });
     const prompt = resolveShotAssetMentionPrompt(script, context, { interfaceType, dialogue: missingScriptDialogue(script, values.dialogue) });
     const chars = Array.from(prompt).length;

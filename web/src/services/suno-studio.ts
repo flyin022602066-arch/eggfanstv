@@ -3,10 +3,9 @@ import { buildSunoRequest, sunoOperation } from "@/lib/suno-contract";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { ChannelResponseError } from "@/services/api/channel-transport";
 import { http } from "@/services/api/request";
-import { getResource, getResourceUpstreamUrl, importResourceFromUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import { getResource, getResourceBlob, getResourceUpstreamUrl, retrieveSunoMedia, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { requestSunoOperation, SunoApiRejection, sunoBaseUrl, type SunoReply } from "@/services/api/suno";
-import { downloadOwnedOrBrowserMedia, isWailsNativeShell } from "@/services/desktop-media-save";
-import { resolveMediaUrl } from "@/services/file-storage";
+import { downloadOwnedOrBrowserMedia, isWailsNativeShell, saveOwnedOrBrowserBlob } from "@/services/desktop-media-save";
 import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { channelHasGenerationCredential, useConfigStore, type ModelChannel } from "@/stores/use-config-store";
 import { addSunoStudioJob, flushSunoStudioPersistence, sunoStudioSnapshot, updateSunoStudioJob, useSunoStudioStore, type SunoCanvasSource, type SunoStudioClip, type SunoStudioJob } from "@/stores/use-suno-studio-store";
@@ -15,6 +14,7 @@ const submissions = new Map<string, Promise<string>>();
 const observations = new Map<string, Promise<void>>();
 const imports = new Map<string, Promise<void>>();
 const nextPolls = new Map<string, { after: number; failures: number }>();
+const nextMediaRetries = new Map<string, { after: number; failures: number }>();
 
 export function sunoStudioChannels() {
     return useConfigStore.getState().config.channels.filter((channel) => channel.enabled !== false && channel.scope !== "system" && !channel.credentialRef && !/eggfans-sd2|jiasu-video/i.test(`${channel.id} ${channel.interfaceType}`));
@@ -53,12 +53,18 @@ function mergeClips(previous: SunoStudioClip[], incoming: SunoStudioClip[]) {
     return [...clips.values()];
 }
 
+function applyRequestedClipTitle(job: SunoStudioJob, clips: SunoStudioClip[]) {
+    if (!["post-suno-submit-music", "post-suno-submit-set-metadata"].includes(job.operationId)) return clips;
+    const title = typeof job.values.title === "string" ? job.values.title.trim() : "";
+    return title ? clips.map((clip) => ({ ...clip, title })) : clips;
+}
+
 async function applyReply(scope: string, id: string, reply: SunoReply, submitted = false) {
     const job = jobFor(scope, id);
     const operation = sunoOperation(job.operationId);
     const status = reply.status || (operation.poll !== "none" && reply.taskId ? "queued" : "succeeded");
     if (submitted && operation.poll !== "none" && !reply.status && !reply.taskId) throw new Error("Suno 提交返回缺少任务 ID，接单结果未确认，请核对渠道任务记录");
-    await updateSunoStudioJob(scope, id, { taskId: reply.taskId || job.taskId, taskIds: reply.taskIds || job.taskIds, status, result: reply.result, clips: mergeClips(job.clips, reply.clips), error: reply.error, syncError: undefined });
+    await updateSunoStudioJob(scope, id, { taskId: reply.taskId || job.taskId, taskIds: reply.taskIds || job.taskIds, status, result: reply.result, clips: mergeClips(job.clips, applyRequestedClipTitle(job, reply.clips)), error: reply.error, syncError: undefined });
 }
 
 export function submitSunoStudioOperation(): Promise<string> {
@@ -129,11 +135,27 @@ async function refresh(scope: string, id: string) {
     }
 }
 
+export function sunoStudioJobNeedsRecovery(job: SunoStudioJob) {
+    return Boolean(job.taskId && ["queued", "running", "unknown", "submitting"].includes(job.status)) || (job.status === "succeeded" && job.clips.some(clip => (!clip.storageKey || !clip.assetId) && Boolean(clip.audioUrl || clip.videoUrl || clip.storageKey)));
+}
+
 export async function recoverSunoStudioJobs() {
     const scope = activeScope();
-    const jobs = sunoStudioSnapshot(scope).jobs.filter((job) => job.taskId && ["queued", "running", "unknown", "submitting"].includes(job.status));
+    const jobs = sunoStudioSnapshot(scope).jobs.filter(sunoStudioJobNeedsRecovery);
     for (const job of jobs) {
         if (getActiveUserScope() !== scope) return;
+        if (job.status === "succeeded") {
+            const key = scope + ":" + job.id;
+            const previous = nextMediaRetries.get(key);
+            if ((previous?.after || 0) > Date.now()) continue;
+            const saved = await importCompletedClips(scope, job.id);
+            if (saved) nextMediaRetries.delete(key);
+            else {
+                const failures = (previous?.failures || 0) + 1;
+                nextMediaRetries.set(key, { failures, after: Date.now() + Math.min(5000 * 2 ** Math.min(failures, 4), 60_000) });
+            }
+            continue;
+        }
         if ((nextPolls.get(`${scope}:${job.id}`)?.after || 0) > Date.now()) continue;
         await refreshSunoStudioJob(job.id).catch(() => undefined);
     }
@@ -141,15 +163,18 @@ export async function recoverSunoStudioJobs() {
 
 async function importCompletedClips(scope: string, id: string) {
     const job = jobFor(scope, id);
-    if (job.status !== "succeeded" || getActiveUserScope() !== scope) return;
+    if (job.status !== "succeeded" || getActiveUserScope() !== scope) return false;
+    const errors: string[] = [];
     for (const clip of job.clips) {
         if (getActiveUserScope() !== scope) return;
-        if (clip.assetId || (!clip.audioUrl && !clip.videoUrl && !clip.storageKey)) continue;
+        if (clip.assetId && clip.storageKey || (!clip.audioUrl && !clip.videoUrl && !clip.storageKey)) continue;
         try { await importSunoClip(id, clip.id); }
         catch (error) {
-            await updateSunoStudioJob(scope, id, { syncError: `生成已成功，但本地素材保存失败：${errorMessage(error)}。可重试保存，无需重新生成` });
+            errors.push(errorMessage(error));
         }
     }
+    await updateSunoStudioJob(scope, id, { syncError: errors.length ? `生成已成功，但本地素材保存失败：${errors.join("；")}。可重试保存，无需重新生成` : undefined });
+    return errors.length === 0;
 }
 
 export function importSunoClip(id: string, clipId: string): Promise<void> {
@@ -168,11 +193,13 @@ async function importClip(scope: string, id: string, clipId: string) {
     if (!clip) throw new Error("音乐片段不存在");
     if (clip.storageKey && clip.assetId) return;
     const url = clip.audioUrl || clip.videoUrl;
-    if (!url) throw new Error("该片段尚未返回可下载的媒体地址");
+    if (!url && !clip.storageKey) throw new Error("该片段尚未返回可下载的媒体地址");
     const kind = clip.audioUrl ? "audio" : "video";
-    const resource = clip.storageKey ? await getResource(resourceIdFromStorageKey(clip.storageKey)) : await importResourceFromUrl(url, kind, { durationMs: clip.duration ? Math.round(clip.duration * 1000) : undefined, idempotencyKey: `suno:${scope}:${id}:${clipId}` });
+    const resource = clip.storageKey ? await getResource(resourceIdFromStorageKey(clip.storageKey)) : await retrieveSunoMedia(url!, clipId, kind, { durationMs: clip.duration ? Math.round(clip.duration * 1000) : undefined, idempotencyKey: `suno:${scope}:${id}:${clipId}` });
     const storageKey = resourceStorageKey(resource.id);
-    const base = { id: `suno-${id}-${clipId}`, title: clip.title, coverUrl: clip.imageUrl || "", tags: clip.tags?.split(",").map((tag) => tag.trim()).filter(Boolean) || [], status: "confirmed" as const, source: "Suno", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), metadata: { source: "suno", sunoClipId: clip.id, sunoTaskId: job.taskId, channelId: job.channelId } };
+    if (getActiveUserScope() !== scope) throw new Error("账号已切换，未将素材加入当前资产库");
+    await updateSunoStudioJob(scope, id, { clips: jobFor(scope, id).clips.map(item => item.id === clipId ? { ...item, storageKey } : item) });
+    const base = { id: `suno-${id}-${clipId}`, title: clip.title || "Suno 音乐", coverUrl: clip.imageUrl || "", tags: clip.tags?.split(",").map((tag) => tag.trim()).filter(Boolean) || [], status: "confirmed" as const, source: "Suno", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), metadata: { source: "suno", sunoClipId: clip.id, sunoTaskId: job.taskId, channelId: job.channelId } };
     const data = { url: resourceFileUrl(resource.id), storageKey, durationMs: resource.durationMs || (clip.duration ? Math.round(clip.duration * 1000) : undefined), bytes: resource.size, mimeType: resource.mimeType || (kind === "audio" ? "audio/mpeg" : "video/mp4") };
     const asset: Asset = kind === "audio" ? { ...base, kind: "audio", data } : { ...base, kind: "video", data: { ...data, width: resource.width || 0, height: resource.height || 0 } };
     if (getActiveUserScope() !== scope) throw new Error("账号已切换，未将素材加入当前资产库");
@@ -183,6 +210,15 @@ async function importClip(scope: string, id: string, clipId: string) {
     }
     const latest = jobFor(scope, id);
     await updateSunoStudioJob(scope, id, { clips: latest.clips.map((item) => item.id === clipId ? { ...item, storageKey, assetId: asset.id } : item), syncError: undefined });
+}
+
+export async function ensureSunoClipStorageKey(id: string, clipId: string) {
+    const scope = activeScope();
+    await importSunoClip(id, clipId);
+    if (getActiveUserScope() !== scope) throw new Error("账号已切换，未读取其他工作区歌曲");
+    const storageKey = jobFor(scope, id).clips.find(item => item.id === clipId)?.storageKey;
+    if (!storageKey) throw new Error("歌曲尚未保存到本地，请重新查询原任务");
+    return storageKey;
 }
 
 export async function uploadSunoReference(file: File) {
@@ -207,7 +243,21 @@ export async function downloadSunoClip(id: string, clipId: string) {
     const video = !clip.audioUrl && Boolean(clip.videoUrl);
     const extensions: Record<string, string> = { "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "audio/vnd.wave": "wav", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/flac": "flac", "audio/ogg": "ogg", "audio/aac": "aac", "audio/opus": "opus", "video/mp4": "mp4", "video/webm": "webm" };
     const extension = extensions[resource.mimeType?.split(";", 1)[0]?.trim().toLowerCase()] || (video ? "mp4" : "mp3");
-    await downloadOwnedOrBrowserMedia({ fileName: `${clip.title || "Suno"}.${extension}`, resourceId, browserUrl: isWailsNativeShell() ? undefined : await resolveMediaUrl(clip.storageKey) });
+    const fileName = `${clip.title || "Suno"}.${extension}`;
+    let nativeError: unknown;
+    if (isWailsNativeShell()) {
+        try {
+            return await downloadOwnedOrBrowserMedia({ fileName, resourceId });
+        } catch (cause) {
+            nativeError = cause;
+        }
+    }
+    if (getActiveUserScope() !== scope) throw new Error("账号已切换，未导出其他工作区的音频");
+    if (!clip.storageKey) throw new Error("音频已取回，但缺少本地资源引用");
+    const blob = await getResourceBlob(clip.storageKey);
+    if (getActiveUserScope() !== scope) throw new Error("账号已切换，未导出其他工作区的音频");
+    if (!blob?.size) throw new Error(`音频已取回，但下载读取失败：${nativeError ? errorMessage(nativeError) : "本地音频文件暂不可读，请重试"}`);
+    return saveOwnedOrBrowserBlob(fileName, blob);
 }
 
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "请求未完成"; }

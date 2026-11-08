@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/characterlooks"
 	"strings"
 	"time"
 
@@ -312,11 +313,78 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 	}
 	now := time.Now()
 	assetID := strings.TrimSpace(req.AssetID)
+	reuseCharacter := false
+	if assetID == "" && candidate.Category == model.AssetCategoryCharacter {
+		assets, assetErr := s.repo.ProjectAssets(userID, projectID)
+		if assetErr != nil {
+			return AssetSummary{}, assetErr
+		}
+		var incoming map[string]any
+		if json.Unmarshal([]byte(candidate.DetailsJSON), &incoming) != nil {
+			return AssetSummary{}, kernel.BadAuthRequest("角色候选设定格式无效")
+		}
+		confirmedCandidates, candidateErr := s.repo.ProjectAssetCandidates(projectID)
+		if candidateErr != nil {
+			return AssetSummary{}, candidateErr
+		}
+		matches, matchErr := s.matchingProjectCharactersWithCandidates(assets, confirmedCandidates, candidate.Name, incoming)
+		if matchErr != nil {
+			return AssetSummary{}, matchErr
+		}
+		matches = confirmedChapterCharacterTarget(matches, confirmedCandidates, candidate.UnitID, candidate.Name)
+		if len(matches) > 1 {
+			return AssetSummary{}, kernel.BadAuthRequest("项目中已有多个同名角色，请使用归并到角色选择目标，不能再次新建同名角色")
+		}
+		if len(matches) == 1 {
+			assetID = matches[0].ID
+			unit, unitErr := s.repo.ProjectUnit(projectID, candidate.UnitID)
+			if unitErr != nil {
+				return AssetSummary{}, unitErr
+			}
+			changed, hasChange, changeErr := provenCharacterLookChanges(incoming, unit.SourceText)
+			if changeErr != nil {
+				return AssetSummary{}, kernel.BadAuthRequest(changeErr.Error())
+			}
+			reuseCharacter = !hasChange
+			if hasChange {
+				delete(changed, "_characterMatch")
+				encoded, encodeErr := json.Marshal(changed)
+				if encodeErr != nil {
+					return AssetSummary{}, encodeErr
+				}
+				candidate.DetailsJSON = string(encoded)
+			}
+		}
+	}
+	if reuseCharacter {
+		return s.confirmReusedCharacterCandidate(userID, projectID, candidate, assetID)
+	}
 	if assetID != "" && candidate.Category == model.AssetCategoryCharacter {
 		asset, assetErr := s.repo.ProjectCharacterAsset(userID, projectID, assetID)
 		if assetErr != nil {
 			return AssetSummary{}, assetErr
 		}
+		unit, unitErr := s.repo.ProjectUnit(projectID, candidate.UnitID)
+		if unitErr != nil {
+			return AssetSummary{}, unitErr
+		}
+		var candidateDefinition map[string]any
+		if json.Unmarshal([]byte(candidate.DetailsJSON), &candidateDefinition) != nil {
+			return AssetSummary{}, kernel.BadAuthRequest("角色候选设定格式无效")
+		}
+		changed, hasChange, changeErr := provenCharacterLookChanges(candidateDefinition, unit.SourceText)
+		if changeErr != nil {
+			return AssetSummary{}, kernel.BadAuthRequest(changeErr.Error())
+		}
+		if !hasChange {
+			return s.confirmReusedCharacterCandidate(userID, projectID, candidate, asset.ID)
+		}
+		delete(changed, "_characterMatch")
+		encoded, encodeErr := json.Marshal(changed)
+		if encodeErr != nil {
+			return AssetSummary{}, encodeErr
+		}
+		candidate.DetailsJSON = string(encoded)
 		current, versionErr := s.repo.AssetVersion(asset.PrimaryVersionID)
 		if versionErr != nil {
 			return AssetSummary{}, versionErr
@@ -330,10 +398,51 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 		if prepareErr != nil {
 			return AssetSummary{}, prepareErr
 		}
+		var merged, incoming map[string]any
+		_ = json.Unmarshal([]byte(definition), &merged)
+		_ = json.Unmarshal([]byte(candidate.DetailsJSON), &incoming)
+		versions, lookErr := s.repo.AssetVersions(asset.ID)
+		if lookErr != nil {
+			return AssetSummary{}, lookErr
+		}
+		known := characterLookKeys{}
+		for _, v := range versions {
+			if v.Status == model.AssetVersionStatusArchived {
+				continue
+			}
+			var d map[string]any
+			if json.Unmarshal([]byte(v.DefinitionJSON), &d) == nil {
+				addCharacterLookKeys(known, []string{asset.ID}, d)
+			}
+		}
+		fresh, hasNew, lookErr := newCharacterCandidateLooks(incoming, []string{asset.ID}, known)
+		if lookErr != nil {
+			return AssetSummary{}, lookErr
+		}
+		if !hasNew {
+			return s.confirmReusedCharacterCandidate(userID, projectID, candidate, asset.ID)
+		}
+		looks, lookErr := characterlooks.Extract(fresh)
+		if lookErr != nil {
+			return AssetSummary{}, lookErr
+		}
+		merged["looks"] = looks
+		lookSource, _ := json.Marshal(merged)
+		extra, lookErr := isolatedCharacterLookVersions(&nextVersion, string(lookSource))
+		if lookErr != nil {
+			return AssetSummary{}, lookErr
+		}
+		if nextVersion.ReferenceProfileJSON != "" {
+			representations = nil
+			nextAsset.PayloadJSON, lookErr = characterAssetPayload(asset.ID, nextVersion.ID, asset.Title, json.RawMessage(nextVersion.DefinitionJSON), asset.CreatedAt, now)
+			if lookErr != nil {
+				return AssetSummary{}, lookErr
+			}
+		}
 		candidate.Status = "confirmed"
 		candidate.ResolvedAssetID = asset.ID
 		candidate.UpdatedAt = now
-		if saveErr := s.repo.ConfirmProjectCharacterCandidateActive(userID, candidate, expectedPrimary, &nextAsset, &nextVersion, representations, voice); saveErr != nil {
+		if saveErr := s.repo.ConfirmProjectCharacterCandidateActive(userID, candidate, expectedPrimary, &nextAsset, &nextVersion, representations, voice, extra...); saveErr != nil {
 			return AssetSummary{}, mapProjectWriteError(saveErr)
 		}
 		return s.assetSummary(userID, projectID, &nextAsset)
@@ -341,6 +450,7 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 	createAsset := assetID == ""
 	var asset model.Asset
 	var version model.AssetVersion
+	var extraLooks []model.AssetVersion
 	if createAsset {
 		assetID = kernel.NewID()
 		versionID := kernel.NewID()
@@ -364,6 +474,16 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 		}
 		asset = model.Asset{ID: assetID, UserID: userID, Kind: kind, Category: candidate.Category, Status: model.AssetVersionStatusConfirmed, PrimaryVersionID: versionID, Title: candidate.Name, PayloadJSON: string(payload), CreatedAt: now, UpdatedAt: now}
 		version = model.AssetVersion{ID: versionID, AssetID: assetID, Version: 1, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: candidate.DetailsJSON, CreatedAt: now, UpdatedAt: now}
+		if candidate.Category == model.AssetCategoryCharacter {
+			extraLooks, err = isolatedCharacterLookVersions(&version, candidate.DetailsJSON)
+			if err != nil {
+				return AssetSummary{}, err
+			}
+			asset.PayloadJSON, err = characterAssetPayload(assetID, versionID, candidate.Name, json.RawMessage(version.DefinitionJSON), now, now)
+			if err != nil {
+				return AssetSummary{}, err
+			}
+		}
 	} else {
 		existing, assetErr := s.repo.AssetForUser(userID, assetID)
 		if assetErr != nil {
@@ -383,7 +503,7 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 		return AssetSummary{}, positionErr
 	}
 	link := model.ProjectAssetLink{ID: kernel.NewID(), ProjectID: projectID, AssetID: assetID, FolderID: folderID, Position: position, CreatedAt: now}
-	if err := s.repo.ConfirmProjectAssetCandidateActive(userID, candidate, &asset, &version, &link, createAsset); err != nil {
+	if err := s.repo.ConfirmProjectAssetCandidateActive(userID, candidate, &asset, &version, &link, createAsset, extraLooks...); err != nil {
 		return AssetSummary{}, mapProjectWriteError(err)
 	}
 	return s.assetSummary(userID, projectID, &asset)
@@ -399,7 +519,7 @@ func mergeCharacterCandidateDefinition(currentJSON string, candidateJSON string,
 		return "", kernel.BadAuthRequest("角色候选设定格式无效")
 	}
 	for key, value := range candidate {
-		if key == "aliases" || !emptyCharacterDefinitionValue(current[key]) {
+		if key == "aliases" || key == "_characterMatch" || !emptyCharacterDefinitionValue(current[key]) {
 			continue
 		}
 		current[key] = value
@@ -486,6 +606,7 @@ func (s *Service) assetSummary(userID string, projectID string, asset *model.Ass
 		}
 	}
 	if asset.Category == model.AssetCategoryCharacter && asset.PrimaryVersionID != "" {
+		summary.CharacterLookCount = countCharacterLooks(versions)
 		card, cardErr := s.characterCard(userID, asset)
 		if cardErr != nil {
 			return AssetSummary{}, cardErr

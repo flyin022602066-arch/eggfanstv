@@ -137,17 +137,18 @@ type Summary struct {
 }
 
 type ClientContext struct {
-	NodeID           string `json:"nodeId,omitempty"`
-	Source           string `json:"source,omitempty"`
-	SceneID          string `json:"sceneId,omitempty"`
-	ConversationID   string `json:"conversationId,omitempty"`
-	MessageID        string `json:"messageId,omitempty"`
-	BatchIndex       int    `json:"batchIndex,omitempty"`
-	BatchCount       int    `json:"batchCount,omitempty"`
-	DomainProjectID  string `json:"domainProjectId,omitempty"`
-	ChapterID        string `json:"chapterId,omitempty"`
-	ChapterOperation string `json:"chapterOperation,omitempty"`
-	ShotID           string `json:"shotId,omitempty"`
-	WorkflowStepID   string `json:"workflowStepId,omitempty"`
-	ArtifactType     string `json:"artifactType,omitempty"`
+	NodeID             string `json:"nodeId,omitempty"`
+	CharacterVersionID string `json:"characterVersionId,omitempty"`
+	Source             string `json:"source,omitempty"`
+	SceneID            string `json:"sceneId,omitempty"`
+	ConversationID     string `json:"conversationId,omitempty"`
+	MessageID          string `json:"messageId,omitempty"`
+	BatchIndex         int    `json:"batchIndex,omitempty"`
+	BatchCount         int    `json:"batchCount,omitempty"`
+	DomainProjectID    string `json:"domainProjectId,omitempty"`
+	ChapterID          string `json:"chapterId,omitempty"`
+	ChapterOperation   string `json:"chapterOperation,omitempty"`
+	ShotID             string `json:"shotId,omitempty"`
+	WorkflowStepID     string `json:"workflowStepId,omitempty"`
+	ArtifactType       string `json:"artifactType,omitempty"`
 }

@@ -6728,8 +6728,8 @@ html:not(.dark) .creation-studio-control:hover,
     .assets-library-page .assets-library-grid { align-items: stretch; }
     .assets-library-page .assets-library-grid { gap: var(--space-5) var(--space-4); }
     .assets-library-page .assets-library-grid > .asset-library-card, .assets-library-page .assets-library-grid > .library-create-card { height: 100%; }
-    .assets-library-page .assets-library-grid > .asset-library-card { display: flex; flex-direction: column; }
-    .assets-library-page .assets-library-grid > .asset-library-card > button:last-child { flex: 1 1 auto; }
+    .assets-library-page .assets-library-grid:not(.is-list-view) > .asset-library-card { display: flex; flex-direction: column; }
+    .assets-library-page .assets-library-grid:not(.is-list-view) > .asset-library-card > button:last-child { flex: 1 1 auto; }
     .assets-library-page .asset-library-card > .library-card-media, .assets-library-page .library-create-cover { aspect-ratio: 4 / 3; flex: 0 0 auto; }
     .assets-library-page .asset-library-card > .library-card-media > button:first-child { height: 100%; }
     .assets-library-page .asset-library-card > .library-card-media > button:first-child > :where(img, video, .cached-resource-image-shell) { height: 100%; aspect-ratio: auto; }
@@ -16138,7 +16138,8 @@ button.ant-btn-primary:not(.ant-btn-dangerous):not(.ant-btn-background-ghost):no
 .assets-library-page .assets-collection-filters .collection-filter-group + .collection-filter-group {
     margin-top: 14px;
 }
-.assets-library-page .assets-library-grid {
+.assets-library-page .assets-library-grid:not(.is-list-view) {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
     gap: 16px 14px;
 }
 .assets-view-toggle {
@@ -16166,12 +16167,15 @@ button.ant-btn-primary:not(.ant-btn-dangerous):not(.ant-btn-background-ghost):no
 .assets-view-toggle button.is-active { background: color-mix(in srgb, var(--workspace-accent) 14%, transparent); color: var(--foreground); }
 .assets-sort-control { display: inline-flex; min-width: 0; align-items: center; gap: 6px; color: color-mix(in srgb, var(--foreground) 50%, transparent); font-size: var(--fs-label); }
 .assets-sort-control .ant-select { min-width: 116px; }
-.assets-library-page .assets-library-grid.is-list-view { grid-template-columns: 1fr; gap: 10px; }
-.assets-library-page .assets-library-grid.is-list-view .asset-library-card { display: grid; grid-template-columns: 176px minmax(0, 1fr); min-height: 118px; }
-.assets-library-page .assets-library-grid.is-list-view .asset-library-card > .library-card-media { aspect-ratio: 16 / 10; border-radius: 13px 0 0 13px; }
-.assets-library-page .assets-library-grid.is-list-view .asset-collection-body { align-self: stretch; padding: 14px 16px; }
+.assets-library-page .assets-library-grid.is-list-view { grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 10px; }
+.assets-library-page .assets-library-grid.is-list-view > .asset-library-card { display: grid; grid-template-columns: 128px minmax(0, 1fr); min-height: 96px; height: auto; }
+.assets-library-page .assets-library-grid.is-list-view .asset-library-card > .library-card-media { height: 96px; min-height: 0; aspect-ratio: auto; border-radius: 13px 0 0 13px; }
+.assets-library-page .assets-library-grid.is-list-view .asset-collection-body { min-width: 0; align-self: stretch; padding: 10px 14px; text-align: left; }
+.assets-library-page .assets-library-grid.is-list-view .asset-card-meta { justify-items: start; }
+.assets-library-page .assets-library-grid.is-list-view .asset-card-meta h2 { text-align: left; }
+.assets-library-page .assets-library-grid.is-list-view .asset-collection-source { justify-content: flex-start; }
 @media (max-width: 560px) {
-    .assets-library-page .assets-library-grid.is-list-view .asset-library-card { grid-template-columns: 112px minmax(0, 1fr); }
+    .assets-library-page .assets-library-grid.is-list-view > .asset-library-card { grid-template-columns: 104px minmax(0, 1fr); }
     .assets-library-page .assets-library-grid.is-list-view .asset-collection-body { padding: 11px 12px; }
 }
 .assets-library-page .asset-library-card {
@@ -16235,8 +16239,8 @@ button.ant-btn-primary:not(.ant-btn-dangerous):not(.ant-btn-background-ghost):no
     }
     .assets-kind-tabs { margin-inline: -2px; }
 }
-.assets-header-actions { display: flex; max-width: 100%; flex-direction: column; align-items: flex-end; gap: 8px; }
-.assets-header-action-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.assets-header-actions { display: flex; min-width: 0; width: 100%; max-width: 100%; flex-direction: column; align-items: flex-end; gap: 8px; }
+.assets-header-action-buttons { display: flex; min-width: 0; max-width: 100%; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .assets-header-actions .assets-storage-usage { justify-content: flex-end; }
 .assets-storage-usage {
     display: flex;
@@ -16657,11 +16661,8 @@ button.ant-btn-primary:not(.ant-btn-dangerous):not(.ant-btn-background-ghost):no
     -webkit-backdrop-filter: blur(12px);
 }
 
-/* 3. 素材网格以 6 列为桌面基准；首格是新增素材，因此每页 35 项时正好组成 6×6 完整网格。 */
-.assets-library-page .assets-library-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, max(180px, calc(100% / var(--assets-grid-columns, 6) - 14px))), 1fr)); gap: 18px 14px; }
 .assets-library-page .library-create-title { margin-top: 12px; font-size: var(--fs-body); }
 .assets-library-page .library-create-meta { margin-top: 4px; font-size: var(--fs-label); }
-@media (max-width: 899px) and (min-width: 640px) { .assets-library-page .assets-library-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); } }
 
 /* 4. 封面浮层统一：窄屏隐藏分类徽章；浅底封面（文本/音频/模型）改用自适应玻璃浮层 */
 @media (max-width: 1100px) { .assets-cover-badge.is-category { display: none; } }

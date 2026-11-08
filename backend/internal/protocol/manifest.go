@@ -600,11 +600,11 @@ func (a manifestAdapter) parse(payload map[string]any, c PollContext) CreateResu
 		status = StatusFailed
 	}
 	result := &Result{
-		Text:      manifestResponseString(response.Text, env),
+		Text:      manifestResponseText(response.Text, env),
 		Reasoning: manifestResponseString(response.Reasoning, env),
 	}
 	if result.Text == "" {
-		result.Text = firstPathValue(payload, response.TextPaths...)
+		result.Text = firstTextPathValue(payload, response.TextPaths...)
 	}
 	if result.Reasoning == "" {
 		result.Reasoning = firstPathValue(payload, response.ReasoningPaths...)
@@ -671,6 +671,10 @@ func validateManifestRequest(rules []ManifestValidation, request GenerationReque
 }
 
 func manifestResponseString(template any, env map[string]any) string {
+	return strings.TrimSpace(manifestResponseText(template, env))
+}
+
+func manifestResponseText(template any, env map[string]any) string {
 	if template == nil {
 		return ""
 	}
@@ -681,7 +685,7 @@ func manifestResponseString(template any, env map[string]any) string {
 	items := manifestArray(value)
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
-		if text := strings.TrimSpace(manifestString(item)); text != "" {
+		if text := manifestString(item); text != "" {
 			parts = append(parts, text)
 		}
 	}
@@ -1327,10 +1331,14 @@ func arrayValue(value any) []any {
 }
 
 func firstPathValue(payload map[string]any, paths ...string) string {
+	return strings.TrimSpace(firstTextPathValue(payload, paths...))
+}
+
+func firstTextPathValue(payload map[string]any, paths ...string) string {
 	for _, path := range paths {
 		value := pathValue(payload, path)
 		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
-			return strings.TrimSpace(text)
+			return text
 		}
 	}
 	return ""

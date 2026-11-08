@@ -32,8 +32,10 @@ import { usePluginStore } from "@/stores/use-plugin-store";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
 import { isEggfansSeedanceProtocol, normalizeEggfansReferenceMode } from "@/lib/eggfans-seedance";
 import { isJiasuSdModel } from "@/lib/jiasu-face-mask";
-import { isEggfansSd2DModel, normalizeSd2FaceMaskMode } from "@/lib/eggfans-sd2-face-mask";
+import { isEggfansSd2DModel, isTowoSd25Model, normalizeSd2FaceMaskMode } from "@/lib/eggfans-sd2-face-mask";
 import { CanvasJiasuFaceMask } from "./canvas-jiasu-face-mask";
+import { CanvasReferenceTemplateModal } from './canvas-reference-template-modal';
+import { REFERENCE_TEMPLATE_LABELS, type CanvasReferenceTemplate } from '@/lib/canvas/canvas-reference-templates';
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -44,6 +46,8 @@ type CanvasNodePromptPanelProps = {
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onApplyReferenceTemplate?: (nodeId: string, template: CanvasReferenceTemplate, signal: AbortSignal) => Promise<void>;
+    onRemoveReferenceTemplate?: (nodeId: string, kind: CanvasReferenceTemplate['kind']) => void;
     mentionReferences?: CanvasResourceReference[];
     onAddReference?: (nodeId: string, reference: CanvasResourceReference) => CanvasResourceReference | undefined;
     onRemoveReference?: (nodeId: string, reference: CanvasResourceReference) => void;
@@ -72,7 +76,7 @@ const PROMPT_EDITOR_MODAL_WIDTH = "min(1200px, 92vw)";
 const PROMPT_EDITOR_MODAL_DEFAULT_WIDTH = 1200;
 const PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT = 420;
 
-export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, onApplyReferenceTemplate, onRemoveReferenceTemplate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const themeName = useActiveTheme();
@@ -87,6 +91,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const savedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
     const [prompt, setPrompt] = useState(savedPrompt);
     const [presetOpen, setPresetOpen] = useState(false);
+    const [referenceTemplateOpen, setReferenceTemplateOpen] = useState(false);
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [expandedPromptOpen, setExpandedPromptOpen] = useState(false);
     const [expandedModalSize, setExpandedModalSize] = useState<{ width: number; height: number } | null>(null);
@@ -182,6 +187,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     }, [node.id, normalizedSavedPrompt, onPromptChange, savedPrompt]);
 
     useEffect(() => {
+        setReferenceTemplateOpen(false);
         setExpandedPromptOpen(false);
         setExpandedPresetOpen(false);
         setExpandedModalSize(null);
@@ -454,7 +460,8 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                     if (key === "videoJiasuFaceMode") updateConfig("videoJiasuFaceMode", value);
                                     if (key === "videoJiasuFaceMask") updateConfig("videoJiasuFaceMask", value);
                                     if (key === "videoSd2FaceMask") updateConfig("videoSd2FaceMask", value);
-                                    onConfigChange(node.id, videoConfigPatch(key, value));
+                                    const protocol = resolveModelRequestConfig(config, config.model).interfaceType;
+                                    onConfigChange(node.id, videoConfigPatch(key, value, protocol));
                                 }}
                             />
                         </>
@@ -514,6 +521,13 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         );
     };
 
+    const renderReferenceTemplates = () => mode === 'image' && onApplyReferenceTemplate ? (
+        <div className="mb-1 flex flex-wrap items-center gap-1 text-[var(--fs-tiny)]">
+            <button type="button" className="canvas-node-composer-header-action inline-flex h-6 items-center rounded-md border border-border px-1.5" disabled={isRunning} onClick={() => setReferenceTemplateOpen(true)} aria-label="打开参考模板库">参考模板</button>
+            {node.metadata?.referenceTemplates?.map(binding => <span key={binding.kind} className="inline-flex max-w-full items-center gap-1 rounded-md border border-border px-1.5 py-1"><span className="truncate">{REFERENCE_TEMPLATE_LABELS[binding.kind]}：{binding.title}</span><button type="button" aria-label={`移除${REFERENCE_TEMPLATE_LABELS[binding.kind]}模板`} disabled={isRunning} onClick={() => onRemoveReferenceTemplate?.(node.id, binding.kind)} className="px-1">×</button></span>)}
+        </div>
+    ) : null;
+
     const renderVideoToolStrip = () => {
         if (mode === "audio") {
             return (
@@ -533,6 +547,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         if (mode !== "video") return null;
         if (isEggfansSd2DModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model)) return <div className="canvas-node-video-tool-strip">
             <CanvasJiasuFaceMask key={`${node.id}:sd2`} channelLabel="Eggfans SD2 D" references={resolvedMentionReferences} mode={normalizeSd2FaceMaskMode(config.videoSd2FaceMask)} overrides={node.metadata?.sd2FaceMasks} theme={theme} disabled={isRunning} onModeChange={(value) => { updateConfig("videoSd2FaceMask", value); onConfigChange(node.id, { sd2FaceMask: value }); }} onSave={(sd2FaceMasks) => onConfigChange(node.id, { sd2FaceMasks })} />
+        </div>;
+        if (isTowoSd25Model(resolveModelRequestConfig(config, config.model).interfaceType, config.model)) return <div className="canvas-node-video-tool-strip">
+            <CanvasJiasuFaceMask key={`${node.id}:towo`} channelLabel="Towo SD2.5" references={resolvedMentionReferences} mode={normalizeSd2FaceMaskMode(config.videoSd2FaceMask)} overrides={node.metadata?.towoFaceMasks} theme={theme} disabled={isRunning} onModeChange={(value) => { updateConfig("videoSd2FaceMask", value); onConfigChange(node.id, { towoFaceMask: value }); }} onSave={(towoFaceMasks) => onConfigChange(node.id, { towoFaceMasks })} />
         </div>;
         if (isJiasuSdModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model)) return <div className="canvas-node-video-tool-strip">
             <CanvasJiasuFaceMask key={`${node.id}:jiasu`} references={resolvedMentionReferences} mode={config.videoJiasuFaceMask} overrides={node.metadata?.jiasuFaceMasks} theme={theme} disabled={isRunning} onModeChange={(value) => { updateConfig("videoJiasuFaceMask", value); onConfigChange(node.id, { jiasuFaceMask: value }); }} onSave={(jiasuFaceMasks) => onConfigChange(node.id, { jiasuFaceMasks })} />
@@ -562,6 +579,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 onWheel={(event) => event.stopPropagation()}
             >
             {renderComposerHeader(false)}
+            {renderReferenceTemplates()}
 
             {renderVideoToolStrip()}
 
@@ -613,6 +631,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 <div ref={expandedModalRef} className="relative flex min-h-0 flex-col" style={{ ...composerTokens, color: theme.node.text, maxHeight: `calc(100dvh - ${PROMPT_EDITOR_VIEWPORT_MARGIN}px)`, ...(expandedModalSize ? { height: expandedModalSize.height } : null) }}>
                     <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
                         <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
+                        {renderReferenceTemplates()}
                         {renderPromptEditor(true, Boolean(expandedModalSize))}
                         {hasVideoPromptTools ? (
                             <div className="canvas-node-composer-parameters shrink-0">
@@ -624,6 +643,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     <PromptModalResizeHandle size={expandedModalSize} measure={measureExpandedModalSize} onResize={setExpandedModalSize} accent={theme.node.muted} />
                 </div>
             </Modal>
+            {onApplyReferenceTemplate ? <CanvasReferenceTemplateModal open={referenceTemplateOpen} targetKey={`${projectId}:${node.id}`} onClose={() => setReferenceTemplateOpen(false)} onApply={(template, signal) => onApplyReferenceTemplate(node.id, template, signal)} /> : null}
 
             </div>
         </CanvasPromptOptimizerDrawer>
@@ -1086,6 +1106,9 @@ export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mo
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const preferredModel = resolveCanvasGenerationModel(globalConfig, node.metadata?.model, mode) || resolveCanvasGenerationModel(globalConfig, defaultModel, mode) || fallbackModel;
     const model = resolveCompatibleModel(globalConfig, preferredModel, mode === "image" ? { ...requirements, imageSize: node.metadata?.size || globalConfig.size || defaultConfig.size } : requirements) || preferredModel;
+    const activeModel = globalConfig.model || globalConfig.videoModel || model;
+    const selectedProtocol = resolveModelRequestConfig(globalConfig, activeModel).interfaceType;
+    const localFaceMask = isTowoSd25Model(selectedProtocol, activeModel) ? node.metadata?.towoFaceMask : isEggfansSd2DModel(selectedProtocol, activeModel) ? node.metadata?.sd2FaceMask : undefined;
     const defaults = resolveModelGenerationDefaults(
         globalConfig,
         model,
@@ -1131,7 +1154,7 @@ export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mo
         videoNativeFace: mode === "video" ? (node.metadata?.nativeFace ?? globalConfig.videoNativeFace ?? defaultConfig.videoNativeFace) === "true" ? "true" : "false" : globalConfig.videoNativeFace,
         videoJiasuFaceMode: mode === "video" ? node.metadata?.jiasuFaceMode ?? globalConfig.videoJiasuFaceMode ?? defaultConfig.videoJiasuFaceMode : globalConfig.videoJiasuFaceMode,
         videoJiasuFaceMask: mode === "video" ? node.metadata?.jiasuFaceMask ?? globalConfig.videoJiasuFaceMask ?? defaultConfig.videoJiasuFaceMask : globalConfig.videoJiasuFaceMask,
-        videoSd2FaceMask: mode === "video" ? normalizeSd2FaceMaskMode(node.metadata?.sd2FaceMask ?? globalConfig.videoSd2FaceMask) : globalConfig.videoSd2FaceMask,
+        videoSd2FaceMask: mode === "video" ? normalizeSd2FaceMaskMode(localFaceMask ?? globalConfig.videoSd2FaceMask) : globalConfig.videoSd2FaceMask,
         ...resolveAudioSpeechSettings(model, {
             audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice,
             audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat,
@@ -1152,7 +1175,7 @@ function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: bool
     return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";
 }
 
-function videoConfigPatch(key: keyof AiConfig, value: string) {
+function videoConfigPatch(key: keyof AiConfig, value: string, protocol?: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };
@@ -1161,7 +1184,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoNativeFace") return { nativeFace: value === "true" ? "true" : "false" };
     if (key === "videoJiasuFaceMode") return { jiasuFaceMode: value };
     if (key === "videoJiasuFaceMask") return { jiasuFaceMask: value };
-    if (key === "videoSd2FaceMask") return { sd2FaceMask: value };
+    if (key === "videoSd2FaceMask") return protocol === "towo-sd25-video" ? { towoFaceMask: value } : { sd2FaceMask: value };
     return { [key]: value };
 }
 

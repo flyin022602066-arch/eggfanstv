@@ -2,6 +2,22 @@ import { expect, test } from "bun:test";
 import fixtures from "../../fixtures/moderation-errors.json";
 import { explainGenerationError, generationFailureMetadata, shouldBlockAutomaticRetry } from "../src/lib/generation-error";
 
+test("text finish_reason rejection preserves upstream evidence and survives persistence", () => {
+    const input = {
+        error: { code: "content_filter", message: "The upstream stopped the output with finish_reason content_filter.", param: "finish_reason" },
+        request_id: "req_asset_filter_123",
+    };
+    const first = explainGenerationError(input);
+    for (const failure of [first, explainGenerationError(first.message), explainGenerationError(generationFailureMetadata(input, "private chapter text").errorDetails)]) {
+        expect(failure.category).toBe("moderation_output");
+        expect(failure.message).toContain("上游文本模型以 content_filter 结束输出");
+        expect(failure.requestId).toBe("req_asset_filter_123");
+        expect(failure.retryable).toBe(false);
+    }
+    expect(first.providerCode).toBe("content_filter");
+    expect(explainGenerationError({ error: { code: "invalid_api_key", message: input.error.message } }).category).toBe("auth");
+});
+
 for (const fixture of fixtures) {
     test(`moderation raw, wrapped, message-only and persisted: ${fixture.code}`, () => {
         const requestId = "req_moderation_123";

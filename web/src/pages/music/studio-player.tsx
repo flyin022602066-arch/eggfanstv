@@ -43,8 +43,9 @@ function TrackPlayer({ track, playIntent, busy, canApplyRange, onSource, onImpor
     const playSequence = useRef(0);
     const pendingPlay = useRef(0);
     const hasAudio = Boolean(track.clip.audioUrl || (track.clip.storageKey && !track.clip.videoUrl));
-    const media = useStudioMedia(hasAudio ? track.clip.storageKey : undefined, track.clip.audioUrl);
-    const video = useStudioMedia(!hasAudio ? track.clip.storageKey : undefined, track.clip.videoUrl);
+    const source = track.job ? { jobId: track.job.id, clipId: track.clip.id } : undefined;
+    const media = useStudioMedia(hasAudio ? track.clip.storageKey : undefined, track.clip.audioUrl, hasAudio ? source : undefined);
+    const video = useStudioMedia(!hasAudio ? track.clip.storageKey : undefined, track.clip.videoUrl, !hasAudio ? source : undefined);
     const url = media.url;
     const imageUrl = playableUrl(track.clip.imageUrl);
     const videoUrl = playableUrl(track.clip.videoUrl);

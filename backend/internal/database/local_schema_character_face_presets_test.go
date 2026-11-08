@@ -48,7 +48,7 @@ func TestCharacterFacePresetsMigrationUpgradesV16WithoutChangingProjectData(t *t
 		t.Fatal(err)
 	}
 	after, err := listSchemaMigrations(db)
-	if err != nil || len(after) != len(before)+1 || after[len(after)-1].Name != "project-character-face-presets" {
+	if err != nil || len(after) != len(before)+int(CurrentSchemaVersion-16) || after[len(before)].Name != "project-character-face-presets" {
 		t.Fatalf("migration ledger: %+v, %v", after, err)
 	}
 	presets := `{"male":{"resourceId":"face-resource","assetIds":["lead"]}}`

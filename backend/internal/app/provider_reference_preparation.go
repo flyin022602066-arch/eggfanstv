@@ -55,6 +55,15 @@ func (s *Service) noteVideoReferencePreparation(ctx context.Context, stage strin
 
 type appReferencePreparationPort struct{ service *Service }
 
+func requiresCustomPublicMediaPreparation(interfaceType string) bool {
+	switch strings.TrimSpace(interfaceType) {
+	case "jiasu-video", "eggfans-sd2-video", "towo-sd25-video":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) bindCustomGenerationReferences(ctx context.Context) context.Context {
 	runtime, _ := generation.RuntimeFromContext(ctx)
 	runtime.References = appReferencePreparationPort{service: s}
@@ -77,7 +86,7 @@ func (p appReferencePreparationPort) Prepare(ctx context.Context, userID string,
 
 func (p appReferencePreparationPort) CompressJiasu(ctx context.Context, userID string, input *generation.Input) (bool, error) {
 	if p.service == nil {
-		return false, errors.New("佳速参考素材压缩端口未接入")
+		return false, errors.New("极途 Gway 参考素材压缩端口未接入")
 	}
 	return p.service.prepareJiasuVideoReferenceImages(ctx, userID, input, true)
 }

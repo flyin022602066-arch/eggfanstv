@@ -3,6 +3,7 @@ import { configuredModelMatchesCapability, selectableModelsByCapability, type Ai
 import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { ProjectAssetImageCategory, ProjectAssetImagePreset } from "@/lib/project-asset-image-preferences";
+import { systemInterfaceIdentity, systemInterfaceTemplatePrompt } from "@/lib/chapter-system-interface";
 
 export function projectAssetImageModel(config: AiConfig, projectDefault?: string) {
     return [projectDefault, config.imageModel, ...selectableModelsByCapability(config, "image")].find((model) => model && configuredModelMatchesCapability(config, model, "image")) || "";
@@ -15,8 +16,14 @@ export function projectAssetImagePrompt(asset: ProjectAsset) {
         try { description = JSON.stringify(JSON.parse(asset.definitionJson), null, 2); }
         catch { description = asset.definitionJson; }
     }
+    if (asset.category === "prop" && systemInterfaceIdentity(asset.title)) return systemInterfaceTemplatePrompt(asset.title, description.replace(/\\n/gu, "\n"));
     const purpose = asset.category === "environment" ? "生成供后续分镜复用的场景设定图，清晰呈现空间布局、建筑、材质、光线和环境细节，不添加人物。" : "生成供后续分镜复用的道具设定图，主体完整清晰，突出形状、材质、颜色与结构，背景简洁。";
     return `${purpose}\n资产名称：${asset.title}\n原始设定：\n${description || asset.title}`;
+}
+
+export function resolveProjectAssetImagePrompt(defaultPrompt: string, editedPrompt: string, extraPrompt = "") {
+    const basePrompt = editedPrompt.trim() || defaultPrompt.trim();
+    return [basePrompt, extraPrompt.trim()].filter(Boolean).join("\n\n");
 }
 
 export function canGenerateProjectAssetImage(asset: ProjectAsset) {
@@ -53,7 +60,7 @@ export function projectAssetHasImage(asset: ProjectAsset) {
 
 export function planProjectAssetImageBatch(assets: ProjectAsset[], category: ProjectAssetImageCategory, activeIds: Set<string>, missingOnly: boolean) {
     const candidates = assets.filter((asset) => projectAssetImageCategory(asset) === category && (asset.character ? Boolean(asset.character.versionId) : canGenerateProjectAssetImage(asset)));
-    const eligible = [...new Map(candidates.map((asset) => [asset.id, asset])).values()];
+    const eligible = [...new Map(candidates.map((asset) => [asset.character ? `${asset.id}:${asset.character.versionId}` : asset.id, asset])).values()];
     return {
         assets: eligible.filter((asset) => !activeIds.has(asset.id) && (!missingOnly || !projectAssetHasImage(asset))),
         activeCount: eligible.filter((asset) => activeIds.has(asset.id)).length,

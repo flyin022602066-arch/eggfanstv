@@ -8,16 +8,17 @@ type ExpandableSearchProps = {
     onChange: (value: string) => void;
     placeholder: string;
     className?: string;
+    collapseOnBlur?: boolean;
 };
 
-export function ExpandableSearch({ value, onChange, placeholder, className }: ExpandableSearchProps) {
+export function ExpandableSearch({ value, onChange, placeholder, className, collapseOnBlur = true }: ExpandableSearchProps) {
     const [expanded, setExpanded] = useState(false);
 
     return (
         <div
             className={cn("workspace-expandable-search", className)}
             onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
+                if (collapseOnBlur && !event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
             }}
         >
             {expanded ? (
@@ -30,6 +31,12 @@ export function ExpandableSearch({ value, onChange, placeholder, className }: Ex
                     placeholder={placeholder}
                     aria-label={placeholder}
                     onChange={(event) => onChange(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                            event.stopPropagation();
+                            setExpanded(false);
+                        }
+                    }}
                 />
             ) : (
                 <button

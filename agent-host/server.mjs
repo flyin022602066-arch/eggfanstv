@@ -21,6 +21,7 @@ import { adaptMediaRequest, trustedMediaSources } from './media-content.mjs';
 import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
+import { adaptModelToolSchemas } from './model-tool-schema.mjs';
 
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
 const HOST_TOKEN = process.env.BEEFTV_AGENT_HOST_TOKEN || '';
@@ -126,7 +127,7 @@ globalThis.fetch = async (input, options = {}) => {
         }
         if (actual.source.version !== source.version) throw new Error('media_content_changed');
       }
-      options = {...options,body:JSON.stringify(adaptMediaRequest(payload,mediaOptions))};
+      options = {...options,body:JSON.stringify(adaptModelToolSchemas(adaptMediaRequest(payload,mediaOptions),mediaOptions))};
     }
     } catch(error) {
       const failure={reason:error.reason || 'native_history_unavailable',message:`历史${historicalKind}已不可用，请在新对话重新添加这份素材后再试。`};

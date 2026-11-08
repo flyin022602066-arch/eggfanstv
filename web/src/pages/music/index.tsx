@@ -1,5 +1,5 @@
 import { Alert, Button, Checkbox, Select, Tabs, Tooltip } from "antd";
-import { AudioLines, Check, CircleAlert, Coins, FileText, Music2, Send, Settings2 } from "lucide-react";
+import { AudioLines, Check, CircleAlert, Clapperboard, Coins, FileText, Music2, Send, Settings2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { AppModal } from "@/components/ui/product/app-modal";
@@ -13,7 +13,9 @@ import { clipSourceValues, fieldVisible, rangeValues, studioSourceSelection, stu
 import { StudioParameters } from "./studio-parameters";
 import { StudioPlayer, type StudioTrack } from "./studio-player";
 import { StudioQueue } from "./studio-queue";
+import { StudioMusicVideo } from "./studio-music-video";
 import { StudioResults } from "./studio-results";
+import type { MusicWritingOutput } from "./studio-helpers";
 import { useStudioSession } from "./use-studio-session";
 import "./studio.css";
 
@@ -191,6 +193,17 @@ export default function MusicPage({ canvas }: { canvas?: SunoCanvasContext } = {
         store.setDraft({ operationId: target.id, values: { ...values, [kind === "lyrics" ? "prompt" : "tags"]: text } });
         setErrors({}); setView("create");
     };
+    const applyAssistantDraft = (kind: MusicWritingOutput, text: string) => {
+        if (kind === "lyrics" || kind === "tags") {
+            applyText(kind, text);
+            return;
+        }
+        const target = sunoOperation("post-suno-submit-music");
+        const values = operation.id === target.id ? { ...draft.values } : sunoDefaultValues(target.id);
+        store.setDraft({ operationId: target.id, values: { ...values, mode: "description", task: "", prompt: "", gpt_description_prompt: text } });
+        setErrors({}); setView("create");
+        setFeedback({ type: "success", text: "灵感描述已填入歌曲创作参数" });
+    };
     const useCanvasLyrics = () => {
         const source = selectedCanvasText;
         const text = source?.text.trim();
@@ -237,7 +250,7 @@ export default function MusicPage({ canvas }: { canvas?: SunoCanvasContext } = {
     const persistenceError = store.persistenceError || sessionError;
     return (
         <main className="suno-studio" data-view={view} aria-label="Suno 音乐导演台">
-            <header className="suno-studio-header"><div className="suno-studio-title"><AudioLines size={23} /><h1>音乐导演台</h1><span className="suno-studio-brand">SUNO</span></div><div className="suno-studio-header-controls"><span className="suno-studio-save-state">{persistenceError ? <CircleAlert size={13} /> : <Check size={13} />}{persistenceError ? "保存异常" : ready ? "本地草稿" : "正在载入"}</span><Select aria-label="Suno 渠道" className="suno-studio-channel" placeholder="选择渠道" disabled={disabled} value={draft.channelId || undefined} options={channels.map((item) => ({ value: item.id, label: item.name }))} onChange={(channelId) => { store.setDraft({ channelId }); setErrors((current) => ({ ...current, channelId: "" })); }} /><Tooltip title="模型渠道配置"><Link to="/settings" className="suno-studio-settings-link" aria-label="模型渠道配置"><Settings2 size={17} /></Link></Tooltip></div></header>
+            <header className="suno-studio-header"><div className="suno-studio-title"><AudioLines size={23} /><h1>音乐导演台</h1><span className="suno-studio-brand">SUNO</span></div><div className="suno-studio-header-controls"><span className="suno-studio-save-state">{persistenceError ? <CircleAlert size={13} /> : <Check size={13} />}{persistenceError ? "保存异常" : ready ? "本地草稿" : "正在载入"}</span><Select aria-label="Suno 渠道" className="suno-studio-channel" placeholder="选择渠道" disabled={disabled} value={draft.channelId || undefined} options={channels.map((item) => ({ value: item.id, label: item.name }))} onChange={(channelId) => { store.setDraft({ channelId }); setErrors((current) => ({ ...current, channelId: "" })); }} /><Button className="suno-studio-mv-entry" type={view === "mv" ? "primary" : "default"} icon={<Clapperboard size={15} />} onClick={() => setView(view === "mv" ? "create" : "mv")}>MV 制作</Button><Tooltip title="模型渠道配置"><Link to="/settings" className="suno-studio-settings-link" aria-label="模型渠道配置"><Settings2 size={17} /></Link></Tooltip></div></header>
             {persistenceError && <Alert className="suno-studio-banner" type="error" showIcon title={persistenceError} />}
             {errors.channelId && <Alert className="suno-studio-banner" type="warning" showIcon title={errors.channelId} />}
             {feedback && <Alert className="suno-studio-banner" type={feedback.type} showIcon title={<span role={feedback.type === "success" ? "status" : "alert"}>{feedback.text}</span>} closable onClose={() => setFeedback(null)} />}
@@ -256,12 +269,13 @@ export default function MusicPage({ canvas }: { canvas?: SunoCanvasContext } = {
                     <Button icon={<FileText size={15} />} disabled={disabled || !selectedLyrics} onClick={returnCanvasLyrics}>歌词写回画布</Button>
                 </div>
             </section>}
-            <Tabs className="suno-studio-mobile-tabs" activeKey={view} onChange={setView} items={[{ key: "create", label: "创作参数" }, { key: "preview", label: "试听 / 结果" }, { key: "queue", label: `制作队列 · ${jobs.length}` }]} />
+            <Tabs className="suno-studio-mobile-tabs" activeKey={view} onChange={setView} items={[{ key: "create", label: "创作参数" }, { key: "preview", label: "试听 / 结果" }, { key: "queue", label: `制作队列 · ${jobs.length}` }, { key: "mv", label: "MV 制作" }]} />
             <div className="suno-studio-columns">
-                <StudioParameters operation={operation} values={ready ? draft.values : sunoDefaultValues(operation.id)} errors={errors} disabled={disabled} submitting={busy === "submit"} uploading={busy === "upload"} referenceFile={reference?.file || null} canUpload={Boolean(channel && channelHasGenerationCredential(channel))} onOperation={changeOperation} onValue={(key, value) => { store.setDraft({ values: updateStudioValues(operation, draft.values, key, value) }); setErrors((current) => ({ ...current, [key]: "" })); }} onFile={(file) => { setReference(file ? { file, url: URL.createObjectURL(file) } : null); setLocalPreview(Boolean(file)); setPlayIntent(0); }} onUpload={upload} onSubmit={() => submit()} />
+                <StudioParameters operation={operation} values={ready ? draft.values : sunoDefaultValues(operation.id)} errors={errors} disabled={disabled} submitting={busy === "submit"} uploading={busy === "upload"} referenceFile={reference?.file || null} canUpload={Boolean(channel && channelHasGenerationCredential(channel))} onOperation={changeOperation} onValue={(key, value) => { store.setDraft({ values: updateStudioValues(operation, draft.values, key, value) }); setErrors((current) => ({ ...current, [key]: "" })); }} onFile={(file) => { setReference(file ? { file, url: URL.createObjectURL(file) } : null); setLocalPreview(Boolean(file)); setPlayIntent(0); }} onUpload={upload} onSubmit={() => submit()} onApplyAssistantDraft={applyAssistantDraft} />
                 <div className="suno-studio-center"><StudioPlayer track={track} playIntent={playIntent} busy={busy} canApplyRange={!disabled && operation.fields.some((field) => fieldVisible(field, draft.values) && /(continue_at|start_s|end_s)$/.test(field.key))} onSource={source} onImport={importTrack} onDownload={downloadTrack} onRange={(range) => { store.setDraft({ values: rangeValues(operation, draft.values, range) }); setErrors({}); setFeedback({ type: "success", text: "选区已填入" }); }} /><StudioResults job={selectedJob} onApply={applyText} /></div>
                 <StudioQueue jobs={jobs} selectedJobId={store.selectedJobId} selectedClipId={track?.clip.id} busy={busy} onSelect={(id) => { store.selectJob(id); setLocalPreview(false); setPlayIntent(0); setView("preview"); }} onRefresh={(id) => { void action(`refresh:${id}`, () => refreshSunoStudioJob(id)); }} onQuery={(id) => { if (disabled) return; const job = jobs.find((item) => item.id === id); if (!job) return; store.setDraft({ channelId: job.channelId, operationId: "get-suno-fetch-id", values: { id: job.taskId || "" } }); setErrors({}); setView("create"); }} onRestore={(id) => { if (disabled) return; store.restoreJob(id); setErrors({}); setView("create"); }} onListen={listen} onSource={source} onImport={importTrack} onDownload={downloadTrack} />
             </div>
+            <StudioMusicVideo onBack={() => setView("create")} />
             <AppModal open={costDraft !== null} title={<span className="suno-studio-cost-title"><Coins size={18} />版权上传 · 30 积分</span>} width={440} okText="确认并提交上传" cancelText="取消" okButtonProps={{ disabled: !costAccepted }} onCancel={() => setCostDraft(null)} onOk={() => submit(true)}><div className="suno-studio-cost-confirm"><p>上传类型：MUSIC_COPYRIGHT</p><Checkbox checked={costAccepted} onChange={(event) => setCostAccepted(event.target.checked)}>我拥有该音频的版权，并确认本次上传消耗 30 积分</Checkbox></div></AppModal>
         </main>
     );

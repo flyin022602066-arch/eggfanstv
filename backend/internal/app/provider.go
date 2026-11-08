@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/provider/hanbao"
 	"strconv"
 	"strings"
 
@@ -428,6 +429,11 @@ func normalizedMediaMimeType(declared string, data []byte) string {
 }
 
 func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, error) {
+	if config.InterfaceType == hanbao.Protocol {
+		if !s.IsLocalMode() || config.ChannelID != "" || !hanbao.SupportedModel(config.Model) { return providerConfig{}, errors.New("憨包仅支持本地工作区的内置视频模型") }
+		config.BaseURL, config.APIKey, config.SecretKey, config.Headers = "https://www.doubao.com", "", "", nil
+		return config, nil
+	}
 	headers, err := NormalizeOutboundHeaders(config.Headers)
 	if err != nil {
 		return providerConfig{}, err

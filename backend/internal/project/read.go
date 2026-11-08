@@ -121,11 +121,22 @@ func (s *Service) ProjectUnitWorkspace(userID string, projectID string, unitID s
 		if representations == nil {
 			representations = []CharacterRepresentationSummary{}
 		}
+		var definition map[string]any
+		var voice *CharacterVoiceSummary
+		if asset.Category == model.AssetCategoryCharacter {
+			card, err := s.characterVersionCard(userID, version)
+			if err != nil {
+				return UnitWorkspace{}, err
+			}
+			definition = card.Definition
+			voice = card.Voice
+		}
 		result.ShotReferences = append(result.ShotReferences, ShotAssetReference{
 			ShotAssetReference: reference,
 			Asset:              asset,
 			ReferencedVersion: ShotAssetReferenceVersion{
 				ID: version.ID, AssetID: version.AssetID, Version: version.Version, Representations: representations,
+				ReferenceProfile: referenceProfile(version.ReferenceProfileJSON), Definition: definition, Voice: voice,
 			},
 		})
 	}

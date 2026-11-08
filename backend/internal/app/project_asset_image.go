@@ -111,6 +111,7 @@ func (s *Service) finalizeProjectAssetImage(task model.Task, inputJSON string) (
 		payload = map[string]any{}
 	}
 	payload["kind"], payload["primaryVersionId"], payload["status"] = "image", version.ID, version.Status
+	payload["source"] = "生成任务"
 	payload["updatedAt"] = now.Format(time.RFC3339Nano)
 	payload["data"] = map[string]any{"storageKey": "resource:" + resource.ID, "dataUrl": "/api/resources/" + resource.ID + "/file", "width": resource.Width, "height": resource.Height, "bytes": resource.Size, "mimeType": resource.MimeType, "content": sourceVersion.DefinitionJSON}
 	encoded, err := json.Marshal(payload)

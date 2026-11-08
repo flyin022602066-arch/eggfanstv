@@ -1,0 +1,14 @@
+{
+  "id": "hanbao",
+  "displayName": "憨包",
+  "baseUrl": "https://www.doubao.com",
+  "catalogProtocol": "openai",
+  "presetVersion": 1,
+  "pinned": true,
+  "metadata": {"execution": "windows-local", "accountManagement": true},
+  "models": [
+    {"model": "seedance_v2.5", "capability": "video", "protocol": "hanbao-video", "capabilityConfig": {"version": 1, "video": {"references": {"minImages": 0, "maxImages": 9, "maxImageBytes": 4194304, "maxVideos": 0, "maxAudios": 0}, "duration": {"selection": "range", "min": 4, "max": 30, "step": 1, "default": 5}, "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4"], "defaultRatio": "16:9", "resolutions": [], "defaultResolution": "", "generateAudio": {"supported": false, "default": false}, "watermark": {"supported": false, "default": false}, "operations": ["text_to_video", "image_to_video", "reference_to_video"], "defaultOperation": "text_to_video"}}},
+    {"model": "seedance_v2.0_mini", "capability": "video", "protocol": "hanbao-video", "capabilityConfig": {"version": 1, "video": {"references": {"minImages": 0, "maxImages": 9, "maxImageBytes": 4194304, "maxVideos": 0, "maxAudios": 0}, "duration": {"selection": "range", "min": 4, "max": 30, "step": 1, "default": 5}, "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4"], "defaultRatio": "16:9", "resolutions": [], "defaultResolution": "", "generateAudio": {"supported": false, "default": false}, "watermark": {"supported": false, "default": false}, "operations": ["text_to_video", "image_to_video", "reference_to_video"], "defaultOperation": "text_to_video"}}},
+    {"model": "seedance_v2.0", "capability": "video", "protocol": "hanbao-video", "capabilityConfig": {"version": 1, "video": {"references": {"minImages": 0, "maxImages": 9, "maxImageBytes": 4194304, "maxVideos": 0, "maxAudios": 0}, "duration": {"selection": "range", "min": 4, "max": 30, "step": 1, "default": 5}, "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4"], "defaultRatio": "16:9", "resolutions": [], "defaultResolution": "", "generateAudio": {"supported": false, "default": false}, "watermark": {"supported": false, "default": false}, "operations": ["text_to_video", "image_to_video", "reference_to_video"], "defaultOperation": "text_to_video"}}}
+  ]
+}

@@ -9,7 +9,7 @@ import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { isJiasuSdModel } from "@/lib/jiasu-face-mask";
-import { isEggfansSd2DModel } from "@/lib/eggfans-sd2-face-mask";
+import { isEggfansSd2DModel, isTowoSd25Model } from "@/lib/eggfans-sd2-face-mask";
 import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { modelCapabilityConfigFor, workflowFieldCurrentValue, workflowFieldHasStoredValue, workflowFieldKey, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowOutputSizeValue, workflowVideoFieldsFromJson } from "@/lib/model-capabilities";
 import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveVideoOperation, type ModelGenerationDefaults, type ModelRequirements } from "@/lib/model-selection";
@@ -32,6 +32,7 @@ export async function runBackendCanvasGenerationTask(
         mode,
         prompt,
         config,
+        streamText,
         referenceImages = [],
         referenceVideos = [],
         referenceAudios = [],
@@ -50,6 +51,7 @@ export async function runBackendCanvasGenerationTask(
         mode: CanvasNodeGenerationMode;
         prompt: string;
         config: AiConfig;
+        streamText?: boolean;
         referenceImages?: ReferenceImage[];
         referenceVideos?: ReferenceVideo[];
         referenceAudios?: ReferenceAudio[];
@@ -72,6 +74,7 @@ export async function runBackendCanvasGenerationTask(
             mode,
             prompt,
             config,
+            streamText,
             referenceImages,
             referenceVideos,
             referenceAudios,
@@ -413,6 +416,7 @@ export function buildVideoGenerationMetadata(
         videoEndFrameNodeId: endFrame,
         ...(config && isJiasuSdModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model) ? { jiasuFaceMask: metadata?.jiasuFaceMask ?? config.videoJiasuFaceMask, jiasuFaceMasks: metadata?.jiasuFaceMasks } : {}),
         ...(config && isEggfansSd2DModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model) ? { sd2FaceMask: metadata?.sd2FaceMask ?? config.videoSd2FaceMask, sd2FaceMasks: metadata?.sd2FaceMasks } : {}),
+        ...(config && isTowoSd25Model(resolveModelRequestConfig(config, config.model).interfaceType, config.model) ? { towoFaceMask: metadata?.towoFaceMask ?? config.videoSd2FaceMask, towoFaceMasks: metadata?.towoFaceMasks } : {}),
     };
 }
 
@@ -487,6 +491,9 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const storedModel = resolveCanvasGenerationModel(config, node?.metadata?.model, mode);
     const preferredModel = storedModel || resolveCanvasGenerationModel(config, defaultModel, mode) || fallbackModel;
+    const activeModel = config.model || config.videoModel || preferredModel;
+    const preferredProtocol = resolveModelRequestConfig(config, activeModel).interfaceType;
+    const localFaceMask = isTowoSd25Model(preferredProtocol, activeModel) ? node?.metadata?.towoFaceMask : isEggfansSd2DModel(preferredProtocol, activeModel) ? node?.metadata?.sd2FaceMask : undefined;
     // 先合并节点上的实时选择，再做兼容性匹配。否则路由只看到全局默认值，节点改过的时长、分辨率或布尔能力无法参与分流。
     const workflowParameters = node?.metadata?.workflowParameters || {};
     const runningHubWorkflowId = node?.metadata?.runningHubWorkflowId?.trim() || config.runningHub.workflowId.trim();
@@ -518,7 +525,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoNativeFace: (node?.metadata?.nativeFace ?? config.videoNativeFace ?? defaultConfig.videoNativeFace) === "true" ? "true" : "false",
         videoJiasuFaceMode: node?.metadata?.jiasuFaceMode ?? config.videoJiasuFaceMode ?? defaultConfig.videoJiasuFaceMode,
         videoJiasuFaceMask: node?.metadata?.jiasuFaceMask ?? config.videoJiasuFaceMask ?? defaultConfig.videoJiasuFaceMask,
-        videoSd2FaceMask: node?.metadata?.sd2FaceMask ?? config.videoSd2FaceMask ?? defaultConfig.videoSd2FaceMask,
+        videoSd2FaceMask: localFaceMask ?? config.videoSd2FaceMask ?? defaultConfig.videoSd2FaceMask,
         ...resolveAudioSpeechSettings(preferredModel, {
             audioVoice: node?.metadata?.audioVoice ?? config.audioVoice,
             audioFormat: node?.metadata?.audioFormat ?? config.audioFormat,

@@ -10,7 +10,7 @@ test("章节页直接生成到分镜制作，并通过共享选择器执行技�
     expect(source).toContain("approvedRevision");
     expect(source).toContain("approvedShotIds");
     expect(source).toContain("detail.project.revision");
-    expect(source).toContain("/storyboard`");
+    expect(source).toContain("/workflow/${unit.id}/video`");
     expect(source).toContain('<SkillRuntimePicker profile="shortDrama"');
     expect(source.match(/<ModelPicker config=\{effectiveConfig\} capability="text"/g)).toHaveLength(2);
     expect(source).toContain("chapterAnalysisInput(selectedTextModel)");
@@ -22,8 +22,9 @@ test("镜头画面使用已绑定资产的 @ 引用编辑器", async () => {
     const source = await Bun.file(new URL("../src/pages/projects/detail/workflow-production-workbench.tsx", import.meta.url)).text();
     expect(source).toContain('name="plotDescription"');
     expect(source).toContain('<ShotAssetMentionTextarea variant="scene"');
-    expect(source).toContain("resolveShotAssetMentionPrompt(basePrompt, shotAssetReferenceContext");
-    expect(source).toContain("<Image.PreviewGroup>");
+    expect(source).toMatch(/resolveShotAssetMentionPrompt\([^\n]+, referenceContext, \{ dialogue: values\.dialogue \}\)/u);
+    expect(source).toContain("<CachedResourceImage");
+    expect(source).toContain('className="workflow-image-preview-modal"');
 });
 
 test("技能选择器占满表单宽度", async () => {

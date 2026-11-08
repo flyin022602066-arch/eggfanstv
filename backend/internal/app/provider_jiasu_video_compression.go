@@ -103,7 +103,7 @@ func (s *Service) jiasuReferenceImageBytes(ctx context.Context, userID string, c
 			return nil, "", err
 		}
 		if len(data) > maxJiasuImageSourceBytes {
-			return nil, "", errors.New("佳速参考图超过本地预处理读取范围")
+			return nil, "", errors.New("极途 Gway 参考图超过本地预处理读取范围")
 		}
 		return data, normalizedMediaMimeType(resource.MimeType, data), nil
 	}
@@ -111,7 +111,7 @@ func (s *Service) jiasuReferenceImageBytes(ctx context.Context, userID string, c
 		return mediaBytes(media)
 	}
 	if !isPublicMediaURL(strings.TrimSpace(media.URL)) {
-		return nil, "", errors.New("佳速参考图不是可读取的公网图片链接")
+		return nil, "", errors.New("极途 Gway 参考图不是可读取的公网图片链接")
 	}
 	data, mimeType, err := getProviderExternalBinary(ctx, config, media.URL)
 	if err != nil {

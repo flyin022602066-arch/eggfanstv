@@ -1,26 +1,19 @@
-// 展示项目资产库，按来源区分「本地上传」与「项目素材」；点击资产 → makeClipFromAsset
-// → dispatch addClip 加入时间线（添加到匹配 kind 的轨道末尾）。资产是
-// "仅时间线作用域"直连媒体（nodeId=asset:<id>）。导入链路：uploadResourceFile →
-// linkProjectAsset（后端按资源元数据合成资产记录）→ refreshAssets。
-
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Boxes, Check, ChevronDown, ChevronRight, Clapperboard, Film, FolderOpen, HardDrive, Image as ImageIcon, Loader2, Music2, Plus, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Check, ChevronDown, ChevronRight, Clapperboard, Film, FolderOpen, Image as ImageIcon, Loader2, Music2, Plus, X } from "lucide-react";
 
 import { useEditorHostContext, useEditorStoreContext } from "@/components/editor/editor-context";
 import { defaultAssetCategoryForKind } from "@/lib/asset-category";
 import { probeMediaDurationMs } from "@/lib/media-metadata";
-import { makeClipFromAsset } from "@/lib/timeline/asset-ingest";
-import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_SUBTITLE_TRACK_ID, DEFAULT_VIDEO_TRACK_ID } from "@/lib/timeline/timeline-tracks";
+import { buildEditorVideoGroups, createVideoAppendCommands, type EditorVideoGroup } from "@/lib/timeline/editor-video-library";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { linkProjectAsset } from "@/services/api/projects";
 import { uploadResourceFile, type ResourceUploadMeta } from "@/services/api/resources";
 import { resolveMediaUrl } from "@/services/file-storage";
 import type { ProjectAsset } from "@/services/api/projects";
-import type { TimelineProject } from "@/types/timeline";
 
 
-const MEDIA_ACCEPT = "video/*,audio/*,image/*";
+const MEDIA_ACCEPT = "video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi";
 /** 库内重复判定用的归一键（文件名+媒体类型）。 */
 function assetDedupeKey(title: string | undefined, mediaType: string): string {
     return `${(title || "").trim().toLowerCase()}|${mediaType}`;
@@ -67,18 +60,6 @@ function kindFromFile(file: File): "image" | "video" | "audio" | null {
     if (AUDIO_RE.test(file.name)) return "audio";
     if (MEDIA_RE.test(file.name)) return "video";
     return null;
-}
-
-function trackIdForKind(kind: string, project: TimelineProject): string {
-    const track = project.tracks.find((t) => t.kind === kind);
-    if (track) return track.id;
-    if (kind === "video" || kind === "image") return project.tracks.find((t) => t.kind === "video")?.id ?? DEFAULT_VIDEO_TRACK_ID;
-    if (kind === "audio") return project.tracks.find((t) => t.kind === "audio")?.id ?? DEFAULT_AUDIO_TRACK_ID;
-    return DEFAULT_SUBTITLE_TRACK_ID;
-}
-
-function trackEndMs(project: TimelineProject, trackId: string): number {
-    return project.clips.filter((c) => c.trackId === trackId).reduce((max, c) => Math.max(max, c.startMs + c.durationMs), 0);
 }
 
 function AssetIcon({ mediaType }: { mediaType: string }) {
@@ -311,8 +292,8 @@ export function EditorAssetIngest() {
 }
 
 function EditorAssetIngestSession() {
-    const { projectId, assets, refreshAssets } = useEditorHostContext();
-    const { project, dispatch } = useEditorStoreContext();
+    const { projectId, assets, episodeContext, refreshAssets } = useEditorHostContext();
+    const { project, dispatchBatch } = useEditorStoreContext();
     const [added, setAdded] = useState<string | null>(null);
     const [importing, setImporting] = useState(false);
     const [importError, setImportError] = useState<string | null>(null);
@@ -326,7 +307,20 @@ function EditorAssetIngestSession() {
 
     const [filter, setFilter] = useState<AssetFilter>("all");
     const [expandedId, setExpandedId] = useState<string | null>(null);
-    const [openGroups, setOpenGroups] = useState<{ uploaded: boolean; project: boolean }>({ uploaded: true, project: true });
+    const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+    const [addedGroup, setAddedGroup] = useState<string | null>(null);
+    useEffect(() => {
+        if (!addedGroup) return;
+        const timer = window.setTimeout(() => setAddedGroup(null), 1500);
+        return () => window.clearTimeout(timer);
+    }, [addedGroup]);
+    const groups = useMemo(() => buildEditorVideoGroups(assets, episodeContext), [assets, episodeContext]);
+    const visibleGroups = useMemo(() => groups.map((group) => ({
+        ...group,
+        items: group.items.filter((asset) => filter === "all" || (filter === "uploaded" ? asset.source === SOURCE_UPLOADED : asset.source !== SOURCE_UPLOADED)),
+    })).filter((group) => group.items.length > 0), [groups, filter]);
+    const totalCount = new Set(groups.flatMap((group) => group.items.map((asset) => asset.id))).size;
+    const expandedAsset = groups.flatMap((group) => group.items).find((asset) => asset.id === expandedId) ?? null;
     const inputRef = useRef<HTMLInputElement | null>(null);
     const lastAddKey = useRef<string | null>(null);
     const lastAddAt = useRef(0);
@@ -351,9 +345,9 @@ function EditorAssetIngestSession() {
     const importFiles = async (fileList: FileList | File[]) => {
         const media = Array.from(fileList)
             .map((file) => ({ file, kind: kindFromFile(file) }))
-            .filter((x): x is { file: File; kind: "image" | "video" | "audio" } => x.kind !== null);
+            .filter((x): x is { file: File; kind: "video" } => x.kind === "video");
         if (media.length === 0) {
-            setImportError("仅支持视频、音频与图片文件");
+            setImportError("媒体库仅显示视频，请选择视频文件");
             return;
         }
         const expectedScope = captureUserScope();
@@ -473,33 +467,40 @@ function EditorAssetIngestSession() {
     const addToTimeline = (asset: ProjectAsset) => {
         const now = Date.now();
         if (lastAddKey.current === asset.id && now - lastAddAt.current < 1500) return;
+        try {
+            if (!dispatchBatch(createVideoAppendCommands(project, [asset]), project)) {
+                setImportError("时间线已变化或正在拖拽，请结束操作后重试");
+                return;
+            }
+        } catch (error) {
+            setImportError(error instanceof Error ? error.message : "添加视频失败");
+            return;
+        }
         lastAddKey.current = asset.id;
         lastAddAt.current = now;
-        const kind = asset.mediaType === "video" ? "video" : asset.mediaType === "audio" ? "audio" : asset.mediaType === "image" ? "image" : null;
-        if (!kind) return;
-        const trackId = trackIdForKind(kind, project);
-        const startMs = trackEndMs(project, trackId);
-        const clip = makeClipFromAsset(asset, {
-            trackId,
-            startMs,
-            defaultDurationMs: kind === "image" ? 3_000 : 5_000,
-        });
-        if (!clip) return;
-        dispatch({ op: "addClip", payload: { clip } });
+        setImportError(null);
         setAdded(asset.id);
         setTimeout(() => setAdded(null), 1200);
     };
 
-    const uploadedAssets = assets.filter((a) => a.source === SOURCE_UPLOADED);
-    // 画布产物已自动同步为普通项目素材：并入「项目素材」，不再按来源单列分组。
-    const projectAssets = assets.filter((a) => a.source !== SOURCE_UPLOADED);
-    const groups: { id: "uploaded" | "project"; label: string; icon: typeof HardDrive; items: ProjectAsset[] }[] = [
-        { id: "uploaded", label: "本地上传", icon: HardDrive, items: uploadedAssets },
-        { id: "project", label: "项目素材", icon: Boxes, items: projectAssets },
-    ];
-    const visibleGroups = groups.filter((g) => filter === "all" || g.id === filter);
-    const totalCount = assets.length;
-    const expandedAsset = assets.find((a) => a.id === expandedId) ?? null;
+    const addEpisodeToTimeline = (group: EditorVideoGroup) => {
+        const key = `episode:${group.id}`;
+        const now = Date.now();
+        if (lastAddKey.current === key && now - lastAddAt.current < 1500) return;
+        try {
+            if (!dispatchBatch(createVideoAppendCommands(project, group.items), project)) {
+                setImportError("时间线已变化或正在拖拽，请结束操作后重试");
+                return;
+            }
+            lastAddKey.current = key;
+            lastAddAt.current = now;
+            setImportError(null);
+            setAddedGroup(group.id);
+            setImportNote(`${group.label}：已追加 ${group.items.length} 个视频到时间线末尾，可撤销整次导入`);
+        } catch (error) {
+            setImportError(error instanceof Error ? error.message : "整集导入失败，请重试");
+        }
+    };
 
     return (
         <div
@@ -566,15 +567,15 @@ function EditorAssetIngestSession() {
 
             <div className="relative min-h-0 flex-1">
                 <div className="director-scroll h-full overflow-y-auto p-1.5">
-                {assets.length === 0 ? (
+                {totalCount === 0 ? (
                     <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
-                        <p className="text-xs text-[var(--director-dock-fg)]/60">项目暂无资产</p>
-                        <p className="max-w-[180px] text-[11px] leading-relaxed text-[var(--director-dock-fg)]/45">点击上方导入媒体，或将文件拖入此区域</p>
+                        <p className="text-xs text-[var(--director-dock-fg)]/60">项目暂无视频</p>
+                        <p className="max-w-[180px] text-[11px] leading-relaxed text-[var(--director-dock-fg)]/45">生成分镜视频后将按集显示，也可导入本地视频</p>
                     </div>
                 ) : visibleGroups.every((g) => g.items.length === 0) ? (
                     <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
                         <p className="text-xs text-[var(--director-dock-fg)]/60">
-                            {filter === "uploaded" ? "暂无本地上传的媒体" : filter === "project" ? "暂无项目素材" : "项目暂无资产"}
+                            {filter === "uploaded" ? "暂无本地上传的视频" : filter === "project" ? "暂无项目视频" : "项目暂无视频"}
                         </p>
                         <p className="max-w-[180px] text-[11px] leading-relaxed text-[var(--director-dock-fg)]/45">点击上方导入媒体，或将文件拖入此区域</p>
                     </div>
@@ -582,14 +583,16 @@ function EditorAssetIngestSession() {
                     <div className="flex flex-col gap-1">
                         {visibleGroups.map((group) => {
                             if (group.items.length === 0) return null;
-                            const open = openGroups[group.id];
+                            const open = openGroups[group.id] ?? true;
                             return (
                                 <div key={group.id} className="flex flex-col">
+                                    <div className="flex flex-wrap items-center gap-1">
                                     <button
                                         type="button"
                                         aria-expanded={open}
                                         onClick={() => setOpenGroups((s) => ({ ...s, [group.id]: !open }))}
-                                        className="group flex h-7 w-full items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-[var(--director-control-hover)]"
+                                        title={group.label}
+                                        className="group flex h-8 min-w-0 flex-1 items-center gap-1 rounded-md px-1 text-left transition-colors hover:bg-[var(--director-control-hover)]"
                                     >
                                         <span
                                             className={`grid size-4 shrink-0 place-items-center rounded-[5px] transition-colors ${
@@ -598,10 +601,23 @@ function EditorAssetIngestSession() {
                                         >
                                             <ChevronRight className={`size-3 transition-transform duration-150 ease-out ${open ? "rotate-90" : ""}`} />
                                         </span>
-                                        <group.icon className={`size-3.5 shrink-0 transition-colors ${open ? "text-[var(--director-accent)]" : "text-[var(--director-dock-fg)]/60"}`} />
+                                        <Film className={`size-3.5 shrink-0 transition-colors ${open ? "text-[var(--director-accent)]" : "text-[var(--director-dock-fg)]/60"}`} />
                                         <span className="truncate text-[11px] font-medium text-[var(--director-dock-fg-strong)]">{group.label}</span>
                                         <span className="ml-auto rounded-full bg-[var(--director-control-hover)] px-1.5 text-[9px] tabular-nums text-[var(--director-dock-fg)]/70">{group.items.length}</span>
                                     </button>
+                                    {group.unitId ? (
+                                        <button
+                                            type="button"
+                                            aria-label={`导入整集：${group.label}`}
+                                            title="按镜头顺序追加到时间线末尾，不覆盖已导入的集数"
+                                            onClick={() => addEpisodeToTimeline(group)}
+                                            className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-[var(--director-sequencer-border)] px-1.5 text-[10px] text-[var(--director-dock-fg-strong)] transition-colors hover:bg-[var(--director-control-hover)]"
+                                        >
+                                            {addedGroup === group.id ? <Check className="size-3" /> : <Plus className="size-3" />}
+                                            {addedGroup === group.id ? "已导入" : "导入整集"}
+                                        </button>
+                                    ) : null}
+                                    </div>
                                     {open ? (
                                         <ul className="flex flex-col">
                                             {group.items.map((asset) => {

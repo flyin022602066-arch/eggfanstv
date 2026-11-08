@@ -10,6 +10,7 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
+	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 )
 
@@ -156,6 +157,35 @@ func (a taskMediaAdapter) ValidateTransport(userID string, input map[string]any)
 	if err := json.Unmarshal(raw, &prepared); err != nil {
 		return BadAuthRequest("任务参数格式无效，请检查模型设置后重新提交")
 	}
+	if prepared.Mode == "image" && prepared.Metadata["operation"] == "character_turnaround" {
+		assetID, _ := prepared.Metadata["characterAssetId"].(string)
+		versionID, _ := prepared.Metadata["characterVersionId"].(string)
+		referenceVersionID, _ := prepared.Metadata["characterIdentityVersionId"].(string)
+		resourceID, _ := prepared.Metadata["characterIdentityResourceId"].(string)
+		resourceIDs := make([]string, 0, len(prepared.ReferenceImages))
+		for _, image := range prepared.ReferenceImages {
+			resourceIDs = append(resourceIDs, strings.TrimPrefix(image.StorageKey, "resource:"))
+		}
+		if err := a.s.projectDomain().ValidateCharacterIdentityReference(userID, strings.TrimSpace(assetID), strings.TrimSpace(versionID), referenceVersionID, resourceID, resourceIDs); err != nil {
+			return err
+		}
+	}
+	if _, ok := prepared.Metadata["characterReferenceSnapshot"]; ok && (prepared.Mode == "image" || prepared.Mode == "video") {
+		metadata, _ := json.Marshal(prepared.Metadata)
+		var selection localproject.CharacterReferenceSubmission
+		if err := json.Unmarshal(metadata, &selection); err != nil {
+			return BadAuthRequest("角色参考快照格式无效")
+		}
+		resourceIDs := make([]string, 0, len(prepared.ReferenceImages))
+		for _, image := range prepared.ReferenceImages {
+			if strings.HasPrefix(image.StorageKey, "resource:") {
+				resourceIDs = append(resourceIDs, strings.TrimPrefix(image.StorageKey, "resource:"))
+			}
+		}
+		if err := a.s.projectDomain().ValidateCharacterReferenceSubmission(userID, selection, resourceIDs); err != nil {
+			return err
+		}
+	}
 	if len(prepared.ReferenceImages)+len(prepared.ReferenceVideos)+len(prepared.ReferenceAudios) == 0 && prepared.Mask == nil {
 		return nil
 	}
@@ -171,7 +201,7 @@ func (a taskMediaAdapter) ValidateTransport(userID string, input map[string]any)
 		}
 	}
 	ctx := a.s.bindGenerationRuntime(context.Background(), generation.CallMeta{UserID: userID})
-	if prepared.Mode == "video" && (prepared.Config.InterfaceType == "jiasu-video" || prepared.Config.InterfaceType == "eggfans-sd2-video") {
+	if prepared.Mode == "video" && requiresCustomPublicMediaPreparation(prepared.Config.InterfaceType) {
 		ctx = a.s.bindCustomGenerationReferences(ctx)
 	}
 	ctx = withProtocolRegistry(ctx, a.s.protocolRegistry())

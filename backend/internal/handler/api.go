@@ -32,6 +32,7 @@ func defaultRuntimeDependencies(svc *app.Service) RuntimeDependencies {
 	if svc != nil {
 		dependencies.Diagnostics = svc.DiagnosticsDomain()
 		dependencies.Appearance = svc.AppearanceDomain()
+		dependencies.Hanbao = svc.HanbaoDomain()
 	}
 	return dependencies
 }
@@ -51,6 +52,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterOpenAPIRoutes(api)
 	RegisterWorkspaceRoutes(api, svc)
 	RegisterBeefAPIConnectionRoutes(api, svc)
+	RegisterHanbaoRoutes(api, svc)
 	RegisterDesktopAppearanceRoutes(api, svc)
 	RegisterDesktopFeatureAvailabilityRoutes(api, svc)
 	// 旧内置 Agent 已从产品运行面退场：这里不再注册 /agent/*，运行、审批和记忆入口

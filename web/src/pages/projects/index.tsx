@@ -10,7 +10,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { CollectionGrid, PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 import { CanvasStylePickerModal, resolveCanvasStylePreset, resolveProjectCanvasStyle, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
-import { resourceFileUrl } from "@/services/api/resources";
+import { resourceStorageKey } from "@/services/api/resources";
 import { ModelPicker } from "@/components/model-picker";
 import { createStyleProfileSnapshot, parseStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { projectSummaryCompletion, projectSummaryStage } from "@/lib/project-workbench";
@@ -387,11 +387,12 @@ function ProjectRow({ row, folders, onDelete, onRename, onArchive, onDuplicate, 
     const stage = projectSummaryStage(row);
     const projectStyle = resolveProjectCanvasStyle(row.project.stylePresetId, row.project.styleProfileJson);
     const styleTitle = projectStyle?.title || parseStyleProfile(row.project.styleProfileJson)?.title || resolveCanvasStylePreset(row.project.stylePresetId)?.title || (row.project.stylePresetId ? "自定义画风" : "未设置画风");
-    const coverUrl = row.project.coverResourceId ? resourceFileUrl(row.project.coverResourceId) : projectStyle?.imageUrl;
+    const coverStorageKey = row.project.coverResourceId ? resourceStorageKey(row.project.coverResourceId) : undefined;
+    const coverUrl = coverStorageKey ? undefined : projectStyle?.imageUrl;
     return (
         <Link to={`/projects/${row.project.id}/overview`} className="product-collection-card library-card project-library-card group">
             <span className="project-library-cover">
-                {coverUrl ? <CachedResourceImage className="project-library-cover-art" src={coverUrl} alt="" fallback={<MediaPlaceholder failed />} /> : <MediaPlaceholder label="故事由此开始" />}
+                {coverStorageKey || coverUrl ? <CachedResourceImage className="project-library-cover-art" storageKey={coverStorageKey} src={coverUrl} alt="" loadingFallback={<MediaPlaceholder label="正在加载封面" />} fallback={<MediaPlaceholder failed />} /> : <MediaPlaceholder label="故事由此开始" />}
                 <span className="project-library-cover-scrim" />
                 <span className="project-library-cover-ratio">{row.project.aspectRatio}</span>
                 <span className="project-library-cover-stage">{stage.label}</span>

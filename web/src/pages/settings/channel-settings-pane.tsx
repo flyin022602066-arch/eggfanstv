@@ -3,13 +3,15 @@ import { Bug, Link2, Pencil, Plus, RefreshCw, Trash2, Workflow } from "lucide-re
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
+import { HanbaoAccountManager } from "./hanbao-account-manager";
+import { isHanbaoChannel } from "@/lib/hanbao";
 import { VolcAssetLibrarySettings } from "./volc-asset-library-settings";
 import { EggfansPrivateAssetsButton } from "@/components/eggfans-private-assets-modal";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { PageHeader } from "@/components/layout/workspace-page";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
-import { isChannelVisibleInPackagedSettings } from "@/lib/builtin-channels";
+import { isChannelVisibleInPackagedSettings, isFixedModelCatalogChannel } from "@/lib/builtin-channels";
 import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { channelAdaptationLabel } from "@/lib/channel-adaptation";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
@@ -43,6 +45,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
     const persistence = useSyncExternalStore(subscribeModelConfigPersistence, getModelConfigPersistenceState, getModelConfigPersistenceState);
     const [loadingChannelIds, setLoadingChannelIds] = useState<string[]>([]);
     const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
+    const [hanbaoOpen, setHanbaoOpen] = useState(false);
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [serviceEditor, setServiceEditor] = useState<ModelChannel | null | undefined>(undefined);
     const [beefConnection, setBeefConnection] = useState<BeefAPIConnectionSummary | null>(null);
@@ -210,6 +213,10 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
     };
 
     const refreshChannelModels = async (channel: ModelChannel) => {
+        if (isFixedModelCatalogChannel(channel.id)) {
+            message.info("该渠道使用内置模型清单，无需联网拉取");
+            return;
+        }
         const connectionError = channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null);
         if (connectionError) {
             message.error(`${channel.name || "当前渠道"}：${connectionError}`);
@@ -243,8 +250,9 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
     };
 
     const refreshAllModels = async () => {
-        const runnable = userChannels.filter((channel) => !channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null));
-        const skipped = userChannels.filter((channel) => channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null));
+        const catalogChannels = userChannels.filter((channel) => !isFixedModelCatalogChannel(channel.id));
+        const runnable = catalogChannels.filter((channel) => !channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null));
+        const skipped = catalogChannels.filter((channel) => channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null));
         if (!runnable.length) {
             const detail = skipped.map((channel) => `${channel.name || "未命名渠道"}：${channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null)}`).join("；");
             message.error(detail || "没有可拉取的个人模型渠道，请先填写有效 Base URL 和 API Key");
@@ -340,6 +348,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                         const editing = editingChannelId === channel.id;
                         const builtinBeefAPI = isBuiltinBeefAPIChannel(channel);
                         const builtinSD2Catalog = channel.id === "eggfans-sd2" && Boolean(channel.presetVersion) && !channel.catalogUrl?.trim();
+                        const fixedModelCatalog = isFixedModelCatalogChannel(channel.id);
                         const adaptationLabel = builtinBeefAPI ? `内置适配 · v${channel.presetVersion || 1}` : channelAdaptationLabel(channel);
                         return (
                             <section key={channel.id} aria-labelledby={`channel-${channel.id}-title`} className="settings-channel p-2.5 sm:p-3">
@@ -362,6 +371,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                             <ChannelStatus channel={channel} persistence={persistence} connection={builtinBeefAPI ? beefConnection : null} />
                                         </div>
                                         {builtinSD2Catalog ? <p className="mt-1 text-xs text-foreground/55">内置 SD2 视频模型，无需联网拉取；点击编辑填写该渠道的 API Key。参考图在生成时自动上传至 Uguu，临时链接约 3 小时有效。</p> : null}
+                                        {fixedModelCatalog ? <p className="mt-1 text-xs text-foreground/55">{isHanbaoChannel(channel) ? "内置 3 个 Seedance 视频模型；通过账号管理登录并选择生成账号，飞狐接码仅用于此渠道。" : "固定使用内置模型 seedance-2.5，无需拉取模型列表。"}</p> : null}
                                     </div>
                                     <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto sm:shrink-0">
                                         <EggfansPrivateAssetsButton channel={channel} />
@@ -379,7 +389,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                                 }}
                                             />
                                         ) : null}
-                                        <Button
+                                        {!fixedModelCatalog ? <Button
                                             className="h-10 sm:h-8"
                                             size="small"
                                             icon={<RefreshCw className="size-3.5" />}
@@ -388,19 +398,20 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                             onClick={() => void refreshChannelModels(channel)}
                                         >
                                             {builtinSD2Catalog ? "读取内置模型" : "拉取模型"}
-                                        </Button>
+                                        </Button> : null}
                                         <Button
                                             size="small"
                                             icon={<Pencil className="size-3.5" />}
                                             onClick={() => {
+                                                if (isHanbaoChannel(channel)) { setHanbaoOpen(true); return; }
                                                 if (!builtinBeefAPI && !packagedWindows) { setServiceEditor(channel); return; }
                                                 setNewChannelId(null);
                                                 setEditingChannelId(channel.id);
                                             }}
                                         >
-                                            编辑
+                                            {isHanbaoChannel(channel) ? "账号管理" : "编辑"}
                                         </Button>
-                                        {!builtinBeefAPI ? (
+                                        {!builtinBeefAPI && !isHanbaoChannel(channel) ? (
                                             <Popconfirm title="删除个人模型渠道？" description="该渠道关联的模型选择会同时移除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => deleteChannel(channel.id)}>
                                                 <Tooltip title="删除渠道">
                                                     <Button
@@ -427,9 +438,9 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                             <div className="model-editor-footer">
                                                 <span className="text-xs text-foreground/50">{localMode ? "更改实时保存到本地工作区" : "更改实时保存到云端渠道配置"}</span>
                                                 <div className="model-editor-footer-actions">
-                                                    <Button loading={loadingChannelIds.includes(channel.id)} onClick={() => void refreshChannelModels(channel)}>
+                                                    {!fixedModelCatalog ? <Button loading={loadingChannelIds.includes(channel.id)} onClick={() => void refreshChannelModels(channel)}>
                                                         {builtinSD2Catalog ? "读取内置模型" : "拉取模型"}
-                                                    </Button>
+                                                    </Button> : null}
                                                     <Button onClick={closeChannelEditor}>完成</Button>
                                                 </div>
                                             </div>
@@ -530,6 +541,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                                         mode="tags"
                                                         showSearch
                                                         allowClear
+                                                        disabled={fixedModelCatalog}
                                                         maxTagCount="responsive"
                                                         tokenSeparators={[",", "\n"]}
                                                         placeholder="输入模型名，或点击拉取模型"
@@ -559,6 +571,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                 />
             )}
             {serviceEditor !== undefined && <ModelServiceEditor initial={serviceEditor || undefined} onClose={() => setServiceEditor(undefined)} onSave={saveService} />}
+            {hanbaoOpen ? <HanbaoAccountManager onClose={() => setHanbaoOpen(false)} /> : null}
         </Form>
     );
 }
@@ -685,6 +698,7 @@ export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig, 
 }
 
 export function modelConfigChannelStatusLabel(channel: ModelChannel, persistence: ModelConfigPersistenceState, connection?: BeefAPIConnectionSummary | null) {
+    if (isHanbaoChannel(channel)) return "本地账号 · 请在账号管理中确认登录";
     if (isBuiltinBeefAPIChannel(channel)) {
         if (connection?.state === "connected") return beefAPIConnectionLabel(connection);
         if (connection?.state && connection.state !== "disconnected") return beefAPIConnectionLabel(connection);
@@ -822,6 +836,7 @@ function channelConnectionMode(channel: ModelChannel): UserChannelConnection {
 }
 
 function channelConnectionError(channel: ModelChannel, connection?: BeefAPIConnectionSummary | null) {
+    if (isHanbaoChannel(channel)) return "";
     const baseUrl = channel.baseUrl.trim();
     if (!baseUrl) return "请填写 Base URL";
     try {
@@ -844,6 +859,7 @@ function channelConnectionSignature(channel: ModelChannel) {
 }
 
 function channelProtocolLabel(channel: ModelChannel) {
+    if (isHanbaoChannel(channel)) return "Windows 本地账号";
     return channelConnectionMode(channel) === "gemini" ? "Gemini 原生" : "OpenAI 兼容";
 }
 

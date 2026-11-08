@@ -134,6 +134,10 @@ func normalizeJiasuVideoChannels(config map[string]any) {
 		if !ok || channel["id"] != "jiasu-video" && channel["interfaceType"] != "jiasu-video" {
 			continue
 		}
+		name, _ := channel["name"].(string)
+		if strings.EqualFold(strings.TrimSpace(name), "佳速视频") {
+			channel["name"] = "极途 Gway"
+		}
 		baseURL, _ := channel["baseUrl"].(string)
 		if strings.EqualFold(strings.TrimRight(strings.TrimSpace(baseURL), "/"), "https://ai.jiasuapi.com") {
 			channel["baseUrl"] = "https://www.gway.dev"
@@ -290,6 +294,9 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 	}
 	if localModels, ok := local["models"].([]any); ok {
 		for _, value := range localModels {
+			if preset.ID == "towo-sd25-video" || preset.ID == "hanbao" {
+				continue
+			}
 			model, ok := value.(string)
 			if !ok || model == "" {
 				continue
@@ -304,6 +311,9 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 	}
 	if localProfiles, ok := local["modelProfiles"].([]any); ok {
 		for _, value := range localProfiles {
+			if preset.ID == "towo-sd25-video" || preset.ID == "hanbao" {
+				continue
+			}
 			profile, ok := value.(map[string]any)
 			if !ok {
 				continue
@@ -352,6 +362,10 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 			// Pre-brand manual credentials without an origin were issued by BeefAPI.
 			result["baseUrl"] = "https://enterprise.beefapi.com"
 		}
+	}
+	if preset.ID == "hanbao" {
+		result["baseUrl"], result["apiKey"], result["secretKey"] = preset.BaseURL, "", ""
+		result["headers"], result["interfaceType"] = []any{}, "hanbao-video"
 	}
 	return result, nil
 }

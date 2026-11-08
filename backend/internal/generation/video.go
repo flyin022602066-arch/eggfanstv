@@ -35,6 +35,7 @@ func RunVideoTask(ctx context.Context, input Input) (map[string]interface{}, err
 }
 
 func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	if input.Config.InterfaceType == "hanbao-video" { return RunHanbaoVideoTask(ctx, input, pollPolicy) }
 	// BeefAPI exposes its flat /v1/videos contract. Route it before
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.
@@ -129,7 +130,7 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 			state = data
 		}
 		status := strings.ToLower(stringField(state, "status"))
-		if status == "completed" || status == "succeeded" || status == "success" || status == "done" {
+		if videoGenerationSucceeded(status) {
 			if videoURL := NewAPIVideoResultURL(state); videoURL != "" {
 				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
 					return getVideoResultWithGatewayFallback(ctx, input.Config, videoURL, id)
@@ -264,7 +265,7 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 			state = data
 		}
 		status, videoURL := SeedancePollStatusAndURL(state)
-		if status == "completed" || status == "succeeded" {
+		if videoGenerationSucceeded(status) {
 			if videoURL != "" {
 				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
 					// Enterprise BeefAPI result URLs require the same channel
@@ -290,6 +291,15 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 		}
 		return VideoPollOutcome{}, nil
 	})
+}
+
+func videoGenerationSucceeded(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "succeeded", "success", "done":
+		return true
+	default:
+		return false
+	}
 }
 
 // BeefAPI reports the transport task as in_progress while the nested

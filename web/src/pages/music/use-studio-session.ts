@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { recoverSunoStudioJobs } from "@/services/suno-studio";
+import { recoverSunoStudioJobs, sunoStudioJobNeedsRecovery } from "@/services/suno-studio";
+import { recoverSunoMusicVideos } from "@/services/suno-music-video";
 import { useSunoStudioStore } from "@/stores/use-suno-studio-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -26,9 +27,14 @@ export function useStudioSession() {
         const recover = async () => {
             const store = useSunoStudioStore.getState();
             if (disposed || recovering || !store.hydrated || store.scope !== scope) return;
-            if (!store.jobs.some((job) => job.taskId && ["queued", "running", "unknown"].includes(job.status))) return;
+            const hasSunoRecovery = store.jobs.some(sunoStudioJobNeedsRecovery);
+            const hasMusicVideoRecovery = store.musicVideos.some((task) => task.providerTaskId && ["queued", "running"].includes(task.status));
+            if (!hasSunoRecovery && !hasMusicVideoRecovery) return;
             recovering = true;
-            try { await recoverSunoStudioJobs(); }
+            try {
+                if (hasSunoRecovery) await recoverSunoStudioJobs();
+                await recoverSunoMusicVideos();
+            }
             catch (cause) { if (!disposed) setError(cause instanceof Error ? cause.message : "任务状态同步暂不可用"); }
             finally { recovering = false; }
         };

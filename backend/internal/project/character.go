@@ -144,17 +144,32 @@ func (s *Service) ReplaceProjectCharacterRepresentations(userID string, projectI
 		}
 		representations = append(representations, model.AssetRepresentation{ID: kernel.NewID(), TaskID: operationID, ResourceID: resourceID, MediaType: "image", Role: role, MetadataJSON: string(metadata), CreatedAt: time.Now()})
 	}
+	expectedPrimary := asset.PrimaryVersionID
+	if req.BaseVersionID != "" {
+		base, err := s.repo.AssetVersionForProject(projectID, req.BaseVersionID)
+		if err != nil {
+			return CharacterDetail{}, err
+		}
+		if base.AssetID != assetID {
+			return CharacterDetail{}, kernel.BadAuthRequest("基础版本不属于该角色")
+		}
+		asset.PrimaryVersionID = base.ID
+	}
 	nextAsset, next, representations, voice, err := s.prepareNextCharacterVersion(asset, asset.Title, "", representations, nil, false)
 	if err != nil {
 		return CharacterDetail{}, err
 	}
-	if err := s.repo.SaveCharacterVersionAndPropagateReferences(userID, projectID, asset.PrimaryVersionID, &nextAsset, &next, representations, voice); err != nil {
+	if err := s.repo.SaveCharacterVersionActive(userID, projectID, expectedPrimary, &nextAsset, &next, representations, voice); err != nil {
 		return CharacterDetail{}, mapProjectWriteError(err)
 	}
 	return s.ProjectCharacter(userID, projectID, asset.ID)
 }
 
 func (s *Service) BindCharacterTurnaround(userID, projectID, assetID, taskID, resourceID, prompt string) error {
+	return s.BindCharacterTurnaroundFromVersion(userID, projectID, assetID, "", taskID, resourceID, prompt)
+}
+
+func (s *Service) BindCharacterTurnaroundFromVersion(userID, projectID, assetID, baseVersionID, taskID, resourceID, prompt string) error {
 	if _, err := s.Active(userID, projectID); err != nil {
 		return err
 	}
@@ -179,8 +194,22 @@ func (s *Service) BindCharacterTurnaround(userID, projectID, assetID, taskID, re
 		{ID: kernel.NewID(), TaskID: taskID, ResourceID: resourceID, MediaType: "image", Role: "turnaround_sheet", MetadataJSON: string(sheetMetadata), CreatedAt: now},
 		{ID: kernel.NewID(), TaskID: taskID, ResourceID: resourceID, MediaType: "image", Role: "primary", MetadataJSON: string(primaryMetadata), CreatedAt: now},
 	}
-	_, err = s.createNextCharacterVersion(userID, projectID, asset, asset.Title, "", representations, nil, false)
-	return err
+	expectedPrimary := asset.PrimaryVersionID
+	if baseVersionID != "" {
+		base, err := s.repo.AssetVersionForProject(projectID, baseVersionID)
+		if err != nil {
+			return err
+		}
+		if base.AssetID != assetID {
+			return kernel.BadAuthRequest("三视图基础版本不属于该角色")
+		}
+		asset.PrimaryVersionID = baseVersionID
+	}
+	nextAsset, next, reps, voice, err := s.prepareNextCharacterVersion(asset, asset.Title, "", representations, nil, false)
+	if err != nil {
+		return err
+	}
+	return mapProjectWriteError(s.repo.SaveCharacterVersionActive(userID, projectID, expectedPrimary, &nextAsset, &next, reps, voice))
 }
 
 func readyImageResource(resource *model.Resource) bool {
@@ -313,6 +342,9 @@ func (s *Service) prepareNextCharacterVersion(asset *model.Asset, name string, d
 		}
 		return model.Asset{}, model.AssetVersion{}, nil, nil, kernel.BadAuthRequest("角色当前版本不可用")
 	}
+	if current.Status == model.AssetVersionStatusArchived {
+		return model.Asset{}, model.AssetVersion{}, nil, nil, gorm.ErrRecordNotFound
+	}
 	versions, err := s.repo.AssetVersions(asset.ID)
 	if err != nil {
 		return model.Asset{}, model.AssetVersion{}, nil, nil, err
@@ -326,6 +358,15 @@ func (s *Service) prepareNextCharacterVersion(asset *model.Asset, name string, d
 	}
 	now := time.Now()
 	next := model.AssetVersion{ID: kernel.NewID(), AssetID: asset.ID, Version: nextNumber, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: definitionJSON, Prompt: current.Prompt, Note: current.Note, CreatedAt: now, UpdatedAt: now}
+	if profile := referenceProfile(current.ReferenceProfileJSON); profile != nil {
+		profile.Preferred = false
+		profile.Default = false
+		encoded, err := json.Marshal(profile)
+		if err != nil {
+			return model.Asset{}, model.AssetVersion{}, nil, nil, err
+		}
+		next.ReferenceProfileJSON = string(encoded)
+	}
 	representations := replacementRepresentations
 	if representations == nil {
 		currentRepresentations, representationErr := s.repo.AssetRepresentations(current.ID)
@@ -390,6 +431,10 @@ func (s *Service) characterCard(userID string, asset *model.Asset) (CharacterCar
 	if err != nil {
 		return CharacterCardSummary{}, err
 	}
+	return s.characterVersionCard(userID, *version)
+}
+
+func (s *Service) characterVersionCard(userID string, version model.AssetVersion) (CharacterCardSummary, error) {
 	definition := map[string]any{}
 	if err := json.Unmarshal([]byte(version.DefinitionJSON), &definition); err != nil {
 		return CharacterCardSummary{}, err

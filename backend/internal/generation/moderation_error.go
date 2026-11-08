@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+const textContentFilterMessage = "The upstream stopped the output with finish_reason content_filter."
+const textContentFilterReason = "上游文本模型以 content_filter 结束输出，内容未通过上游审核"
+const textContentFilterAction = "这是上游返回的限制；请调整正文或提示词后重试，API 调用成功不代表返回了完整结果"
+
 var moderationCodePattern = regexp.MustCompile(`^(input|output)(text|image|video|audio)(?:sensitivecontentdetected|riskdetection)(?:\.(policyviolation|privacyinformation|deepfake))?$`)
 var moderationSubjectPattern = regexp.MustCompile(`\b(input|output|reference)\s+(text|image|video|audio)\b`)
 var moderationMessagePattern = regexp.MustCompile(`may contain sensitive information|includes sensitive content|content (?:safety|policy)|safety policy|copyright restrictions|may contain real person|counterfeit documents or credentials`)
@@ -12,6 +16,9 @@ var moderationMessagePattern = regexp.MustCompile(`may contain sensitive informa
 // Ark codes encode direction, medium and cause independently. In this family
 // PolicyViolation means copyright, while PrivacyInformation concerns likeness.
 func moderationErrorCopy(code, message string) (Failure, bool) {
+	if strings.Contains(strings.ToLower(message), strings.ToLower(textContentFilterMessage)) && (genericProviderCode(code) || normalizeCode(code) == "content_filter" || normalizeCode(code) == "moderation_output") {
+		return Failure{Category: CategoryModerationOutput, Reason: textContentFilterReason, Action: textContentFilterAction}, true
+	}
 	m := moderationCodePattern.FindStringSubmatch(strings.ToLower(code))
 	direction, media, cause := "", "", ""
 	if len(m) != 0 {
@@ -74,6 +81,9 @@ func moderationErrorCopy(code, message string) (Failure, bool) {
 }
 
 func persistedModerationCopy(text string) (Failure, bool) {
+	if strings.HasPrefix(text, textContentFilterReason+"。"+textContentFilterAction+"。") {
+		return Failure{Category: CategoryModerationOutput, Reason: textContentFilterReason, Action: textContentFilterAction}, true
+	}
 	for _, direction := range []string{"input", "output"} {
 		for _, media := range []string{"text", "image", "video", "audio"} {
 			for _, suffix := range []string{"", ".PolicyViolation", ".PrivacyInformation", ".DeepFake"} {

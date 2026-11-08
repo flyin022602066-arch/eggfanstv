@@ -3,8 +3,9 @@ import { Input, Modal } from "antd";
 import { AudioLines, BookOpenText, Clock3, FileText, Image, Pencil, Search, Video } from "lucide-react";
 
 import { WorkspaceState } from "@/components/layout/workspace-state";
+import { CachedResourceImage } from "@/components/cached-resource-image";
 import { canvasNodeMaterialSummary, canvasNodeSearchContext, canvasNodeSearchTimes, searchCanvasNodes } from "@/lib/canvas/canvas-node-search";
-import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
+import { canvasNodeCharacterCoverStorageKey, canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { getNodeListLabel } from "@/lib/canvas/node-registry";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
@@ -124,24 +125,22 @@ const CanvasNodeSearchResult = memo(function CanvasNodeSearchResult({ node, acti
 });
 
 function CanvasNodeSearchThumbnail({ node }: { node: CanvasNodeData }) {
-    const [failed, setFailed] = useState(false);
     const mediaSource = node.type === CanvasNodeType.Video ? canvasNodeVideoPreviewUrl(node) : node.metadata?.drawingPreviewUrl
         || node.metadata?.characterCoverUrl
         || node.metadata?.folder?.themeCover
         || ((node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Panorama || node.type === CanvasNodeType.ColorGrade) ? node.metadata?.content : undefined);
     const commonClass = "h-11 w-16 rounded-[var(--r-sm)] border object-cover";
     const commonStyle = { borderColor: "color-mix(in srgb, var(--foreground) 9%, transparent)", background: "color-mix(in srgb, var(--foreground) 5%, transparent)" };
-
-    if (mediaSource && !failed) {
-        return <img src={mediaSource} alt="" width={64} height={44} loading="lazy" decoding="async" className={commonClass} style={commonStyle} onError={() => setFailed(true)} />;
-    }
+    const storageKey = node.metadata?.workflowKind === "character" ? canvasNodeCharacterCoverStorageKey(node)
+        : node.type === CanvasNodeType.Video ? node.metadata?.videoPreview?.storageKey
+            : node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Panorama || node.type === CanvasNodeType.ColorGrade ? node.metadata?.storageKey : undefined;
 
     const textPreview = node.metadata?.previewContent || node.metadata?.composerContent || node.metadata?.prompt || node.metadata?.content;
-    if (textPreview && (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Markdown || node.type === CanvasNodeType.Script)) {
+    if (!mediaSource && !storageKey && textPreview && (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Markdown || node.type === CanvasNodeType.Script)) {
         return <span aria-hidden="true" className="line-clamp-3 h-11 w-16 overflow-hidden rounded-[var(--r-sm)] border px-1.5 py-1 text-[8px] leading-[11px] text-foreground/55" style={commonStyle}>{textPreview}</span>;
     }
 
-    return (
+    const fallback = (
         <span aria-hidden="true" className="grid h-11 w-16 place-items-center rounded-[var(--r-sm)] border text-foreground/48" style={commonStyle}>
             {node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Panorama ? <Image className="size-4" />
                 : node.type === CanvasNodeType.Video ? <Video className="size-4" />
@@ -150,6 +149,7 @@ function CanvasNodeSearchThumbnail({ node }: { node: CanvasNodeData }) {
                             : <FileText className="size-4" />}
         </span>
     );
+    return mediaSource || storageKey ? <span className="block h-11 w-16 shrink-0"><CachedResourceImage storageKey={storageKey} src={mediaSource} alt="" width={64} height={44} loading="lazy" decoding="async" className={commonClass} style={commonStyle} fallback={fallback} /></span> : fallback;
 }
 
 function fullTime(value?: string) {

@@ -1,0 +1,526 @@
+{
+  "format_version": 1,
+  "extracted_at": "2026-11-08",
+  "source_binary": "resources/backend-dist/doubao/doubao.exe",
+  "source_sha256": "1e548f69030af8790d20a0fcd42ec2207a3e35b15ecb4c70021f4e24aad72866",
+  "source_python": "3.12",
+  "capabilities": {
+    "provider": "doubao",
+    "ui_label": "憨包",
+    "text_to_video": true,
+    "image_to_video": true,
+    "text_to_image": false,
+    "image_to_image": false,
+    "audio_reference": false,
+    "video_reference": false,
+    "max_reference_images": 9,
+    "duration_seconds": {
+      "cli_default": 10,
+      "backend_provider_default": 5,
+      "normalized_min": 4,
+      "normalized_max": 30
+    },
+    "ui_ratios": [
+      "16:9",
+      "9:16",
+      "1:1",
+      "4:3",
+      "3:4"
+    ],
+    "ui_models": [
+      {
+        "label": "Seedance 2.5",
+        "value": "seedance_v2.5"
+      },
+      {
+        "label": "Seedance 2.0 Mini",
+        "value": "seedance_v2.0_mini"
+      },
+      {
+        "label": "Seedance 2.0 Fast",
+        "value": "seedance_v2.0"
+      }
+    ],
+    "unsupported_cli_parameters": [
+      "resolution",
+      "fps",
+      "seed",
+      "negative_prompt",
+      "audio",
+      "video",
+      "width",
+      "height",
+      "headless",
+      "api_key",
+      "base_url"
+    ],
+    "cancel_supported": false
+  },
+  "commands": {
+    "login": {
+      "description": "打开登录窗口并等待扫码；会联网",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        },
+        {
+          "flag": "--timeout",
+          "type": "integer",
+          "default": 300,
+          "required": false,
+          "description": "等待秒数"
+        },
+        {
+          "flag": "--detach",
+          "type": "boolean",
+          "default": false,
+          "required": false,
+          "description": "仅打开登录窗口后退出"
+        },
+        {
+          "flag": "--attach",
+          "type": "boolean",
+          "default": false,
+          "required": false,
+          "description": "连接已有窗口等扫码"
+        },
+        {
+          "flag": "--port",
+          "type": "integer",
+          "default": 0,
+          "required": false,
+          "description": "已有浏览器 CDP 端口，配合 attach"
+        }
+      ]
+    },
+    "checklogin": {
+      "description": "通过浏览器验证登录状态；会联网",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        }
+      ]
+    },
+    "open": {
+      "description": "打开/唤回所选账号浏览器",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        }
+      ]
+    },
+    "accounts": {
+      "description": "本地账号清单；可能迁移/清理空账号，不能当成无副作用读取",
+      "parameters": []
+    },
+    "logout": {
+      "description": "移除指定账号本地登录态",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        }
+      ]
+    },
+    "delete-account": {
+      "description": "删除本地账号记录及 profile；不可在生成期间操作",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        },
+        {
+          "flag": "--force",
+          "type": "boolean",
+          "default": false,
+          "required": false,
+          "description": "兼容参数；当前行为无差别"
+        }
+      ]
+    },
+    "text2video": {
+      "description": "文字生成视频",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        },
+        {
+          "flag": "--prompt",
+          "type": "string",
+          "default": null,
+          "required": true,
+          "description": "提示词"
+        },
+        {
+          "flag": "--model",
+          "type": "string",
+          "default": "Seedance 2.0",
+          "required": false,
+          "description": "显示名或模型枚举"
+        },
+        {
+          "flag": "--duration",
+          "type": "integer",
+          "default": 10,
+          "required": false,
+          "description": "秒；CLI 接受整数，生成时归一到 4~30。0 在 CLI 里变成 4，不是自动时长。"
+        },
+        {
+          "flag": "--ratio",
+          "type": "string",
+          "default": "16:9",
+          "required": false,
+          "description": "比例；argparse 没有 choices，界面提供五种常用值。"
+        },
+        {
+          "flag": "--poll",
+          "type": "integer",
+          "default": 0,
+          "required": false,
+          "description": "0 仅提交；正数最多等待该秒数"
+        },
+        {
+          "flag": "--debug",
+          "type": "boolean",
+          "default": false,
+          "required": false,
+          "description": "开启调试输出/原始响应落盘"
+        }
+      ]
+    },
+    "query_result": {
+      "description": "查询完整 CLI 任务号；可以是数字会话号或 cv:... 画布令牌",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        },
+        {
+          "flag": "--submit_id",
+          "type": "string",
+          "default": null,
+          "required": true,
+          "description": "提交返回的完整 submit_id"
+        },
+        {
+          "flag": "--timeout",
+          "type": "integer",
+          "default": 300,
+          "required": false,
+          "description": "最多等待秒数，0 也会回落为 300"
+        },
+        {
+          "flag": "--once",
+          "type": "boolean",
+          "default": false,
+          "required": false,
+          "description": "查询一轮即返回，适合外部轮询"
+        },
+        {
+          "flag": "--download_dir",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "完成时下载目录"
+        }
+      ]
+    },
+    "list_task": {
+      "description": "读取本地任务记录，不查询上游；画布任务不保证全部写入此文件",
+      "parameters": [
+        {
+          "flag": "--submit_id",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "按完整任务号精确筛选"
+        },
+        {
+          "flag": "--gen_status",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "按状态精确筛选"
+        },
+        {
+          "flag": "--limit",
+          "type": "integer",
+          "default": null,
+          "required": false,
+          "description": "返回前 N 条；0/省略不截取"
+        }
+      ]
+    },
+    "probe": {
+      "description": "真实提交并保存 SSE 的调试命令，会生成/消耗额度",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        },
+        {
+          "flag": "--prompt",
+          "type": "string",
+          "default": null,
+          "required": true,
+          "description": "提示词"
+        },
+        {
+          "flag": "--model",
+          "type": "string",
+          "default": "Seedance 2.0",
+          "required": false,
+          "description": "显示名或模型枚举"
+        },
+        {
+          "flag": "--duration",
+          "type": "integer",
+          "default": 10,
+          "required": false,
+          "description": "秒；CLI 接受整数，生成时归一到 4~30。0 在 CLI 里变成 4，不是自动时长。"
+        },
+        {
+          "flag": "--ratio",
+          "type": "string",
+          "default": "16:9",
+          "required": false,
+          "description": "比例；argparse 没有 choices，界面提供五种常用值。"
+        }
+      ]
+    },
+    "image2video": {
+      "description": "1~9 张参考图生成视频；不是图片生成",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        },
+        {
+          "flag": "--prompt",
+          "type": "string",
+          "default": null,
+          "required": true,
+          "description": "提示词"
+        },
+        {
+          "flag": "--image",
+          "type": "array",
+          "default": null,
+          "required": true,
+          "description": "本地文件路径，每张重复一个 --image",
+          "items": "string",
+          "repeatable": true,
+          "max_items": 9
+        },
+        {
+          "flag": "--model",
+          "type": "string",
+          "default": "Seedance 2.0",
+          "required": false,
+          "description": "显示名或模型枚举"
+        },
+        {
+          "flag": "--duration",
+          "type": "integer",
+          "default": 10,
+          "required": false,
+          "description": "秒；CLI 接受整数，生成时归一到 4~30。0 在 CLI 里变成 4，不是自动时长。"
+        },
+        {
+          "flag": "--ratio",
+          "type": "string",
+          "default": "16:9",
+          "required": false,
+          "description": "比例；argparse 没有 choices，界面提供五种常用值。"
+        },
+        {
+          "flag": "--poll",
+          "type": "integer",
+          "default": 0,
+          "required": false,
+          "description": "0 仅提交；正数最多等待该秒数"
+        },
+        {
+          "flag": "--debug",
+          "type": "boolean",
+          "default": false,
+          "required": false,
+          "description": "调试输出"
+        }
+      ]
+    },
+    "base-dir": {
+      "description": "打印品牌/路径信息，不开浏览器；输出为原始对象，无 success 包装",
+      "parameters": []
+    },
+    "_selftest": {
+      "description": "仅本地 PIL/画布模块/可选图片压缩检查；无 success 包装，使用 ok",
+      "parameters": [
+        {
+          "flag": "--image",
+          "type": "array",
+          "default": null,
+          "required": false,
+          "description": "可选本地图片，重复传入",
+          "items": "string",
+          "repeatable": true
+        }
+      ]
+    },
+    "reset-quota": {
+      "description": "清除本地额度计数/封锁缓存；不能改变上游真实配额",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": false,
+          "description": "账号 ID/标签；不传使用当前默认账号。生成时可能按额度自动换号，以返回的 data.account 为准。"
+        }
+      ]
+    },
+    "set-plan": {
+      "description": "设置本地套餐标签和计数阈值；不会购买/开通上游套餐",
+      "parameters": [
+        {
+          "flag": "--account",
+          "type": "string",
+          "default": null,
+          "required": true,
+          "description": "已有账号 ID"
+        },
+        {
+          "flag": "--plan",
+          "type": "string",
+          "default": "",
+          "required": false,
+          "description": "normal / standard；省略或空字符串保留原标签",
+          "allowed_nonempty": [
+            "normal",
+            "standard"
+          ]
+        },
+        {
+          "flag": "--daily-limit",
+          "type": "integer",
+          "default": null,
+          "required": false,
+          "description": "每天本地最多条数，0 不限；省略保留原值"
+        },
+        {
+          "flag": "--daily-seconds",
+          "type": "integer",
+          "default": null,
+          "required": false,
+          "description": "每天本地时长阈值，0 不限；省略保留原值，未设默认30"
+        }
+      ]
+    }
+  },
+  "common_help": {
+    "flag": "--help",
+    "alias": "-h",
+    "available_on": "root and all 15 commands"
+  },
+  "environment": [
+    {
+      "name": "DOUBAO_BASE_DIR",
+      "default": "%APPDATA%/牛逼短剧",
+      "meaning": "数据父目录，实际再拼接 /doubao；SDK 同时隔离子进程 APPDATA，防止旧品牌数据自动迁移"
+    },
+    {
+      "name": "DOUBAO_VERSION_CODE",
+      "default": "20800",
+      "meaning": "网页协议 query version_code"
+    },
+    {
+      "name": "DOUBAO_PC_VERSION",
+      "default": "3.43.2",
+      "meaning": "query pc_version/doubao_pc_version"
+    },
+    {
+      "name": "DOUBAO_CHANNEL",
+      "default": "auto",
+      "values": [
+        "auto",
+        "canvas",
+        "chat"
+      ],
+      "meaning": "chat 使用对话；auto/canvas 都走画布，当前失败分支不会自动回退对话"
+    },
+    {
+      "name": "CANVAS_ATTEMPTS",
+      "default": 3,
+      "meaning": "画布生成失败自动重提的最大次数；注意原程序内部可能重复提交"
+    },
+    {
+      "name": "DOUBAO_UPLOAD_DEBUG",
+      "default": "",
+      "meaning": "任何非空字符串都会启用上传日志，包括字符串 0"
+    }
+  ],
+  "response": {
+    "envelope": {
+      "success": "boolean",
+      "data": "optional object",
+      "error": "optional string"
+    },
+    "raw_output_commands": [
+      "base-dir",
+      "_selftest"
+    ],
+    "task_identity": [
+      "data.submit_id",
+      "data.account"
+    ],
+    "status_field": "data.gen_status",
+    "success_status": "success with nonempty video_url",
+    "failure_statuses": [
+      "fail",
+      "failed",
+      "error"
+    ],
+    "expired_statuses": [
+      "cancelled",
+      "canceled",
+      "expired"
+    ],
+    "nonterminal_statuses": [
+      "in_queue",
+      "running",
+      "unknown"
+    ],
+    "query_error_is_transient": true
+  }
+}

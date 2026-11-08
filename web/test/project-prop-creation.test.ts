@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { createProjectPropAsset } from "../src/services/project-prop-creation";
+import { createProjectReferenceAsset } from "../src/services/project-prop-creation";
 import type { ProjectAsset, ProjectAssetCandidate, ProjectAssetCandidatePage } from "../src/services/api/projects";
 
 function fixture() {
@@ -27,7 +27,7 @@ function fixture() {
 
 test("manual prop creation confirms its definition and retains episode association", async () => {
     const { api, calls } = fixture();
-    const result = await createProjectPropAsset({ projectId: "project", unitId: "episode-8", name: " 残缺古籍 ", description: " 泛黄的古代线装书 ", aliases: "古籍、旧书\n古籍" }, api);
+    const result = await createProjectReferenceAsset({ projectId: "project", unitId: "episode-8", name: " 残缺古籍 ", description: " 泛黄的古代线装书 ", aliases: "古籍、旧书\n古籍" }, api);
     expect(result.asset.id).toBe("prop-8");
     expect(result.reused).toBe(false);
     expect(calls).toContainEqual(["create", [{ name: "残缺古籍", category: "prop", unitId: "episode-8", details: { description: "泛黄的古代线装书", aliases: ["古籍", "旧书"] } }], "manual"]);
@@ -37,7 +37,7 @@ test("manual prop creation confirms its definition and retains episode associati
 test("an existing prop is reused for missing-image repair instead of creating a duplicate", async () => {
     const { api, calls, asset } = fixture();
     api.listProjectAssets = async () => ({ assets: [{ ...asset, definitionJson: JSON.stringify({ aliases: ["旧书"] }) }] });
-    const result = await createProjectPropAsset({ projectId: "project", unitId: "episode-8", name: "旧书" }, api);
+    const result = await createProjectReferenceAsset({ projectId: "project", unitId: "episode-8", name: "旧书" }, api);
     expect(result.reused).toBe(true);
     expect(result.asset.id).toBe(asset.id);
     expect(calls).toEqual([]);
@@ -49,17 +49,24 @@ test("a pending prop is confirmed on retry even when it is on a later candidate 
         const page = (options as { page: number }).page;
         return { candidates: page === 1 ? [] : [candidate], hasMore: page === 1 } as unknown as ProjectAssetCandidatePage;
     };
-    await createProjectPropAsset({ projectId: "project", name: "残缺古籍" }, api);
+    await createProjectReferenceAsset({ projectId: "project", name: "残缺古籍" }, api);
     expect(calls).toEqual([["confirm", "candidate-8"]]);
 });
 
 test("blank names, ambiguous existing props and failed writes are surfaced", async () => {
     const { api, calls, asset } = fixture();
-    await expect(createProjectPropAsset({ projectId: "project", name: " " }, api)).rejects.toThrow("道具名称");
+    await expect(createProjectReferenceAsset({ projectId: "project", name: " " }, api)).rejects.toThrow("道具名称");
     expect(calls).toEqual([]);
     api.listProjectAssets = async () => ({ assets: [asset, { ...asset, id: "duplicate" }] });
-    await expect(createProjectPropAsset({ projectId: "project", name: asset.title }, api)).rejects.toThrow("重名");
+    await expect(createProjectReferenceAsset({ projectId: "project", name: asset.title }, api)).rejects.toThrow("重名");
     api.listProjectAssets = async () => ({ assets: [] });
     api.confirmProjectAssetCandidate = async () => { throw new Error("保存失败"); };
-    await expect(createProjectPropAsset({ projectId: "project", name: asset.title }, api)).rejects.toThrow("保存失败");
+    await expect(createProjectReferenceAsset({ projectId: "project", name: asset.title }, api)).rejects.toThrow("保存失败");
+});
+
+test("missing exterior scenes can be created and confirmed without reusing a classroom or prop", async () => {
+    const { api, calls, asset } = fixture();
+    api.listProjectAssets = async () => ({ assets: [{ ...asset, title: "文化楼台阶下", category: "prop" }] });
+    await createProjectReferenceAsset({ projectId: "project", unitId: "chapter-2", category: "environment", name: "文化楼台阶下", description: "午前日光下的建筑入口和台阶。" }, api);
+    expect(calls).toContainEqual(["create", [{ name: "文化楼台阶下", category: "environment", unitId: "chapter-2", details: { description: "午前日光下的建筑入口和台阶。", aliases: [] } }], "manual"]);
 });

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/characterlooks"
 	"infinite-canvas/backend/internal/kernel"
 	"regexp"
 	"sort"
@@ -400,7 +401,9 @@ func ValidatePromptTemplateResult(operation string, result map[string]interface{
 
 func promptResultJSONExtractor(operation string) func(string) (string, error) {
 	switch operation {
-	case OperationCharacterExtract, OperationChapterAssetsExtract:
+	case OperationChapterAssetsExtract:
+		return extractChapterAssetsJSONText
+	case OperationCharacterExtract:
 		// 角色卡契约要求顶层对象，模型正文里若先出现数组（例如先列一遍角色名）会让通用提取命中错误片段。
 		return func(raw string) (string, error) { return extractPreferredJSONText(raw, "characters") }
 	case OperationShortDramaOutline:
@@ -456,6 +459,9 @@ func validateCharacterExtractResult(jsonText string) error {
 		return errors.New("角色卡提取结果没有识别到任何角色，请调整正文或重新提取")
 	}
 	for index, character := range *payload.Characters {
+		if _, err := characterlooks.Extract(character); err != nil {
+			return fmt.Errorf("第 %d 个角色造型无效：%w", index+1, err)
+		}
 		for _, field := range required {
 			if _, exists := character[field]; !exists {
 				return fmt.Errorf("角色卡提取结果中第 %d 个角色缺少字段 %s", index+1, field)

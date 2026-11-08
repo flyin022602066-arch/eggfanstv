@@ -26,6 +26,7 @@ import (
 	"infinite-canvas/backend/internal/plugins"
 	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/prompts"
+	"infinite-canvas/backend/internal/provider/hanbao"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skills"
 	localtask "infinite-canvas/backend/internal/task"
@@ -81,6 +82,8 @@ type Service struct {
 	depthCapture             *depthcapture.Service
 	depthCaptureOnce         sync.Once
 	beefAPI                  *beefapi.Service
+	hanbao                   *hanbao.Service
+	hanbaoOnce               sync.Once
 	temporaryImagesOnce      sync.Once
 	temporaryImages          temporaryImageUploader
 	temporaryMediaOnce       sync.Once

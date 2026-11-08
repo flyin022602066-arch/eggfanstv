@@ -257,6 +257,9 @@ func tryStreamingDeclarativeTextCreate(ctx context.Context, input Input, adapter
 	parser.emitReasoning = input.OnReasoningDelta
 	data, mime, err := ExecuteProtocolBinaryRequestWithConsumer(WithRequestKind(ctx, "create"), input.Config, spec, parser.Consume)
 	if err != nil {
+		if parser.err != nil {
+			return nil, true, parser.err
+		}
 		return nil, true, err
 	}
 	if strings.Contains(strings.ToLower(mime), "event-stream") {
@@ -345,7 +348,7 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 		if role != "user" && role != "assistant" && role != "system" {
 			continue
 		}
-		if content := strings.TrimSpace(message.Content); content != "" {
+		if content := message.Content; strings.TrimSpace(content) != "" {
 			request.Messages = append(request.Messages, protocol.Message{Role: role, Content: content})
 		}
 	}
@@ -427,6 +430,9 @@ func ProtocolImageReferences(input Input) []protocol.MediaReference {
 func ProtocolVideoImageReferences(input Input) []protocol.MediaReference {
 	result := make([]protocol.MediaReference, 0, len(input.ReferenceImages))
 	fallbackRole := ""
+	if strings.TrimSpace(input.Config.InterfaceType) == "towo-sd25-video" {
+		fallbackRole = "reference_image"
+	}
 	if metadataString(input.Metadata, "videoStartFrameNodeId") != "" || metadataString(input.Metadata, "videoEndFrameNodeId") != "" {
 		fallbackRole = "reference_image"
 	}

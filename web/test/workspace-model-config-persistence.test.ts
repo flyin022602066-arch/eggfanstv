@@ -2,9 +2,25 @@ import { expect, test } from "bun:test";
 
 import * as workspaceBootstrap from "../src/components/workspace/workspace-bootstrap-hydrator";
 import { localWorkspaceConfig } from "../src/lib/user-session";
+import { BUILTIN_CHANNEL_SEEDS } from "../src/lib/builtin-channels";
 import { mergeManagedBeefAPICatalog } from "../src/pages/settings/channel-settings-pane";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, type AiConfig } from "../src/stores/use-config-store";
 import { createModelConfigRepository } from "../src/services/model-config-repository";
+
+test("项目系统表现模式在配置规范化和保存取回后保持独立", async () => {
+    const settings = { mode: "character" as const, characterName: "小白", characterAppearance: "白狐狸精灵", characterVoice: "清亮少女音" };
+    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, projectSystemPresentations: { first: settings, second: { ...settings, mode: "panel" } } } }).config;
+    let saved = config;
+    const repository = createModelConfigRepository({
+        read: async () => ({ config: saved, revision: 1, health: "ready", source: "builtin+local" }),
+        write: async (value, expectedRevision) => { saved = value; return { saved: true, revision: expectedRevision + 1 }; },
+    });
+    await repository.hydrate();
+    await repository.commit(config);
+    const reopened = normalizeConfigSnapshot({ config: saved }).config;
+    expect(reopened.projectSystemPresentations?.first).toEqual(settings);
+    expect(reopened.projectSystemPresentations?.second?.mode).toBe("panel");
+});
 
 test("local-mode startup restores the local model config after the session", async () => {
     const initialize = (workspaceBootstrap as Record<string, unknown>).initializeWorkspaceState as undefined | ((input: {
@@ -126,7 +142,7 @@ test("normalization restores legacy top-level model options into their channel",
     }).config;
 
     expect(normalized.channels[0]?.models).toEqual(["gemini-3.8-flash", "seedance-2.0"]);
-    expect(normalized.models).toEqual(["beefapi::gemini-3.8-flash", "beefapi::seedance-2.0"]);
+    expect(normalized.models).toEqual(["beefapi::gemini-3.8-flash", "beefapi::seedance-2.0", ...BUILTIN_CHANNEL_SEEDS.flatMap((channel) => channel.models.map((model) => channel.id + "::" + model))]);
 });
 
 test("local config strips hosted system channels but keeps direct user channels", () => {
@@ -138,7 +154,7 @@ test("local config strips hosted system channels but keeps direct user channels"
         ],
         model: "direct::local-model",
     });
-    expect(config.channels.map((channel) => channel.id)).toEqual(["direct"]);
+    expect(config.channels.map((channel) => channel.id)).toEqual(["direct", ...BUILTIN_CHANNEL_SEEDS.map((channel) => channel.id)]);
     expect(config.channels[0]?.apiKey).toBe("local-key");
 });
 

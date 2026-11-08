@@ -112,25 +112,25 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 }
 
 var (
-	localDatabaseErrorPattern = regexp.MustCompile(`(?i)(?:^|:\s*)(?:table\s+[a-z0-9_]+\s+has no column named\s+[a-z0-9_]+|no such (?:column|table):\s*[a-z0-9_.]+|(?:UNIQUE|NOT NULL|CHECK) constraint failed:\s*\S+|FOREIGN KEY constraint failed|database (?:is locked|is malformed)|database disk image is malformed|attempt to write a readonly database|disk I/O error)(?:\b|$)`)
-	htmlBodyPattern           = regexp.MustCompile(`(?is)^\s*(?:<!doctype|<html|<head|<body)`)
-	httpStatusPattern         = regexp.MustCompile(`(?i)(?:HTTP\s+|status(?:\s+code)?\s*[:：]?\s*)(\d{3})\b`)
-	wrappedHTTPStatusPattern  = regexp.MustCompile(`(?i)Request failed with status code\s+(\d{3})`)
-	urlPattern                = regexp.MustCompile(`(?i)(?:https?://|data:[a-z0-9.+-]+/[^;]+;base64,)[^\s"'<>]+`)
-	secretPattern             = regexp.MustCompile(`(?i)(?:\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|password)\b["']?\s*[=:：]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)|\bbearer\s+[^\s,;]+|\bsk-[A-Za-z0-9_-]+|\beyJ[A-Za-z0-9_.-]{20,})`)
-	credentialHeaderPattern   = regexp.MustCompile(`(?im)\b(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*[=:：][^\r\n]*`)
-	promptEchoPattern         = regexp.MustCompile(`(?is)(?:\b(?:prompt|input|query)|提示词|输入内容)["']?\s*[=:：].*`)
-	signedQueryPattern        = regexp.MustCompile(`(?i)(?:[?&](?:signature|x-amz-signature|x-oss-signature|token|key)=)[^\s&]+`)
-	safeIDPattern             = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$`)
-	providerCodePattern       = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:-]*$`)
-	unsafeIDPattern           = regexp.MustCompile(`(?i)secret|token|password|apikey|api-key|bearer|sk-`)
-	durationRangePattern      = regexp.MustCompile(`(?i)\bduration\s+(?:must\s+be|should\s+be|is\s+required\s+to\s+be)\s+(?:between\s+([0-9]+(?:\.[0-9]+)?)\s*(?:seconds?|secs?|s)?\s+and\s+([0-9]+(?:\.[0-9]+)?)|in\s+(?:the\s+)?range\s*\[?([0-9]+(?:\.[0-9]+)?)\s*[,–-]\s*([0-9]+(?:\.[0-9]+)?)\]?)\s*(?:seconds?|secs?|s)\b`)
-	widthRangePattern         = regexp.MustCompile(`(?i)\bwidth\s+(?:must\s+be|should\s+be)\s+between\s+(\d+)\s*(?:px|pixels?)?\s+and\s+(\d+)\s*(?:px|pixels?)`)
-	heightRangePattern        = regexp.MustCompile(`(?i)\bheight\s+(?:must\s+be|should\s+be)\s+between\s+(\d+)\s*(?:px|pixels?)?\s+and\s+(\d+)\s*(?:px|pixels?)`)
-	aspectRangePattern        = regexp.MustCompile(`(?i)aspect(?:\s*ratio)?\s+(?:must\s+be|should\s+be)\s+between\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)`)
-	pixelRangePattern         = regexp.MustCompile(`(?i)(?:pixel(?:s)?(?:\s+count)?|total\s+pixels)\s+(?:must\s+be|should\s+be)\s+between\s+(\d+)\s+and\s+(\d+)`)
-	requestTooLargePattern    = regexp.MustCompile(`(?i)(?:request\s+(?:body|entity|payload)|payload)\s+(?:is\s+)?too\s+large|(?:request|payload).{0,24}(?:exceeds?|larger than)`)
-	singleFileTooLargePattern = regexp.MustCompile(`(?i)(?:file|image|video|audio)\s+too\s+large|(?:file|image|video|audio).{0,24}(?:exceeds?|larger than)\s+\d+`)
+	localDatabaseErrorPattern  = regexp.MustCompile(`(?i)(?:^|:\s*)(?:table\s+[a-z0-9_]+\s+has no column named\s+[a-z0-9_]+|no such (?:column|table):\s*[a-z0-9_.]+|(?:UNIQUE|NOT NULL|CHECK) constraint failed:\s*\S+|FOREIGN KEY constraint failed|database (?:is locked|is malformed)|database disk image is malformed|attempt to write a readonly database|disk I/O error)(?:\b|$)`)
+	htmlBodyPattern            = regexp.MustCompile(`(?is)^\s*(?:<!doctype|<html|<head|<body)`)
+	httpStatusPattern          = regexp.MustCompile(`(?i)(?:HTTP\s+|status(?:\s+code)?\s*[:：]?\s*)(\d{3})\b`)
+	wrappedHTTPStatusPattern   = regexp.MustCompile(`(?i)Request failed with status code\s+(\d{3})`)
+	urlPattern                 = regexp.MustCompile(`(?i)(?:https?://|data:[a-z0-9.+-]+/[^;]+;base64,)[^\s"'<>]+`)
+	secretPattern              = regexp.MustCompile(`(?i)(?:\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|password)\b["']?\s*[=:：]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)|\bbearer\s+[^\s,;]+|\bsk-[A-Za-z0-9_-]+|\beyJ[A-Za-z0-9_.-]{20,})`)
+	credentialHeaderPattern    = regexp.MustCompile(`(?im)\b(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*[=:：][^\r\n]*`)
+	promptEchoPattern          = regexp.MustCompile(`(?is)(?:\b(?:prompt|input|query)|提示词|输入内容)["']?\s*[=:：].*`)
+	signedQueryPattern         = regexp.MustCompile(`(?i)(?:[?&](?:signature|x-amz-signature|x-oss-signature|token|key)=)[^\s&]+`)
+	safeIDPattern              = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$`)
+	providerCodePattern        = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:-]*$`)
+	unsafeIDPattern            = regexp.MustCompile(`(?i)secret|token|password|apikey|api-key|bearer|sk-`)
+	durationRangePattern       = regexp.MustCompile(`(?i)\bduration\s+(?:must\s+be|should\s+be|is\s+required\s+to\s+be)\s+(?:between\s+([0-9]+(?:\.[0-9]+)?)\s*(?:seconds?|secs?|s)?\s+and\s+([0-9]+(?:\.[0-9]+)?)|in\s+(?:the\s+)?range\s*\[?([0-9]+(?:\.[0-9]+)?)\s*[,–-]\s*([0-9]+(?:\.[0-9]+)?)\]?)\s*(?:seconds?|secs?|s)\b`)
+	widthRangePattern          = regexp.MustCompile(`(?i)\bwidth\s+(?:must\s+be|should\s+be)\s+between\s+(\d+)\s*(?:px|pixels?)?\s+and\s+(\d+)\s*(?:px|pixels?)`)
+	heightRangePattern         = regexp.MustCompile(`(?i)\bheight\s+(?:must\s+be|should\s+be)\s+between\s+(\d+)\s*(?:px|pixels?)?\s+and\s+(\d+)\s*(?:px|pixels?)`)
+	aspectRangePattern         = regexp.MustCompile(`(?i)aspect(?:\s*ratio)?\s+(?:must\s+be|should\s+be)\s+between\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)`)
+	pixelRangePattern          = regexp.MustCompile(`(?i)(?:pixel(?:s)?(?:\s+count)?|total\s+pixels)\s+(?:must\s+be|should\s+be)\s+between\s+(\d+)\s+and\s+(\d+)`)
+	requestTooLargePattern     = regexp.MustCompile(`(?i)(?:request\s+(?:body|entity|payload)|payload)\s+(?:is\s+)?too\s+large|(?:request|payload).{0,24}(?:exceeds?|larger than)`)
+	singleFileTooLargePattern  = regexp.MustCompile(`(?i)(?:file|image|video|audio)\s+too\s+large|(?:file|image|video|audio).{0,24}(?:exceeds?|larger than)\s+\d+`)
 	assetURIUnsupportedPattern = regexp.MustCompile(`(?i)^(?:(?:content\[\d+\]\s+)?暂?不支持\s+asset://\s+素材引用|当前视频接口不支持\s+asset://\s+图片 URI)(?:[，。,;；\s]|$)`)
 )
 
@@ -449,6 +449,18 @@ func ClassifyError(err error) Failure {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return normalizeFailure(Failure{Category: CategoryTimeout, Uncertain: true, Reason: "模型服务响应超时，请求可能仍在执行", Action: "请先查询原任务，不要立即重新提交"})
+	}
+	var continuation chapterAssetsContinuationError
+	if errors.As(err, &continuation) {
+		failure := ClassifyError(continuation.Err)
+		if continuation.Invalid {
+			failure.Category = CategoryMalformedResponse
+			failure.Reason = "章节资产已自动续接一次，但结果仍不完整或断点不一致"
+		} else {
+			failure.Reason = "章节资产已自动续接一次，但请求未完成：" + failure.Reason
+		}
+		failure.Action = "未回填半成品，请查看任务中已接收的文本和失败详情后再决定是否重试"
+		return normalizeFailure(failure)
 	}
 	var circuit CircuitOpenError
 	if errors.As(err, &circuit) {

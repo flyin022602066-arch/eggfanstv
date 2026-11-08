@@ -338,7 +338,13 @@ if (-not $goPath) {
     $failures.Add("Go is required on PATH, or set BEEFTV_GO_DIR to a toolchain directory that contains bin\go.exe")
 }
 
-$bunPath = Get-CommandPath "bun"
+$bunPath = $env:BEEFTV_BUN_BIN
+if (-not [string]::IsNullOrWhiteSpace($bunPath) -and -not (Test-Path -LiteralPath $bunPath -PathType Leaf)) {
+    throw "BEEFTV_BUN_BIN does not point to a Bun executable: $bunPath"
+}
+if ([string]::IsNullOrWhiteSpace($bunPath)) {
+    $bunPath = Get-CommandPath "bun"
+}
 if (-not $bunPath) {
     $failures.Add("Bun is required on PATH. wails.json frontend:install/build uses bun install --frozen-lockfile and bun run build:desktop. See https://bun.sh/")
 }
@@ -451,6 +457,8 @@ if (Test-Path -LiteralPath $desktopWindowsIconPath -PathType Leaf) {
     Remove-Item -LiteralPath $desktopWindowsIconPath -Force
 }
 Write-Step "Using Eggfans chick logo for the Windows app icon"
+$previousDesktopDataDir = $env:CANVAS_DESKTOP_DATA_DIR
+$env:CANVAS_DESKTOP_DATA_DIR = Join-Path $repoRoot (".local\cache\windows-wails-build-" + [guid]::NewGuid().ToString("N"))
 Push-Location $desktopDir
 try {
     $wailsArgs = @(
@@ -460,12 +468,11 @@ try {
         "-platform", "windows/amd64",
         "-webview2", "download",
         "-nosyncgomod",
-        "-m",
-        "-ldflags", $ldflags
+        "-m"
     )
     if ($wailsBinary -and (Test-Path -LiteralPath $wailsBinary -PathType Leaf)) {
         Write-Step "Using installed Wails CLI $wailsBinary"
-        [void](Invoke-NativeExecutable -FilePath $wailsBinary -ArgumentList $wailsArgs -FailureMessage "wails build failed")
+        Invoke-NativeExecutable -FilePath $wailsBinary -ArgumentList $wailsArgs -FailureMessage "wails build failed" | Out-Null
     }
     else {
         [void](Invoke-NativeExecutable -FilePath "go" -ArgumentList (@("run", $wailsModule) + $wailsArgs) -FailureMessage "wails build failed")
@@ -473,12 +480,21 @@ try {
 }
 finally {
     Pop-Location
+    if ($null -eq $previousDesktopDataDir) {
+        Remove-Item Env:CANVAS_DESKTOP_DATA_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:CANVAS_DESKTOP_DATA_DIR = $previousDesktopDataDir
+    }
 }
 
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Wails build finished but $exePath was not created. Native Windows output is required; this is not an accepted artifact."
 }
 Test-DesktopIconResources -ExecutablePath $exePath
+
+Write-Step "Generating bundled skill packages next to $exePath"
+[void](Invoke-NativeExecutable -FilePath $bunPath -ArgumentList @((Join-Path $repoRoot "scripts/package-bundled-skills.mjs"), (Join-Path $repoRoot "skill-packages"), (Join-Path $binDir "skill-packages")) -FailureMessage "Bundled skill packaging failed")
 
 if (Test-Path -LiteralPath $pluginResourceDir) {
     Remove-Item -LiteralPath $pluginResourceDir -Recurse -Force
@@ -492,7 +508,13 @@ if ($copied.Count -eq 0) {
     throw "Failed to copy official plugin packages next to $exePath"
 }
 
-Invoke-NativeExecutable -FilePath "bun" -ArgumentList @((Join-Path $repoRoot "scripts\package-agent-host.mjs"), "windows/amd64", (Join-Path $binDir "agent-host")) -FailureMessage "Agent host packaging failed" | Out-Null
+if ([string]::IsNullOrWhiteSpace($env:BEEFTV_NODE_RUNTIME)) {
+    $bundledNodeRuntime = Join-Path $repoRoot "agent-host\runtime"
+    if (Test-Path -LiteralPath (Join-Path $bundledNodeRuntime "node.exe") -PathType Leaf) {
+        $env:BEEFTV_NODE_RUNTIME = $bundledNodeRuntime
+    }
+}
+Invoke-NativeExecutable -FilePath $bunPath -ArgumentList @((Join-Path $repoRoot "scripts\package-agent-host.mjs"), "windows/amd64", (Join-Path $binDir "agent-host")) -FailureMessage "Agent host packaging failed" | Out-Null
 
 # Keep media inside the sidecar tree accepted by already released updaters.
 & (Join-Path $repoRoot "scripts\package-media-runtime-windows.ps1") -Destination (Join-Path $binDir "agent-host\media-runtime")
@@ -508,7 +530,7 @@ New-Item -ItemType Directory -Force -Path $cliDir | Out-Null
 $cliPath = Join-Path $cliDir "beeftv.exe"
 Push-Location (Join-Path $repoRoot "backend")
 try {
-    [void](Invoke-NativeExecutable -FilePath "go" -ArgumentList @("build", "-trimpath", "-ldflags", $ldflags, "-o", $cliPath, "./cmd/beeftv") -FailureMessage "beeftv CLI build failed")
+    [void](Invoke-NativeExecutable -FilePath "go" -ArgumentList @("build", "-trimpath", "-ldflags=$ldflags", "-o", $cliPath, "./cmd/beeftv") -FailureMessage "beeftv CLI build failed")
 }
 finally {
     Pop-Location

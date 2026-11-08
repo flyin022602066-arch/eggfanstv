@@ -263,6 +263,14 @@ export async function importResourceFromUrl(url: string, kind: "image" | "video"
     return data.resource;
 }
 
+export async function retrieveSunoMedia(url: string, clipId: string, kind: "audio" | "video", meta?: Omit<ResourceUploadMeta, "fileName">) {
+    const expected = meta?.expectedScope ?? captureUserScope();
+    const data = await http.post<{ resource: RemoteResource }>("/resources/suno-media", { url, clipId, kind, durationMs: meta?.durationMs }, { ...scopedUploadConfig(expected, meta?.idempotencyKey), timeout: 0 });
+    assertUserScope(expected);
+    rememberResource(data.resource, expected);
+    return data.resource;
+}
+
 function scopedUploadConfig(expected: CapturedUserScope, idempotencyKey?: string): HttpRequestConfig {
     const value = idempotencyKey?.trim();
     return value ? { headers: { "X-Idempotency-Key": value }, expectedScope: expected } : { expectedScope: expected };

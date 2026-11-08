@@ -41,6 +41,12 @@ func (r *Repository) SaveProjectAssetImage(projectID string, asset *model.Asset,
 		if result.RowsAffected != 1 {
 			return gorm.ErrRecordNotFound
 		}
+		if err := replaceProjectAssetReferencesTx(tx, projectID, asset.ID, version.ID, asset.UpdatedAt); err != nil {
+			return err
+		}
+		if err := saveProjectImageLibraryTx(tx, projectID, asset, version, []model.AssetRepresentation{*representation}); err != nil {
+			return err
+		}
 		return tx.Model(&model.Project{}).Where("id = ? AND user_id = ?", projectID, asset.UserID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": asset.UpdatedAt}).Error
 	})
 }

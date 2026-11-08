@@ -1,9 +1,12 @@
 import { Button, Form, Select, Tabs, Tooltip } from "antd";
-import { AudioLines, ChevronRight, Coins, FileAudio, Send, Upload, X } from "lucide-react";
-import { useId, useRef } from "react";
+import { AudioLines, ChevronRight, Coins, FileAudio, Send, Upload, WandSparkles, X } from "lucide-react";
+import { useId, useRef, useState } from "react";
 import { SUNO_MODELS, SUNO_OPERATIONS, type SunoOperation } from "@/lib/suno-contract";
+import { AppModal } from "@/components/ui/product/app-modal";
 import { StudioField } from "@/components/suno-field";
 import { fieldValue, fieldVisible, STUDIO_GROUPS } from "./studio-helpers";
+import { StudioCreator } from "./studio-creator";
+import type { MusicWritingOutput } from "./studio-helpers";
 
 type Props = {
     operation: SunoOperation;
@@ -19,10 +22,12 @@ type Props = {
     onFile: (file: File | null) => void;
     onUpload: () => void;
     onSubmit: () => void;
+    onApplyAssistantDraft: (kind: MusicWritingOutput, text: string) => void;
 };
 
-export function StudioParameters({ operation, values, errors, disabled, submitting, uploading, referenceFile, canUpload, onOperation, onValue, onFile, onUpload, onSubmit }: Props) {
+export function StudioParameters({ operation, values, errors, disabled, submitting, uploading, referenceFile, canUpload, onOperation, onValue, onFile, onUpload, onSubmit, onApplyAssistantDraft }: Props) {
     const fileInput = useRef<HTMLInputElement>(null);
+    const [creatorOpen, setCreatorOpen] = useState(false);
     const operationId = useId();
     const fields = operation.fields.filter((field) => fieldVisible(field, values));
     const advancedFields = fields.filter((field) => field.type === "json" && field.key === "metadata_params");
@@ -30,7 +35,7 @@ export function StudioParameters({ operation, values, errors, disabled, submitti
     const advancedError = advancedFields.some((field) => errors[field.key]);
     return (
         <section className="suno-studio-parameters" aria-label="创作参数">
-            <div className="suno-studio-section-heading"><AudioLines size={16} /><h2>创作工作台</h2><span className="suno-studio-count">{SUNO_OPERATIONS.length} API</span></div>
+            <div className="suno-studio-section-heading"><AudioLines size={16} /><h2>创作工作台</h2><span className="suno-studio-count">{SUNO_OPERATIONS.length} API</span><Tooltip title="灵感、歌词与风格创作"><Button aria-label="打开 AI 音乐创作" type="text" size="small" icon={<WandSparkles size={15} />} disabled={disabled} onClick={() => setCreatorOpen(true)} /></Tooltip></div>
             <Tabs className="suno-studio-group-tabs" size="small" activeKey={operation.group} items={STUDIO_GROUPS.map((group) => ({ key: group.value, label: group.label }))} onChange={(group) => {
                 const first = SUNO_OPERATIONS.find((item) => item.group === group);
                 if (first) onOperation(first.id);
@@ -61,6 +66,9 @@ export function StudioParameters({ operation, values, errors, disabled, submitti
             <footer className="suno-studio-submit-bar">
                 <Button block type="primary" size="large" icon={<Send size={16} />} loading={submitting} disabled={disabled || uploading} onClick={onSubmit}>{operation.method === "GET" || operation.id === "post-suno-fetch" ? "查询" : "提交"}{operation.label}</Button>
             </footer>
+            <AppModal open={creatorOpen} title="AI 音乐创作" width={960} centered footer={null} onCancel={() => setCreatorOpen(false)}>
+                <StudioCreator busy={disabled} onApply={(kind, text) => { onApplyAssistantDraft(kind, text); setCreatorOpen(false); }} />
+            </AppModal>
         </section>
     );
 }

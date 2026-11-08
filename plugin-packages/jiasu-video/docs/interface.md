@@ -1,4 +1,4 @@
-# 佳速视频接口
+# 极途 Gway 视频接口
 
 ## 接口和鉴权
 
@@ -50,6 +50,14 @@ H3 专用文档规定：输出 15 秒、2k，最多 3 段参考视频、3 段参
 
 创建读取 `id`，不拿本地任务 ID 查询上游。状态 `queued` 为等待，`in_progress` 为处理中，`completed` 为成功，`failed` 为失败。完成后从 `result_urls` 读取视频；失败显示 `error.message`。宿主下载并保存生成结果。
 
+## Gway 专属参考素材上传
+
+上传会话的 `items` 按每批 1–20 项提交，`name`、`content_type`、`size`、`kind` 分别填写素材名称、实际 MIME、原文件字节数和 image/video/audio 类型。超过 20 项自动分批，大文件组合按内存占用提前切批；上传批次限制不作为模型参考数量限制。响应逐项对应各自的 `upload_id`、`put.url` 与 `put.headers`，完成确认后才将 URL 写回原位置。
+
+仅 `jiasu-video` 且上游主机为 `gway.dev` 或 `www.gway.dev` 时，宿主使用本渠道 API Key 调用 `POST /v1/media/uploads`，按预签名地址 PUT 原文件，并在 `complete` 成功后使用公开链接。上传会话失败且原文件不超过官方直传上限 32 MiB 时，尝试 `POST /v1/media/upload` 的 `file`、`kind` 表单；专属上传仍不可用才回退 Uguu。取消操作不会触发兜底上传。
+
+此流程不修改原始图片、不改变生成请求参数，不影响其他渠道，也不会把 Gway 密钥转发到预签名对象存储地址。
+
 <!-- BEEFTV_PLUGIN_MANIFEST_START -->
 ## Manifest 完整接口定义
 
@@ -59,10 +67,10 @@ H3 专用文档规定：输出 15 秒、2k，最多 3 段参考视频、3 段参
 {
   "apiVersion": "beeftv.plugin/v2",
   "id": "jiasu-video",
-  "name": "佳速视频",
+  "name": "极途 Gway",
   "version": "1.0.1",
   "author": "Eggfans TV",
-  "description": "佳速独立视频协议，支持 dola-sd-2.5、dola-sd-2.0、minimax-h3、sd-2.5-j2-V、sd-2.5-J2。",
+  "description": "极途 Gway 独立视频协议，支持 dola-sd-2.5、dola-sd-2.0、minimax-h3、sd-2.5-j2-V、sd-2.5-J2。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
   "permissions": [
     "generation.run",
@@ -82,7 +90,7 @@ H3 专用文档规定：输出 15 秒、2k，最多 3 段参考视频、3 段参
     "providers": [
       {
         "id": "jiasu-video",
-        "label": "佳速视频",
+        "label": "极途 Gway",
         "capabilities": [
           "video"
         ],

@@ -22,6 +22,7 @@
  */
 
 /** 与 `use-config-store.ts` 的 `ApiCallFormat` 保持一致；此处独立声明以避免循环依赖。 */
+import { HANBAO_MODELS, HANBAO_MODEL_NAMES, HANBAO_PROTOCOL } from "./hanbao";
 type BuiltinChannelApiFormat = "openai" | "gemini" | "claude";
 
 export type BuiltinChannelSeed = {
@@ -31,13 +32,21 @@ export type BuiltinChannelSeed = {
     apiFormat: BuiltinChannelApiFormat;
     /** 预置的模型名，必须与上游 `GET /v1/models` 返回的 id 逐字一致。 */
     models: string[];
+    interfaceType?: string;
+    modelProfiles?: Array<{ model: string; displayName: string; protocol: string; capability: "video" }>;
 };
 
 export function isChannelVisibleInPackagedSettings(channelId: string, packagedWindows: boolean): boolean {
     return !packagedWindows || channelId !== "jetmobo-gateway";
 }
 
+export function isFixedModelCatalogChannel(channelId: string): boolean {
+    return channelId === "towo-sd25-video" || channelId === "hanbao";
+}
+
 export const BUILTIN_CHANNEL_SEEDS: BuiltinChannelSeed[] = [
+    { id: "hanbao", name: "憨包", baseUrl: "https://www.doubao.com", apiFormat: "openai", models: HANBAO_MODELS, interfaceType: HANBAO_PROTOCOL,
+        modelProfiles: HANBAO_MODELS.map((model) => ({ model, displayName: HANBAO_MODEL_NAMES[model], protocol: HANBAO_PROTOCOL, capability: "video" })) },
     {
         id: "jetmobo-gateway",
         name: "中转网关",

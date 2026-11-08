@@ -220,6 +220,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		Tasks:              localRoot.Tasks,
 		Generation:         localRoot.Generation,
 		BeefAPI:            beefAPIConnection,
+		Hanbao:             svc.HanbaoDomain(),
 		AssistantHost:      assistantHost,
 		Conversations:      conversation.New(conversation.NewStore(repo)),
 		TextReplay:         svc.TextReplay(),

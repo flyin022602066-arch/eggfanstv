@@ -1,0 +1,52 @@
+{
+  "provider": "doubao",
+  "ui_label": "憨包",
+  "text_to_video": true,
+  "image_to_video": true,
+  "text_to_image": false,
+  "image_to_image": false,
+  "audio_reference": false,
+  "video_reference": false,
+  "max_reference_images": 9,
+  "duration_seconds": {
+    "cli_default": 10,
+    "backend_provider_default": 5,
+    "normalized_min": 4,
+    "normalized_max": 30
+  },
+  "ui_ratios": [
+    "16:9",
+    "9:16",
+    "1:1",
+    "4:3",
+    "3:4"
+  ],
+  "ui_models": [
+    {
+      "label": "Seedance 2.5",
+      "value": "seedance_v2.5"
+    },
+    {
+      "label": "Seedance 2.0 Mini",
+      "value": "seedance_v2.0_mini"
+    },
+    {
+      "label": "Seedance 2.0 Fast",
+      "value": "seedance_v2.0"
+    }
+  ],
+  "unsupported_cli_parameters": [
+    "resolution",
+    "fps",
+    "seed",
+    "negative_prompt",
+    "audio",
+    "video",
+    "width",
+    "height",
+    "headless",
+    "api_key",
+    "base_url"
+  ],
+  "cancel_supported": false
+}

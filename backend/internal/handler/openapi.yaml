@@ -28,6 +28,155 @@ tags:
   - name: assistant
   - name: creation-conversations
 paths:
+  /projects/{id}/characters/{assetId}/looks/extract:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: assetId, required: true, schema: { type: string } }
+    post:
+      tags: [projects]
+      summary: 将现有组合设定拆分为独立空图造型
+      description: 不调用模型。解析 looks 数组、编号造型或明确换装描述，返回 data.versions。按基础版本更新时间和角色主版本 CAS；已拆分的造型不重复创建，历史图片和镜头绑定保留。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseVersionId, expectedUpdatedAt]
+              properties:
+                baseVersionId: { type: string }
+                expectedUpdatedAt: { type: string, format: date-time }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 未发现多套造型、设定无效或项目已归档 }
+        '404': { description: 项目或角色版本不存在或不可访问 }
+        '409': { description: 角色版本已变化，请刷新后重试 }
+  /projects/{id}/character-versions:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      tags: [projects]
+      summary: 读取项目全部角色历史版本与造型目录
+      description: data 为 revision 与 versions；仅返回未归档版本，每版包含 assetId、versionId、version、title、definition、representations、voice、referenceProfile、updatedAt。校验项目归属。
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '404': { description: 项目不存在或不可访问 }
+  /projects/{id}/characters/{assetId}/versions/{versionId}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: assetId, required: true, schema: { type: string } }
+      - { in: path, name: versionId, required: true, schema: { type: string } }
+    delete:
+      tags: [projects]
+      summary: 安全移除单个角色造型版本
+      description: 仅归档版本，不删除表现、原始媒体、声音绑定或任务。允许空图和历史版本；主版本有备选时优先切换到最近有就绪图片的未归档版本，否则切换到最近未归档版本。事务内校验归属、项目活动状态、版本及主版本/备选修订，拒绝 linked 镜头、画布或排队/生成中任务引用；引用数据无法解析时拒绝删除。最后一个未归档版本须改用移除角色资产。
+      parameters:
+        - in: query
+          name: expectedUpdatedAt
+          required: true
+          description: 当前目录返回的版本 updatedAt，RFC3339 日期时间，须 URL 编码；无请求体。
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: 成功信封，data 为 { deleted：true }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, enum: [0] }
+                  data:
+                    type: object
+                    required: [deleted]
+                    properties:
+                      deleted: { type: boolean, enum: [true] }
+        '400': { description: 缺少有效修订时间、非活动项目或最后版本需移除角色资产 }
+        '404': { description: 项目、角色或版本不存在或不可访问，或版本已归档 }
+        '409': { description: 修订已变化、镜头或画布仍引用、任务进行中或引用数据无效；msg 提供处理建议 }
+  /projects/{id}/characters/{assetId}/versions/{versionId}/reference-profile:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: assetId, required: true, schema: { type: string } }
+      - { in: path, name: versionId, required: true, schema: { type: string } }
+    patch:
+      tags: [projects]
+      summary: 标注角色造型并指定定稿
+      description: 按版本更新时间 CAS；同造型定稿与同角色默认唯一。定稿必须有就绪图片。不会重绑旧镜头。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedUpdatedAt, profile]
+              properties:
+                expectedUpdatedAt: { type: string, format: date-time }
+                profile: { $ref: '#/components/schemas/CharacterReferenceProfile' }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 标注无效、定稿缺图或项目已归档 }
+        '409': { description: 版本已变化 }
+  /projects/{id}/characters/{assetId}/looks:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: assetId, required: true, schema: { type: string } }
+    post:
+      tags: [projects]
+      summary: 从指定角色版本创建空图新造型
+      description: 返回 data.version；图片需独立补齐并核对后指定定稿。不会继承旧服装图片或定稿资格。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseVersionId, profile, definition]
+              properties:
+                baseVersionId: { type: string }
+                profile: { $ref: '#/components/schemas/CharacterReferenceProfile' }
+                definition: { type: object, additionalProperties: true }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 基础版本或设定无效、项目已归档 }
+        '409': { description: 角色版本变化 }
+  /projects/{id}/units/{unitId}/character-references:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: unitId, required: true, schema: { type: string } }
+    put:
+      tags: [projects]
+      summary: 原子更新章节各镜头的角色造型选择
+      description: 按项目修订及每镜脚本修订 CAS。自动选择不能覆盖锁定项；生成中镜头拒绝修改。仅替换对应角色的 reference 绑定，保留其他资产与角色。任一项失败整批回滚。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, choices]
+              properties:
+                expectedRevision: { type: integer, format: int64, minimum: 1 }
+                choices:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items:
+                    type: object
+                    required: [shotId, assetId, versionId, status, source, locked, reason, expectedShotRevisionId]
+                    properties:
+                      shotId: { type: string }
+                      assetId: { type: string }
+                      versionId: { type: string }
+                      status: { type: string, enum: [resolved, pending] }
+                      source: { type: string, enum: [manual, auto, rule] }
+                      locked: { type: boolean }
+                      reason: { type: string, minLength: 1, maxLength: 4000 }
+                      expectedShotRevisionId: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 非法版本、缺图或自动选择了非定稿 }
+        '409': { description: 项目/脚本变化、生成中或自动覆盖锁定 }
   /tasks/{id}/stop-local:
     post:
       tags: [tasks]
@@ -844,6 +993,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /resources/suno-media:
+    post:
+      tags: [resources]
+      summary: 取回已生成的 Suno 音频或歌曲视频
+      description: 只下载原结果并保存为当前用户的本地资源，不提交创作。按幂等标识和 clipId 复用本地文件，校验真实媒体内容、大小和 SSRF 出口；不向媒体站传递 API Key 或本地凭据。
+      parameters:
+        - in: header
+          name: X-Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 512 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, clipId, kind]
+              properties:
+                url: { type: string, format: uri, maxLength: 8192 }
+                clipId: { type: string, minLength: 1, maxLength: 256 }
+                kind: { type: string, enum: [audio, video] }
+                durationMs: { type: integer, format: int64, minimum: 0 }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
   /resources/{id}:
     get:
       tags: [resources]
@@ -1089,6 +1273,18 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    CharacterReferenceProfile:
+      type: object
+      required: [name, enabled, preferred, default]
+      properties:
+        lookId: { type: string, maxLength: 80, description: 空值创建新造型分组 }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 4000 }
+        matchHints: { type: string, maxLength: 2000 }
+        excludeHints: { type: string, maxLength: 2000 }
+        enabled: { type: boolean }
+        preferred: { type: boolean }
+        default: { type: boolean }
     Envelope:
       type: object
       required: [code, msg]

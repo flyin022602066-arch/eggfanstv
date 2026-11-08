@@ -85,7 +85,7 @@ try {
     await page.screenshot({ path: resolve(output, "asset-generation-panel.png") });
     await dialog.getByRole("button", { name: "开始生成", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
-    await page.waitForFunction(() => [...document.querySelectorAll("button")].filter(button => button.textContent?.includes("重新生成资产图")).length === 2);
+    await page.waitForFunction(() => [...document.querySelectorAll("button")].filter(button => button.textContent?.includes("编辑提示词并重绘")).length === 2);
     assert.equal(submissions.length, 1);
     assert.equal(submissions[0].input.metadata.assetId, "scene");
     assert.equal(submissions[0].input.metadata.assetVersionId, "scene-v1");

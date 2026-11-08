@@ -6,12 +6,17 @@ import (
 	"reflect"
 	"testing"
 
+	"infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/model"
 	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 )
 
 type fakePorts struct{}
+
+func (fakePorts) RetrieveSunoMedia(context.Context, string, asset.SunoMediaRequest, int64) (*model.Resource, error) {
+	return nil, nil
+}
 
 func (fakePorts) WorkspaceOwner(string) (*model.User, error)          { return &model.User{}, nil }
 func (fakePorts) ListProjects(string) ([]localproject.Summary, error) { return nil, nil }

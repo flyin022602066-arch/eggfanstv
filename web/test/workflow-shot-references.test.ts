@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { canvasResourceMentionToken } from "@/lib/canvas/canvas-resource-references";
 import type { ProjectAsset, ProjectDetail } from "@/services/api/projects";
 import { buildShotAssetReferenceContext, ensureShotAssetMentionPrompt, resolveShotAssetMentionPrompt } from "@/pages/projects/detail/workflow-shot-references";
+import { unresolvedProjectAssetMentions } from "@/lib/project-asset-mentions";
 
 describe("workflow shot asset references", () => {
     test("builds ordered image references for bound media and characters", () => {
@@ -25,6 +26,84 @@ describe("workflow shot asset references", () => {
         const context = buildShotAssetReferenceContext(detail(), "shot-1");
 
         expect(() => resolveShotAssetMentionPrompt("跟随 @[asset:missing]", context)).toThrow("未绑定到当前镜头");
+        expect(() => resolveShotAssetMentionPrompt("跟随 @[asset:missing]", context)).toThrow("资产 ID：missing");
+    });
+
+    test("identifies a known but unbound asset by title and ID", () => {
+        const project = detail();
+        project.assets.push({
+            id: "asset-sword",
+            title: "断剑",
+            mediaType: "image",
+            category: "prop",
+            status: "confirmed",
+            primaryVersionId: "version-sword",
+            versionCount: 1,
+            usages: [],
+            position: 3,
+            storageKey: "resource:sword-image",
+            updatedAt: "2026-08-29T00:00:00Z",
+        });
+        const context = buildShotAssetReferenceContext(project, "shot-1");
+
+        expect(() => resolveShotAssetMentionPrompt("跟随 @[asset:asset-sword]", context)).toThrow("断剑（资产 ID：asset-sword）");
+    });
+
+    test("generated appendix pruning preserves free prose and bound reference rows", () => {
+        const context = buildShotAssetReferenceContext(detail(), "shot-1");
+        context.assetCatalog!.push({ id: "phantom", title: "潇潇", category: "character" });
+        const prose = "林默推门。林默：潇潇明天才来。";
+        const prompt = `${prose}\n\n【角色参考】\n潇潇：@[asset:phantom]\n林默：@[asset:asset-character]\n用户备注：潇潇没有到场。\n\n【资产参考】\n- 潇潇：人物参考：@图片3\n  本镜造型：潇潇披斗篷。\n- 林默：人物参考：@图片2\n  本镜造型：林默穿白衣。\n用户动作：林默推门离开。\n\n【镜头台词】\n林默：我提到过潇潇。`;
+        const ensured = ensureShotAssetMentionPrompt(prompt, context.mentionReferences, context.assetCatalog);
+        const compiled = resolveShotAssetMentionPrompt(prompt, context);
+        for (const result of [ensured, compiled]) {
+            expect(result).not.toContain("@[asset:phantom]");
+            expect(result).not.toContain("- 潇潇：人物参考");
+            expect(result).not.toContain("本镜造型：潇潇披斗篷。");
+            expect(result).toContain(prose);
+            expect(result).toContain("用户备注：潇潇没有到场。");
+            expect(result).toContain("用户动作：林默推门离开。");
+            expect(result).toContain("本镜造型：林默穿白衣。");
+            expect(result).toContain("【镜头台词】\n林默：我提到过潇潇。");
+        }
+        expect(ensured).toContain("林默：@[asset:asset-character]");
+        expect(() => resolveShotAssetMentionPrompt("【角色参考】\n用户备注：@[asset:phantom]走进门。", context)).toThrow("未绑定到当前镜头");
+        expect(() => resolveShotAssetMentionPrompt("【角色参考】\n未知人：@[asset:unknown]", context)).toThrow("资产 ID：unknown");
+        expect(() => resolveShotAssetMentionPrompt("【场景与道具参考】\n潇潇：@[asset:phantom]", context)).toThrow("未绑定到当前镜头");
+    });
+
+    test("repairs an unknown ID only when its explicit material definition matches one bound asset", () => {
+        const context = buildShotAssetReferenceContext(detail(), "shot-1");
+        const prompt = "将@[asset:obsolete-scene]定义为<雨夜街道>，将@[asset:obsolete-character]定义为<林默>。\n镜头1：@[asset:obsolete-character]走进@[asset:obsolete-scene]。";
+
+        const result = resolveShotAssetMentionPrompt(prompt, context, { interfaceType: "jiasu-video" });
+
+        expect(result).toContain("将@图片1定义为<雨夜街道>，将@图片2定义为<林默>");
+        expect(result).toContain("镜头1：@图片2走进@图片1。");
+        expect(result).not.toContain("obsolete-");
+    });
+
+    test("normalizes stale named references before adding the current bindings", () => {
+        const context = buildShotAssetReferenceContext(detail(), "shot-1");
+        const prompt = ensureShotAssetMentionPrompt("镜头1：林默推门。\n【角色参考】\n林默：@[asset:old-character]", context.mentionReferences);
+
+        expect(prompt).not.toContain("old-character");
+        expect(prompt.match(/@\[asset:asset-character\]/g)).toHaveLength(1);
+    });
+
+    test("does not guess a replacement for ambiguous names or unexplained IDs", () => {
+        const context = buildShotAssetReferenceContext(detail(), "shot-1");
+        context.assetCatalog!.push({ id: "another-character", title: "林默", category: "character" });
+
+        expect(() => resolveShotAssetMentionPrompt("将@[asset:unknown]定义为<林默>。", context)).toThrow("资产 ID：unknown");
+        expect(() => resolveShotAssetMentionPrompt("@[asset:unknown]推门进入。", context)).toThrow("资产 ID：unknown");
+    });
+
+    test("preserves an explicitly selected asset ID even when its title matches another binding", () => {
+        const context = buildShotAssetReferenceContext(detail(), "shot-1");
+        context.assetCatalog!.push({ id: "unbound-character", title: "林默", category: "character" });
+
+        expect(() => resolveShotAssetMentionPrompt("将@[asset:unbound-character]定义为<林默>。", context)).toThrow("资产 ID：unbound-character");
     });
 
     test("Jiasu uses native at references for both asset mentions and voice bindings", () => {
@@ -61,6 +140,21 @@ describe("workflow shot asset references", () => {
         const result = resolveShotAssetMentionPrompt("雨夜门口。", buildShotAssetReferenceContext(detail(), "shot-1"), { dialogue: "旁白：城门关闭。" });
         expect(result).toContain("【镜头台词】\n\n旁白：城门关闭。");
         expect(result).not.toContain("镜头台词：旁白");
+    });
+
+    test("bound assets without pictures stay bound and retain their editable mentions", () => {
+        const project = detail();
+        project.assets[0]!.storageKey = "";
+        project.assets[1]!.character!.representations = [];
+        const context = buildShotAssetReferenceContext(project, "shot-1");
+        const prompt = "镜头1：雨夜街道。\n【角色参考】\n林默：@[asset:asset-character]\n【场景与道具参考】\n雨夜街道：@[asset:asset-scene]";
+
+        expect(context.boundAssetIds).toEqual(["asset-scene", "asset-character", "asset-audio"]);
+        expect(context.referenceImages).toHaveLength(0);
+        expect(context.missingImageTitles).toEqual(["雨夜街道", "林默"]);
+        expect(unresolvedProjectAssetMentions(prompt, context.assetCatalog!, context.boundAssetIds!)).toEqual([]);
+        expect(ensureShotAssetMentionPrompt(prompt, context.mentionReferences, context.assetCatalog, context.boundAssetIds)).toContain("林默：@[asset:asset-character]");
+        expect(() => resolveShotAssetMentionPrompt(prompt, context)).toThrow("缺少参考图");
     });
 
     test("does not silently submit text-only video when a bound character has no image", () => {
@@ -114,6 +208,33 @@ describe("workflow shot asset references", () => {
         expect(context.referenceImages[1]?.storageKey).toBe("resource:pinned-image");
         expect(context.mentionReferences[1]?.storageKey).toBe("resource:pinned-image");
         expect(context.resolvedCharacterVersions).toEqual([{ assetId: character.id, versionId: "pinned-version" }]);
+    });
+    test("historical missing images never borrow the current look", () => {
+        const project = detail();
+        project.shotReferences[1] = { ...project.shotReferences[1]!, assetVersionId: "old", referencedVersion: { id: "old", assetId: "asset-character", version: 0, representations: [] } };
+        const context = buildShotAssetReferenceContext(project, "shot-1");
+        expect(context.referenceImages).toHaveLength(1);
+        expect(() => resolveShotAssetMentionPrompt("林默推门", context)).toThrow("缺少参考图");
+    });
+    test("pending, stale automatic choices and multiple looks block submission", () => {
+        for (const state of [{ selectionStatus: "pending" as const }, { selectionStatus: "resolved" as const, selectionSource: "auto" as const, selectionRevisionId: "stale" }]) {
+            const project = detail();
+            Object.assign(project.shotReferences[1]!, state);
+            expect(() => resolveShotAssetMentionPrompt("推门", buildShotAssetReferenceContext(project, "shot-1"))).toThrow("待确认");
+        }
+        const project = detail();
+        project.shotReferences.push({ ...project.shotReferences[1]!, id: "duplicate", assetVersionId: "another", asset: project.assets[1]! });
+        expect(() => resolveShotAssetMentionPrompt("推门", buildShotAssetReferenceContext(project, "shot-1"))).toThrow("多个造型");
+    });
+    test("records exact historical resources and does not inherit current voice", () => {
+        const project = detail();
+        project.assets[1]!.character!.voice = { id: "new", profile: { sampleResourceId: "new-voice" }, mode: "sample", instructions: "新声音" };
+        project.shotReferences[1]!.referencedVersion = { id: "version-character", assetId: "asset-character", version: 1, representations: project.assets[1]!.character!.representations, definition: {} };
+        const context = buildShotAssetReferenceContext(project, "shot-1");
+        expect(context.referenceAudios).toHaveLength(0);
+        expect(context.characterReferenceSnapshot).toMatchObject([{ assetId: "asset-character", versionId: "version-character", resourceId: "character-cover" }]);
+        project.shotReferences.push({ ...project.shotReferences[1]!, id: "output", role: "output" });
+        expect(buildShotAssetReferenceContext(project, "shot-1").referenceImages).toHaveLength(2);
     });
 });
 

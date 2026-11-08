@@ -1,0 +1,21 @@
+import { createRoot } from "react-dom/client";
+import { App, ConfigProvider } from "antd";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
+import AssetsPage from "@/pages/assets";
+import { getAntThemeConfig } from "@/lib/app-theme";
+import { setActiveUserScope } from "@/lib/user-scope";
+import { useUserStore } from "@/stores/use-user-store";
+import { useAssetStore } from "@/stores/use-asset-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+
+setActiveUserScope("assets-layout-offline-test");
+useUserStore.setState({ hydrated: true, storageMode: "remote", user: { id: "assets-layout-offline-test", username: "fixture", displayName: "Fixture", role: "user", status: "active" } });
+await useAssetStore.persist.rehydrate();
+await useCanvasStore.persist.rehydrate();
+useAssetStore.setState({ hydrated: true, assets: [] });
+useCanvasStore.setState({ projects: [] });
+const dark = new URLSearchParams(location.search).get("theme") !== "light";
+document.documentElement.classList.toggle("dark", dark);
+const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={client}><ConfigProvider theme={getAntThemeConfig(dark)}><App><MemoryRouter initialEntries={["/assets"]}><div className="app-user-workspace app-product-workspace h-dvh overflow-hidden text-foreground"><div className="app-workspace-shell flex h-dvh min-h-0 w-full flex-col overflow-hidden"><div className="app-workspace-main-row flex min-h-0 min-w-0 flex-1 overflow-hidden"><aside className="app-workspace-sidebar flex h-full shrink-0 flex-col overflow-hidden">Eggfans TV</aside><div className="app-workspace-stage relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"><div className="relative min-h-0 min-w-0 flex-1 overflow-hidden"><AssetsPage /></div></div></div></div></div></MemoryRouter></App></ConfigProvider></QueryClientProvider>);

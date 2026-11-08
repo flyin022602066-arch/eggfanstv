@@ -1,7 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
-import { prepareProjectShotAssets, prepareProjectUnitShotAssets } from "../src/services/project-shot-assets";
+import { prepareProjectShotAssets, prepareProjectUnitShotAssets, projectUnitShotAssetPlan } from "../src/services/project-shot-assets";
 import type { ProjectAsset, ProjectUnitWorkspace, ShotAssetReference } from "../src/services/api/projects";
+import { unlinkShotAsset } from "../src/services/api/projects";
+import { http } from "../src/services/api/request";
+import { buildShotAssetReferenceContext, resolveShotAssetMentionPrompt } from "../src/pages/projects/detail/workflow-shot-references";
+import type { ProjectDetail } from "../src/services/api/projects";
 
 function fixture() {
     const asset = { id: "character", title: "嬴政", category: "character", primaryVersionId: "character-v2" } as ProjectAsset;
@@ -32,6 +36,41 @@ test("generation repairs an unbound historical shot using the full project asset
     expect(result.workspace.shotReferences.map((reference) => reference.assetVersionId)).toEqual(["character-v2"]);
     expect(result.boundCount).toBe(1);
     expect(calls).toEqual(["list-assets", "bind:character-v2"]);
+});
+
+test("chapter repair recovers a visible existing character omitted from the model cast array", async () => {
+    const { api, workspace } = fixture();
+    const emperor = { id: "character", title: "嬴政", category: "character", primaryVersionId: "character-v2" } as ProjectAsset;
+    const visitor = { id: "visitor", title: "陈尧", category: "character", primaryVersionId: "visitor-v1" } as ProjectAsset;
+    const unseen = { id: "unseen", title: "赵高", category: "character", primaryVersionId: "unseen-v1" } as ProjectAsset;
+    api.listProjectAssets = async () => ({ assets: [emperor, visitor, unseen] });
+    workspace.unit = { id: "u", sourceText: "<p>嬴政躺在榻上。这个声音在殿内回响。陈尧依旧跪在地上。赵高（画外音）：“陛下身体如何？”</p>" } as ProjectUnitWorkspace["unit"];
+    workspace.shots = [{ id: "shot-1", unitId: "u", position: 0, currentRevisionId: "r" }] as ProjectUnitWorkspace["shots"];
+    workspace.shotRevisions = [{ id: "r", shotId: "shot-1", version: 1, plotDescription: "嬴政坐在榻上，陈尧跪在地上抬头。", videoPrompt: "镜头1：起幅：嬴政握住短剑。→ 落幅：陈尧跪在地上。声音：赵高（画外音）：“陛下身体如何？”", actionBeatsJson: JSON.stringify([{ type: "asset_context", characters: [{ characterAssetId: "character", characterName: "嬴政" }] }]) }] as ProjectUnitWorkspace["shotRevisions"];
+    expect((await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).boundCount).toBe(2);
+    expect(workspace.shotReferences.map((reference) => reference.assetVersionId)).toEqual(["character-v2", "visitor-v1"]);
+    expect((await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).boundCount).toBe(0);
+});
+
+test("prop alias ambiguity respects existing bindings throughout generation preparation and chapter repair", async () => {
+    for (const chapter of [false, true]) {
+        const { api, workspace, calls } = fixture();
+        const scene = { id: "pharmacy", title: "药店", category: "environment", primaryVersionId: "pharmacy-v1" } as ProjectAsset;
+        const phones = [
+            { id: "phone-a", title: "云舒的手机", category: "prop", primaryVersionId: "phone-a-v1", definitionJson: JSON.stringify({ aliases: ["手机"] }) },
+            { id: "phone-b", title: "周行旻的电话设备", category: "prop", primaryVersionId: "phone-b-v1", definitionJson: JSON.stringify({ aliases: ["手机"] }) },
+        ] as ProjectAsset[];
+        api.listProjectAssets = async () => ({ assets: [scene, ...phones] });
+        workspace.shotReferences = [scene, ...phones].map((asset) => ({ id: asset.id, shotId: "shot-1", assetVersionId: asset.primaryVersionId, asset, role: "reference", status: "linked" })) as ShotAssetReference[];
+        workspace.shotRevisions = [{ id: "revision-1", shotId: "shot-1", version: 1, videoPrompt: "手机在柜台上亮起。", actionBeatsJson: JSON.stringify([{ type: "asset_context", sceneAssetId: "pharmacy", propNames: ["手机"] }]) }] as ProjectUnitWorkspace["shotRevisions"];
+        const result = chapter
+            ? await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)
+            : await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-1", script: { propNames: ["手机"], sceneAssetId: "pharmacy" } }, api);
+        expect(result.boundCount).toBe(0);
+        expect(result.removedCount).toBe(0);
+        expect(result.workspace.shotReferences.map((reference) => reference.assetVersionId)).toEqual(["pharmacy-v1", "phone-a-v1", "phone-b-v1"]);
+        expect(calls).toEqual([]);
+    }
 });
 
 for (const count of [10, 30]) {
@@ -86,6 +125,33 @@ test("chapter repair inherits scenes from preceding shots and is idempotent", as
     expect(calls.filter((call) => call.startsWith("bind:"))).toHaveLength(2);
 });
 
+test("scene references move from an old version to the regenerated primary version", async () => {
+    const { api, workspace, calls } = fixture();
+    const scene = { id: "scene", title: "正殿", category: "environment", primaryVersionId: "scene-v2" } as ProjectAsset;
+    api.listProjectAssets = async () => ({ assets: [scene] });
+    workspace.shotReferences = [{ id: "old-scene-reference", shotId: "shot-1", assetVersionId: "scene-v1", asset: scene, role: "reference", status: "linked" } as ShotAssetReference];
+    const result = await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-1", script: { sceneName: "正殿" } }, api);
+    expect(result.boundCount).toBe(1);
+    expect(workspace.shotReferences.filter((reference) => reference.status === "linked").map((reference) => reference.assetVersionId)).toEqual(["scene-v2"]);
+    expect(calls).toEqual(["unbind:old-scene-reference", "bind:scene-v2"]);
+});
+
+test("chapter repair reports absent exterior and props and creates reusable chapter candidates", async () => {
+    const { api, workspace } = fixture();
+    workspace.shots = [{ id: "shot-1", position: 0, currentRevisionId: "revision-1", description: "程野拎着书包等在自动门旁。" }] as ProjectUnitWorkspace["shots"];
+    workspace.shotRevisions = [{ id: "revision-1", shotId: "shot-1", version: 1, actionBeatsJson: JSON.stringify([{ type: "asset_context", sceneName: "基地通道与文化楼台阶下", propNames: ["书包"] }]) }] as ProjectUnitWorkspace["shotRevisions"];
+    const candidates: unknown[] = [];
+    const result = await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, { ...api, createProjectAssetCandidates: async (_projectId, inputs) => { candidates.push(...inputs); return { candidates: [] }; } });
+    expect(result.missingAssets.map((asset) => [asset.category, asset.name, asset.shotIds])).toEqual([
+        ["environment", "基地通道", ["shot-1"]],
+        ["environment", "文化楼台阶下", ["shot-1"]],
+        ["prop", "书包", ["shot-1"]],
+    ]);
+    expect(candidates).toHaveLength(3);
+    expect(candidates[0]).toMatchObject({ name: "基地通道", category: "environment", unitId: "u", details: { description: "程野拎着书包等在自动门旁。" } });
+    expect(workspace.shotReferences).toEqual([]);
+});
+
 test("chapter repair binds a manually added prop mentioned on screen despite an outdated prop list", async () => {
     const { api, workspace, calls } = fixture();
     const prop = { id: "manual-prop", title: "残缺古籍", category: "prop", primaryVersionId: "prop-image-v2", mediaType: "image", storageKey: "resource:prop-image", definitionJson: JSON.stringify({ aliases: ["旧书"] }) } as ProjectAsset;
@@ -128,6 +194,180 @@ test("chapter repair refuses to guess when multiple scenes share the same scene-
     await expect(prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).rejects.toThrow("存在重名");
     expect(calls.filter((call) => call.startsWith("bind:"))).toEqual([]);
 });
+
+test("supplementary binding never creates a reference for a dialogue-only character", async () => {
+    const { api, workspace, calls } = fixture();
+    api.listProjectAssets = async () => ({ assets: [
+        { id: "character", title: "嬴政", category: "character", primaryVersionId: "character-v2" },
+        { id: "phantom", title: "潇潇", category: "character", primaryVersionId: "phantom-v1" },
+    ] as ProjectAsset[] });
+    workspace.shotRevisions = [{ id: "revision-1", shotId: "shot-1", version: 1, plotDescription: "嬴政独坐。", videoPrompt: "将@[asset:phantom]定义为<潇潇>。\n声音：嬴政说潇潇明天才来。" }] as ProjectUnitWorkspace["shotRevisions"];
+    workspace.shots[0]!.currentRevisionId = "revision-1";
+    await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api);
+    expect(calls.filter((call) => call.startsWith("bind:"))).toEqual(["bind:character-v2"]);
+});
+
+test("chapter repair does not inherit scenes or bind characters from another chapter", async () => {
+    const { api, workspace, calls } = fixture();
+    api.listProjectAssets = async () => ({ assets: [{ id: "scene", title: "正殿", category: "environment", primaryVersionId: "scene-v1" }] as ProjectAsset[] });
+    workspace.shots = [
+        { id: "foreign-shot", unitId: "other-chapter", position: 0, description: "正殿全景" },
+        { id: "shot-1", unitId: "u", position: 1, description: "空镜：一束阳光" },
+    ] as ProjectUnitWorkspace["shots"];
+    const result = await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api);
+    expect(result.boundCount).toBe(0);
+    expect(result.unresolvedSceneShotIds).toEqual(["shot-1"]);
+    expect(calls.filter((call) => call.startsWith("bind:"))).toEqual([]);
+});
+
+test("chapter source rejects an invented shot character without deleting existing references", async () => {
+    const { api, workspace, calls } = fixture();
+    const phantom = { id: "phantom", title: "潇潇", category: "character", primaryVersionId: "phantom-v1" } as ProjectAsset;
+    api.listProjectAssets = async () => ({ assets: [phantom] });
+    workspace.unit = { id: "u", sourceText: "嬴政独坐。" } as ProjectUnitWorkspace["unit"];
+    workspace.shots = [{ id: "shot-1", unitId: "u", position: 0, description: "潇潇走进门。" }] as ProjectUnitWorkspace["shots"];
+    workspace.shotReferences = [{ id: "manual-phantom", shotId: "shot-1", asset: phantom, assetVersionId: "phantom-v1", role: "reference", status: "linked", selectionSource: "manual", selectionLocked: true }] as ShotAssetReference[];
+    expect((await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).boundCount).toBe(0);
+    expect(workspace.shotReferences[0]!.id).toBe("manual-phantom");
+    expect(calls.filter((call) => call.startsWith("unbind:"))).toEqual([]);
+    workspace.shotReferences = [];
+    expect((await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).boundCount).toBe(0);
+    expect(calls.filter((call) => call.startsWith("bind:"))).toEqual([]);
+});
+
+for (const sourceText of ["嬴政独坐。", "嬴政独坐。\n潇潇站在院外。", undefined]) {
+    for (const origin of ["unbound", "auto", "rule", "manual", "locked"] as const) {
+        test(`chapter repair cannot self-validate injected phantom references (${origin}, ${sourceText || "no source"})`, async () => {
+            const { api, workspace, calls } = fixture();
+            const character = { id: "character", title: "嬴政", category: "character", primaryVersionId: "character-v2" } as ProjectAsset;
+            const phantom = { id: "phantom", title: "潇潇", category: "character", primaryVersionId: "phantom-v1" } as ProjectAsset;
+            const assets = [character, phantom];
+            api.listProjectAssets = async () => ({ assets });
+            workspace.unit = { id: "u", sourceText } as ProjectUnitWorkspace["unit"];
+            workspace.shots = [{ id: "shot-1", unitId: "u", position: 0, currentRevisionId: "revision-1", description: "嬴政独坐。" }] as ProjectUnitWorkspace["shots"];
+            workspace.shotRevisions = [{ id: "revision-1", shotId: "shot-1", version: 1, plotDescription: "嬴政独坐。", videoPrompt: "嬴政：潇潇明天才来。\n\n【角色参考】\n潇潇：@[asset:phantom]\n\n【资产参考】\n\n- 潇潇：人物参考：@图片1；声音参考：@音频1\n  本镜造型：潇潇站在镜头中央。\n  镜头台词：潇潇：我来了。" }] as ProjectUnitWorkspace["shotRevisions"];
+            if (origin !== "unbound") workspace.shotReferences = [{ id: "old-phantom", shotId: "shot-1", asset: phantom, assetVersionId: "phantom-v1", role: "reference", status: "linked", selectionSource: origin === "locked" ? "auto" : origin, selectionLocked: origin === "locked" }] as ShotAssetReference[];
+            const preserved = origin === "manual" || origin === "locked";
+            const expectedCalls = origin === "auto" || origin === "rule" ? ["bind:character-v2", "unbind:old-phantom"] : ["bind:character-v2"];
+            expect(projectUnitShotAssetPlan(workspace, assets)[0]!.matches.map(({ asset }) => asset.id)).toEqual(preserved ? ["character", "phantom"] : ["character"]);
+            expect((await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).boundCount).toBe(1);
+            expect(calls).toEqual(expectedCalls);
+            expect(workspace.shotReferences.some((reference) => reference.id === "old-phantom")).toBe(preserved);
+            expect((await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).boundCount).toBe(0);
+            expect(calls).toEqual(expectedCalls);
+        });
+    }
+}
+
+test("supplementary binding preserves the configured system character from saved system elements", async () => {
+    const { api, workspace, calls } = fixture();
+    const systemPresentation = { mode: "character" as const, characterName: "小白", characterAppearance: "白狐狸", characterVoice: "少女音" };
+    const systemElements = ["【叮！宿主获得十点灵气。】"];
+    api.listProjectAssets = async () => ({ assets: [{ id: "sprite", title: "小白", category: "character", primaryVersionId: "sprite-v1" }] as ProjectAsset[] });
+    workspace.unit = { id: "u", sourceText: systemElements[0]! } as ProjectUnitWorkspace["unit"];
+    workspace.shots = [{ id: "shot-1", unitId: "u", position: 0, currentRevisionId: "revision-1", description: "主角抬头。" }] as ProjectUnitWorkspace["shots"];
+    workspace.shotRevisions = [{ id: "revision-1", shotId: "shot-1", version: 1, actionBeatsJson: JSON.stringify([{ type: "system_elements", elements: systemElements, presentation: systemPresentation }]) }] as ProjectUnitWorkspace["shotRevisions"];
+    expect((await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).boundCount).toBe(1);
+    expect(calls.filter((call) => call.startsWith("bind:"))).toEqual(["bind:sprite-v1"]);
+});
+
+function phantomFixture() {
+    const { api, workspace, calls } = fixture();
+    const phantom = { id: "phantom", title: "潇潇", category: "character", primaryVersionId: "phantom-v1" } as ProjectAsset;
+    api.listProjectAssets = async () => ({ assets: [phantom] });
+    workspace.unit = { id: "u", sourceText: "林夏独坐。" } as ProjectUnitWorkspace["unit"];
+    workspace.shots = [{ id: "shot-1", unitId: "u", currentRevisionId: "revision-1", position: 0, description: "林夏独坐。" }] as ProjectUnitWorkspace["shots"];
+    workspace.shotReferences = [{ id: "old-phantom", shotId: "shot-1", asset: phantom, assetVersionId: "phantom-v1", role: "reference", status: "linked", selectionSource: "auto" }] as ShotAssetReference[];
+    return { api, workspace, calls };
+}
+
+test("chapter repair removes unsupported automatic refs even when there are no additions", async () => {
+    const { api, workspace, calls } = phantomFixture();
+    const result = await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api);
+    expect(result).toMatchObject({ boundCount: 0, removedCount: 1 });
+    expect(calls).toEqual(["unbind:old-phantom"]);
+    expect(result.workspace.shotReferences).toEqual([]);
+    expect(workspace.shotReferences).toEqual([]);
+});
+
+for (const origin of ["auto", "rule", "manual", "locked"] as const) {
+    test(`prompt compiles after supplementary cleanup without retaining phantom appendices (${origin})`, async () => {
+        const { api, workspace, calls } = phantomFixture();
+        const phantom = workspace.shotReferences[0]!.asset!;
+        phantom.character = { versionId: "phantom-v1", version: 1, definition: {}, representations: [{ id: "image", resourceId: "phantom-image", role: "primary", mediaType: "image" }], visualStatus: "ready", voiceStatus: "missing" };
+        workspace.shotReferences[0]!.selectionSource = origin === "locked" ? "auto" : origin;
+        workspace.shotReferences[0]!.selectionLocked = origin === "locked";
+        workspace.shotReferences[0]!.selectionRevisionId = "revision-1";
+        const narrative = "林夏独坐。林夏：他提到'潇潇穿白衣'。";
+        const videoPrompt = `${narrative}\n\n【角色参考】\n潇潇：@[asset:phantom]\n\n【资产参考】\n\n- 潇潇：人物参考：@图片1；声音参考：@音频1\n  本镜造型：潇潇站在镜头中央。\n  镜头台词：潇潇：我来了。\n\n【画面】\n林夏推门离开。`;
+        workspace.shotRevisions = [{ id: "revision-1", shotId: "shot-1", version: 1, plotDescription: "林夏独坐。", videoPrompt }] as ProjectUnitWorkspace["shotRevisions"];
+        const result = await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api);
+        const context = buildShotAssetReferenceContext({ ...result.workspace, assets: result.assets } as unknown as ProjectDetail, "shot-1");
+        const compiled = resolveShotAssetMentionPrompt(videoPrompt, context, { interfaceType: "jiasu-video" });
+        const preserved = origin === "manual" || origin === "locked";
+        expect(compiled).toContain(narrative);
+        expect(compiled).toContain("【画面】\n林夏推门离开。");
+        expect(compiled).not.toContain("@[asset:");
+        expect(compiled.includes("潇潇：人物参考：@图片1")).toBe(preserved);
+        expect(compiled.includes("本镜造型：潇潇站在镜头中央。")).toBe(preserved);
+        expect(compiled.includes("镜头台词：潇潇：我来了。")).toBe(preserved);
+        expect(calls).toEqual(preserved ? [] : ["unbind:old-phantom"]);
+        expect(workspace.shotRevisions[0]!.videoPrompt).toBe(videoPrompt);
+        if (!preserved) {
+            expect(() => resolveShotAssetMentionPrompt("潇潇推门。@[asset:phantom]走进来。", context)).toThrow("未绑定到当前镜头");
+        }
+    });
+}
+
+test("supplementary cleanup invokes the real unlink API module through mocked HTTP only", async () => {
+    const { api, workspace } = phantomFixture();
+    const remove = spyOn(http, "delete").mockImplementation(async (path) => {
+        expect(path).toBe("/projects/p/shots/shot-1/assets/old-phantom");
+        workspace.shotReferences = [];
+        return { unlinked: true } as never;
+    });
+    try {
+        const result = await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-1", script: { plotDescription: "林夏独坐。", chapterSourceText: "潇潇推门进入。" } }, { ...api, unlinkShotAsset });
+        expect(result).toMatchObject({ boundCount: 0, removedCount: 1 });
+        expect(result.workspace.shotReferences).toEqual([]);
+        expect(remove).toHaveBeenCalledTimes(1);
+    } finally {
+        remove.mockRestore();
+    }
+});
+
+test("failed or unpersisted auto-reference removal cannot report successful preparation", async () => {
+    for (const persisted of [false, undefined]) {
+        const { api, workspace } = phantomFixture();
+        api.unlinkShotAsset = async () => {
+            if (persisted === undefined) throw new Error("unlink failed");
+            return { unlinked: true };
+        };
+        await expect(prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).rejects.toThrow(persisted === undefined ? "unlink failed" : "尚未移除");
+        expect(workspace.shotReferences[0]!.id).toBe("old-phantom");
+    }
+});
+
+for (const change of ["manual", "locked", "revision", "source", "busy"] as const) {
+    test(`auto-reference cleanup rechecks ${change} changes before calling unlink`, async () => {
+        const { api, workspace, calls } = phantomFixture();
+        let reads = 0;
+        api.getProjectUnitWorkspace = async () => {
+            if (++reads === 2) {
+                if (change === "manual") workspace.shotReferences[0]!.selectionSource = "manual";
+                if (change === "locked") workspace.shotReferences[0]!.selectionLocked = true;
+                if (change === "revision") workspace.shots[0]!.currentRevisionId = "new-revision";
+                if (change === "source") workspace.unit.sourceText = "潇潇推门进入。";
+                if (change === "busy") workspace.tasks = [{ status: "running", clientContext: { shotId: "shot-1" } }] as ProjectUnitWorkspace["tasks"];
+            }
+            return workspace;
+        };
+        if (change === "revision" || change === "source" || change === "busy") await expect(prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).rejects.toThrow();
+        else expect((await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)).removedCount).toBe(0);
+        expect(calls).toEqual([]);
+        expect(workspace.shotReferences[0]!.id).toBe("old-phantom");
+    });
+}
 
 test("binding errors stop preparation instead of proceeding with a text-only task", async () => {
     const { api } = fixture();

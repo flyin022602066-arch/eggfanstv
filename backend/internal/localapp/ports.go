@@ -2,6 +2,7 @@ package localapp
 
 import (
 	"context"
+	"infinite-canvas/backend/internal/asset"
 	"mime/multipart"
 
 	"infinite-canvas/backend/internal/model"
@@ -21,6 +22,7 @@ type ProjectPort interface {
 }
 
 type AssetPort interface {
+	RetrieveSunoMedia(context.Context, string, asset.SunoMediaRequest, int64) (*model.Resource, error)
 	Resources(string, int) ([]model.Resource, error)
 	UploadLocalResource(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error)
 }

@@ -42,7 +42,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, selectedModel);
-    if (isEggfansSeedanceProtocol(requestConfig.interfaceType) || requestConfig.interfaceType === "jiasu-video" || requestConfig.interfaceType === "mints-seedance-video") {
+    if (isEggfansSeedanceProtocol(requestConfig.interfaceType) || requestConfig.interfaceType === "jiasu-video" || requestConfig.interfaceType === "towo-sd25-video" || requestConfig.interfaceType === "mints-seedance-video") {
         const task = await submitBackendGenerationTask({ mode: "video", config: { ...config, model: selectedModel }, prompt, referenceImages: references, referenceVideos: videoReferences, referenceAudios: audioReferences, signal: options?.signal, metadata: { videoEditOperation: options?.videoEditOperation, videoStartFrameNodeId: options?.videoStartFrameNodeId, videoEndFrameNodeId: options?.videoEndFrameNodeId } });
         return { id: task.id, provider: "backend", model: selectedModel };
     }

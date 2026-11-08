@@ -1,0 +1,510 @@
+{
+  "status": "STATIC EXTRACTION; not a live HTTP test",
+  "origin": "https://www.doubao.com",
+  "auth": "Logged-in dedicated Edge/Chrome profile; page fetch with credentials include. Not an API key service.",
+  "query": {
+    "aid": "497858",
+    "device_id": "<7 + 18 random digits>",
+    "device_platform": "web",
+    "language": "zh",
+    "pc_version": "3.43.2",
+    "pkg_type": "release_version",
+    "real_aid": "497858",
+    "region": "CN",
+    "samantha_web": "1",
+    "sys_region": "CN",
+    "tea_uuid": "<web_id>",
+    "use-olympus-account": "1",
+    "version_code": "20800",
+    "doubao_pc_version": "3.43.2",
+    "doubao_device_platform": "web",
+    "web_platform": "browser",
+    "web_id": "<7 + 18 random digits>",
+    "web_tab_id": "<uuid4>"
+  },
+  "headers": {
+    "Content-Type": "application/json",
+    "Accept": "*/*",
+    "agw-js-conv": "str",
+    "Origin": "https://www.doubao.com",
+    "Referer": "https://www.doubao.com/chat/"
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/creativity/canvas_workspace/doc/create",
+      "body": {
+        "req": {
+          "conversation_id": "0",
+          "title": "<title>",
+          "initial_assets": [],
+          "create_new_conversation": true
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/creativity/canvas_workspace/doc/actions",
+      "body": {
+        "req": {
+          "canvas_workspace_id": "<ws>",
+          "workspace_version": "<str version>",
+          "actions": [
+            {
+              "type": 101,
+              "base_version": "0",
+              "target_item": {
+                "id": "<7 upper hex chars>-4T2gkz1PTG-0202",
+                "type": 102,
+                "title": "视频",
+                "frame_id": "",
+                "transform": {
+                  "x": "<x>",
+                  "y": "<y>",
+                  "width": "<width>",
+                  "height": "<height>",
+                  "rotation": 0,
+                  "z_index": "<z>",
+                  "flip_horizontal": false,
+                  "flip_vertical": false
+                },
+                "status": 1,
+                "version": 1,
+                "created_by": 2,
+                "ext": {},
+                "asset": {
+                  "asset_key": "",
+                  "asset_short_url": "",
+                  "type": 2,
+                  "ext": {},
+                  "status": 0,
+                  "video_info": {}
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/alice/resource/register",
+      "body": {
+        "tenant_id": "5",
+        "scene_id": "148",
+        "resource_list": [
+          {
+            "uri": "<uploaded tos uri>",
+            "resource_type": 2,
+            "meta": {
+              "image_meta": {
+                "data": {
+                  "md5": "<md5>",
+                  "identifier": "<identifier>"
+                },
+                "parse_extra": {},
+                "image_info": {
+                  "width": "<int>",
+                  "height": "<int>",
+                  "size": "<bytes>",
+                  "md5": "<md5>",
+                  "file_name": "<file name>"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/creativity/canvas_workspace/tool/exec",
+      "body": {
+        "req": {
+          "canvas_workspace_id": "<ws>",
+          "biding_item": {
+            "id": "<7 upper hex chars>-4T2gkz1PTG-0202",
+            "type": 102,
+            "title": "视频",
+            "frame_id": "",
+            "transform": {
+              "x": "<x>",
+              "y": "<y>",
+              "width": "<width>",
+              "height": "<height>",
+              "rotation": 0,
+              "z_index": "<z>",
+              "flip_horizontal": false,
+              "flip_vertical": false
+            },
+            "status": 1,
+            "version": 1,
+            "created_by": 2,
+            "ext": {},
+            "asset": {
+              "asset_key": "",
+              "asset_short_url": "",
+              "type": 2,
+              "ext": {},
+              "status": 0,
+              "video_info": {}
+            }
+          },
+          "execute_request": {
+            "request_id": "canvas-video:<item_id>:<uuid4>",
+            "operation": {
+              "canvas_type": 50,
+              "generate_type": 1,
+              "prompt": "<prompt>",
+              "use_model": "<map_model(model)>",
+              "video_param": {
+                "duration": "<int>",
+                "ratio": "<ratio>"
+              },
+              "attachments": [
+                {
+                  "attachment_type": 1,
+                  "image": {
+                    "uri": "<tos uri>",
+                    "width": "<int>",
+                    "height": "<int>"
+                  }
+                }
+              ]
+            },
+            "canvas_context": {
+              "conversation_id": "<conv>",
+              "trigger_scene": "infinite_canvas_video_generator"
+            }
+          },
+          "callback_args": "<uuid4>",
+          "workspace_version": "<str version>"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/creativity/canvas_workspace/doc/get",
+      "body": {
+        "req": {
+          "conversation_id": "<conv>",
+          "canvas_workspace_id": "<ws>",
+          "need_idgen_session": true
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/creativity/resource/get_without_watermark",
+      "body": {
+        "vid": [
+          "<vid>"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/chat/completion",
+      "body": {
+        "client_meta": {
+          "local_conversation_id": "local_<random 0..10^16-1>",
+          "conversation_id": "",
+          "bot_id": "7338286299411103781",
+          "last_section_id": "",
+          "last_message_index": null
+        },
+        "messages": [
+          {
+            "local_message_id": "<uuid4>",
+            "content_block": [
+              {
+                "block_type": 10000,
+                "content": {
+                  "text_block": {
+                    "text": "<prompt wrapped as 生成视频：... unless plain or already starts 生成视频>",
+                    "icon_url": "",
+                    "icon_url_dark": "",
+                    "summary": ""
+                  },
+                  "pc_event_block": ""
+                },
+                "block_id": "<uuid4>",
+                "parent_id": "",
+                "meta_info": [],
+                "append_fields": [],
+                "is_finish": true,
+                "patch_type": 2
+              }
+            ],
+            "message_status": 0
+          }
+        ],
+        "option": {
+          "send_message_scene": "",
+          "create_time_ms": "<unix milliseconds>",
+          "collect_id": "",
+          "is_audio": false,
+          "answer_with_suggest": false,
+          "tts_switch": false,
+          "need_deep_think": 0,
+          "click_clear_context": false,
+          "from_suggest": false,
+          "is_regen": false,
+          "is_replace": false,
+          "is_from_click_option": false,
+          "disable_sse_cache": false,
+          "select_text_action": "",
+          "is_select_text": false,
+          "resend_for_regen": false,
+          "scene_type": 0,
+          "unique_key": "<uuid4>",
+          "start_seq": 0,
+          "need_create_conversation": true,
+          "conversation_init_option": {
+            "need_ack_conversation": true
+          },
+          "regen_query_id": [],
+          "edit_query_id": [],
+          "regen_instruction": "",
+          "no_replace_for_regen": false,
+          "message_from": 0,
+          "shared_app_name": "",
+          "shared_app_id": "",
+          "sse_recv_event_options": {
+            "support_chunk_delta": true
+          },
+          "is_ai_playground": false,
+          "is_old_user": true,
+          "recovery_option": {
+            "is_recovery": false,
+            "req_create_time_sec": "<unix seconds>",
+            "append_sse_event_scene": 0
+          },
+          "message_storage_type": 0
+        },
+        "user_context": [],
+        "ext": {
+          "use_deep_think": "0",
+          "fp": "",
+          "sub_conv_firstmet_type": "1",
+          "collection_id": "",
+          "conversation_init_option": "{\"need_ack_conversation\": true}",
+          "commerce_credit_config_enable": "0",
+          "answer_with_suggest": "0"
+        },
+        "chat_ability": {
+          "ability_type": 17,
+          "ability_param": "<JSON string: model,duration,optional ratio>"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/im/chain/single",
+      "headers": {
+        "Content-Type": "application/json; encoding=utf-8",
+        "Accept": "application/json, text/plain, */*",
+        "Agw-Js-Conv": "str",
+        "Origin": "https://www.doubao.com",
+        "Referer": "https://www.doubao.com/chat/<conv>"
+      },
+      "body": {
+        "cmd": 3100,
+        "uplink_body": {
+          "pull_singe_chain_uplink_body": {
+            "conversation_id": "<conv>",
+            "anchor_index": 9007199254740991,
+            "conversation_type": 3,
+            "direction": 1,
+            "limit": "<limit, default 30>",
+            "ext": {},
+            "filter": {
+              "index_list": []
+            },
+            "evaluate_ab_params": "",
+            "evaluate_common_params": "",
+            "option": {
+              "lazy_load_strategy": 0
+            }
+          }
+        },
+        "sequence_id": "<uuid4>",
+        "channel": 2,
+        "version": "1"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/alice/resource/prepare_upload",
+      "note": "Then temporary STS/SigV4 -> ImageX ApplyImageUpload -> TOS upload/v1 -> CommitImageUpload. Browser route captures URI. See upload-disassembly and constants.",
+      "body": {
+        "tenant_id": "5",
+        "scene_id": "5",
+        "resource_type": 2
+      }
+    }
+  ],
+  "chat_image_message": {
+    "note": "Prepend this message before text message, not in same content_block list",
+    "message": {
+      "local_message_id": "<uuid4>",
+      "content_block": [
+        {
+          "block_type": 10052,
+          "content": {
+            "attachment_block": {
+              "attachments": [
+                {
+                  "type": 1,
+                  "identifier": "<upload.identifier>",
+                  "image": {
+                    "name": "<upload.name or ref.png>",
+                    "uri": "<upload.uri>",
+                    "image_ori": {
+                      "url": "",
+                      "width": "<int>",
+                      "height": "<int>",
+                      "format": "<png default>",
+                      "url_formats": {}
+                    }
+                  },
+                  "parse_state": 0,
+                  "review_state": 1,
+                  "upload_status": 1,
+                  "progress": 100,
+                  "src": ""
+                }
+              ]
+            },
+            "pc_event_block": ""
+          },
+          "block_id": "<uuid4>",
+          "parent_id": "",
+          "meta_info": [],
+          "extra_info": {},
+          "append_fields": []
+        }
+      ],
+      "message_status": 0
+    }
+  },
+  "confirm_patch": {
+    "client_meta.conversation_id": "<existing conv>",
+    "client_meta.last_message_index": "<last_index if truthy>",
+    "option.need_create_conversation": false,
+    "option.conversation_init_option": {
+      "need_ack_conversation": false
+    },
+    "ext.conversation_init_option": "{\"need_ack_conversation\": false}"
+  },
+  "canvas_task_id": "cv:<workspace_id>:<conversation_id>:<UTF8 item_id hex>",
+  "model_map": {
+    "2.5 substring": "seedance_v2.5",
+    "mini case-insensitive": "seedance_v2.0_mini",
+    "fast case-insensitive": "seedance_v2.0",
+    "Seedance 2.0": "seedance_v2.0"
+  },
+  "upload_chain": {
+    "prepare_upload_response": {
+      "service_id": "data.service_id",
+      "upload_host": "data.upload_host",
+      "ak": "data.upload_auth_token.access_key",
+      "sk": "data.upload_auth_token.secret_key",
+      "token": "data.upload_auth_token.session_token"
+    },
+    "ApplyImageUpload": {
+      "method": "GET",
+      "url": "https://<upload_host>/",
+      "query": {
+        "Action": "ApplyImageUpload",
+        "Version": "2018-08-01",
+        "ServiceId": "<service_id>",
+        "NeedFallback": "true",
+        "UploadNum": "1",
+        "FileSize": "<bytes>",
+        "FileExtension": "<dot-prefixed extension>"
+      },
+      "headers": [
+        "x-amz-date",
+        "x-amz-security-token",
+        "X-Security-Token",
+        "authorization",
+        "User-Agent"
+      ],
+      "response_fields": [
+        "Result.UploadAddress.StoreInfos[0].StoreUri",
+        "Result.UploadAddress.StoreInfos[0].Auth",
+        "Result.UploadAddress.UploadHosts[0]"
+      ]
+    },
+    "TOS": {
+      "method": "POST",
+      "url": "https://<tos_host>/upload/v1/<StoreUri>",
+      "body": "raw file bytes",
+      "headers": {
+        "Authorization": "<StoreInfos[0].Auth>",
+        "Content-CRC32": "<crc32 unsigned as 8 hex digits>",
+        "Content-Type": "<image mime>",
+        "User-Agent": "<UA>"
+      }
+    },
+    "CommitImageUpload": {
+      "method": "POST",
+      "url": "https://<upload_host>/",
+      "query": {
+        "Action": "CommitImageUpload",
+        "Version": "2018-08-01",
+        "ServiceId": "<service_id>"
+      },
+      "body": {
+        "SessionKey": "<base64(UTF8(JSON compact of session_key_object)))>"
+      },
+      "headers": [
+        "x-amz-date",
+        "x-amz-security-token",
+        "x-amz-content-sha256",
+        "content-type",
+        "authorization",
+        "User-Agent"
+      ],
+      "signing": "temporary STS credentials + AWS4 HMAC SHA256; dynamic, never hardcode credentials",
+      "session_key_object": {
+        "accountType": "ImageX",
+        "appId": "",
+        "bizType": "",
+        "fileType": "image",
+        "legal": "",
+        "storeInfos": "<JSON compact string of [{StoreUri,Auth,UploadID:'',UploadHeader:null,StorageHeader:null}]>",
+        "uploadHost": "<tos_host>",
+        "uri": "<store_uri>",
+        "userId": ""
+      }
+    },
+    "note": "This is the direct upload implementation. The generation path also uses browser upload/capture; no live upload was performed."
+  },
+  "canvas_internal_defaults": {
+    "create.title": "新画布",
+    "add_video_node": {
+      "width": 1440,
+      "height": 810,
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "submit": {
+      "uri": null,
+      "img_w": 0,
+      "img_h": 0,
+      "model": "seedance_v2.0",
+      "duration": 5,
+      "ratio": "16:9",
+      "refs": null
+    },
+    "wait": {
+      "timeout": 1800,
+      "step": 10,
+      "on_tick": null
+    },
+    "_json.timeout": 120
+  }
+}

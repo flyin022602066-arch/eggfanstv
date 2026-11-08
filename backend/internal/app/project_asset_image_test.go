@@ -95,3 +95,97 @@ func TestProjectAssetImageRejectsUnownedOrInvalidOutputWithoutMutation(t *testin
 		t.Fatal("invalid output mutated asset")
 	}
 }
+
+func TestReplaceProjectAssetImageCreatesVersionAndUpdatesShotReferences(t *testing.T) {
+	service, db := newProjectAssetLinkTestService(t)
+	project := model.Project{ID: "replace-project", UserID: "owner", Status: model.ProjectStatusActive}
+	asset := model.Asset{ID: "replace-prop", UserID: "owner", Kind: "text", Category: model.AssetCategoryProp, PrimaryVersionID: "prop-v1", Title: "系统面板", PayloadJSON: `{"data":{"content":"可替换面板"}}`}
+	oldVersion := model.AssetVersion{ID: "prop-v1", AssetID: asset.ID, Version: 1, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: `{"description":"系统面板设定"}`}
+	resource := model.Resource{ID: "replacement-image", UserID: "owner", Kind: "image", Status: model.ResourceStatusReady, Size: 4096, Width: 1536, Height: 1024, MimeType: "image/png"}
+	shot := model.Shot{ID: "replace-shot", ProjectID: project.ID, UnitID: "unit", Title: "镜头"}
+	for _, row := range []any{&project, &asset, &oldVersion, &resource, &shot} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatalf("seed %T: %v", row, err)
+		}
+	}
+	if err := db.Create(&model.ProjectAssetLink{ID: "replace-link", ProjectID: project.ID, AssetID: asset.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ShotAssetReference{ID: "replace-reference", ShotID: shot.ID, AssetVersionID: oldVersion.ID, Role: "reference", Status: "linked"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := service.ReplaceProjectAssetImage("owner", project.ID, asset.ID, ReplaceProjectAssetImageRequest{ResourceID: resource.ID})
+	if err != nil {
+		t.Fatalf("ReplaceProjectAssetImage: %v", err)
+	}
+	if summary.ID != asset.ID || summary.MediaType != "image" {
+		t.Fatalf("unexpected replacement summary: %#v", summary)
+	}
+
+	updated, err := service.repo.AssetForUser("owner", asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Kind != "image" || updated.PrimaryVersionID == oldVersion.ID || updated.Status != model.AssetVersionStatusConfirmed {
+		t.Fatalf("asset was not promoted to a confirmed image version: %#v", updated)
+	}
+	var payload struct {
+		Data struct {
+			StorageKey string `json:"storageKey"`
+			Width      int    `json:"width"`
+			Height     int    `json:"height"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(updated.PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.StorageKey != "resource:"+resource.ID || payload.Data.Width != resource.Width || payload.Data.Height != resource.Height {
+		t.Fatalf("replacement image metadata = %#v", payload.Data)
+	}
+	versions, err := service.repo.AssetVersions(asset.ID)
+	if err != nil || len(versions) != 2 {
+		t.Fatalf("asset versions = %d, err = %v", len(versions), err)
+	}
+	var reference model.ShotAssetReference
+	if err := db.First(&reference, "id = ?", "replace-reference").Error; err != nil {
+		t.Fatal(err)
+	}
+	if reference.AssetVersionID != updated.PrimaryVersionID {
+		t.Fatalf("shot reference still uses %s, want %s", reference.AssetVersionID, updated.PrimaryVersionID)
+	}
+	var representation model.AssetRepresentation
+	if err := db.First(&representation, "asset_version_id = ? AND role = ?", updated.PrimaryVersionID, "primary").Error; err != nil {
+		t.Fatal(err)
+	}
+	if representation.ResourceID != resource.ID {
+		t.Fatalf("image representation resource = %s, want %s", representation.ResourceID, resource.ID)
+	}
+}
+
+func TestReplaceProjectAssetImageRejectsForeignResourceAndNonSceneAssets(t *testing.T) {
+	service, db := newProjectAssetLinkTestService(t)
+	project := model.Project{ID: "replace-project", UserID: "owner", Status: model.ProjectStatusActive}
+	prop := model.Asset{ID: "replace-prop", UserID: "owner", Kind: "text", Category: model.AssetCategoryProp, PrimaryVersionID: "prop-v1", Title: "道具", PayloadJSON: `{}`}
+	character := model.Asset{ID: "replace-character", UserID: "owner", Kind: "image", Category: model.AssetCategoryCharacter, PrimaryVersionID: "character-v1", Title: "角色", PayloadJSON: `{}`}
+	propVersion := model.AssetVersion{ID: "prop-v1", AssetID: prop.ID, Version: 1, Status: model.AssetVersionStatusConfirmed}
+	characterVersion := model.AssetVersion{ID: "character-v1", AssetID: character.ID, Version: 1, Status: model.AssetVersionStatusConfirmed}
+	foreign := model.Resource{ID: "foreign-image", UserID: "other", Kind: "image", Status: model.ResourceStatusReady}
+	owned := model.Resource{ID: "owned-image", UserID: "owner", Kind: "image", Status: model.ResourceStatusReady}
+	for _, row := range []any{&project, &prop, &character, &propVersion, &characterVersion, &foreign, &owned} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatalf("seed %T: %v", row, err)
+		}
+	}
+	for index, asset := range []*model.Asset{&prop, &character} {
+		if err := db.Create(&model.ProjectAssetLink{ID: newID(), ProjectID: project.ID, AssetID: asset.ID}).Error; err != nil {
+			t.Fatalf("seed project asset link %d: %v", index, err)
+		}
+	}
+	if _, err := service.ReplaceProjectAssetImage("owner", project.ID, prop.ID, ReplaceProjectAssetImageRequest{ResourceID: foreign.ID}); err == nil {
+		t.Fatal("replacement accepted another user's image")
+	}
+	if _, err := service.ReplaceProjectAssetImage("owner", project.ID, character.ID, ReplaceProjectAssetImageRequest{ResourceID: owned.ID}); err == nil {
+		t.Fatal("replacement accepted a character asset")
+	}
+}

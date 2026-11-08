@@ -11,6 +11,50 @@ export const STUDIO_GROUPS = [
     { value: "library", label: "曲库" },
 ] as const;
 
+export type MusicWritingOutput = "inspiration" | "lyrics" | "tags";
+
+export type MusicWritingSkill = {
+    id: string;
+    name: string;
+    description: string;
+    instruction: string;
+};
+
+export const MUSIC_WRITING_SKILLS: MusicWritingSkill[] = [
+    { id: "songwriter", name: "原创歌词创作", description: "围绕主题写有结构、画面和记忆点的原创歌词。", instruction: "创作原创歌词，先明确叙述视角、情绪弧线和核心意象，再组织主歌、预副歌、副歌与桥段。押韵自然，不为押韵牺牲语义；避免重复空泛句。" },
+    { id: "soundtrack", name: "影视配乐灵感", description: "把剧情、人物关系和情绪转成可执行的音乐描述。", instruction: "将剧情转成可用于歌曲生成的音乐灵感描述，写清情绪推进、配器、节奏、动态变化、人声气质和结尾，不虚构剧情事实。" },
+    { id: "style-tags", name: "曲风与编曲设计", description: "提炼流派、乐器、节奏、人声和制作质感。", instruction: "输出精炼、可执行的曲风标签和编曲说明，覆盖流派、速度感、核心乐器、人声表现、制作质感与动态；避免互相冲突的标签。" },
+    { id: "lyric-polish", name: "歌词润色与结构", description: "保留原意，改善唱感、节奏和段落层次。", instruction: "在保留用户核心意思和叙事事实的前提下润色歌词。改善口语唱感、句长和段落递进；不要擅自删改关键情节或把对白切成不自然的短句。" },
+    { id: "instrumental", name: "纯音乐主题设计", description: "设计无歌词的旋律主题、配器和情绪发展。", instruction: "为纯音乐设计主题动机、配器组合、节奏密度、情绪发展和收尾方式。不要生成歌词或人声哼唱词。" },
+];
+
+export function buildMusicWritingPrompt(skill: MusicWritingSkill, output: MusicWritingOutput, context: string) {
+    const format = output === "lyrics"
+        ? "只输出可演唱的原创歌词，使用清晰段落标记（如 [Verse]、[Pre-Chorus]、[Chorus]、[Bridge]）；不要添加解释或生成参数。"
+        : output === "tags"
+            ? "先输出一行逗号分隔的简洁风格标签，再用一小段说明编曲和演唱方向；不要输出歌词。"
+            : "只输出一段可直接用于音乐生成的灵感描述，包含情绪、风格、节奏、配器、人声与动态变化；不要输出歌词或前言。";
+    return [
+        "你是专业的原创歌曲创作助手。只根据用户提供的信息创作，不照搬已发行歌曲的歌词或旋律，不虚构人物与剧情事实。",
+        `当前创作 Skill：${skill.name}`,
+        skill.instruction,
+        `输出类型要求：${format}`,
+        "保持结果具体、易唱或易执行；若信息不足，采用克制且自洽的创作选择，不反问用户。",
+        `用户创作素材：\n${context.trim()}`,
+    ].join("\n\n");
+}
+
+export function studioLibraryTracks(jobs: SunoStudioJob[], query = "") {
+    const needle = query.trim().toLocaleLowerCase();
+    return jobs
+        .filter((job) => job.status === "succeeded")
+        .flatMap((job) => job.clips
+            .filter((clip) => Boolean(clip.audioUrl || (clip.storageKey && !clip.videoUrl)))
+            .map((clip) => ({ clip, job })))
+        .filter(({ clip, job }) => !needle || [clip.title, clip.tags, clip.lyrics, clip.id, job.label, job.taskId].join(" ").toLocaleLowerCase().includes(needle))
+        .sort((left, right) => Date.parse(right.job.updatedAt) - Date.parse(left.job.updatedAt));
+}
+
 export function validateStudioValues(operation: SunoOperation, values: Record<string, unknown>) {
     const errors: Record<string, string> = {};
     for (const field of operation.fields) {

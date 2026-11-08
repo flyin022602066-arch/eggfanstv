@@ -64,3 +64,19 @@ func TestEggfansSD2PresetIncludesAllVideoModels(t *testing.T) {
 	}
 	t.Fatal("SD2 built-in channel is missing")
 }
+
+func TestTowoSD25PresetIsIndependentWithSeedanceModel(t *testing.T) {
+	for _, preset := range BuiltinChannels() {
+		if preset.ID != "towo-sd25-video" {
+			continue
+		}
+		if preset.DisplayName != "Towo SD2.5" || preset.BaseURL != "https://towoapi.com" || preset.Pinned {
+			t.Fatalf("unexpected Towo channel: %#v", preset)
+		}
+		if len(preset.Models) != 1 || preset.Models[0].Model != "seedance-2.5" || preset.Models[0].Protocol != "towo-sd25-video" || preset.Models[0].Capability != "video" {
+			t.Fatalf("unexpected Towo model: %#v", preset.Models)
+		}
+		return
+	}
+	t.Fatal("Towo built-in channel is missing")
+}

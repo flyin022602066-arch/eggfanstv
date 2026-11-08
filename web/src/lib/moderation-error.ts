@@ -1,6 +1,11 @@
 import type { GenerationErrorCategory } from "./generation-error";
 
 type ModerationCopy = { category: GenerationErrorCategory; reason: string; action: string };
+const textContentFilterCopy: ModerationCopy = {
+    category: "moderation_output",
+    reason: "上游文本模型以 content_filter 结束输出，内容未通过上游审核",
+    action: "这是上游返回的限制；请调整正文或提示词后重试，API 调用成功不代表返回了完整结果",
+};
 const labels: Record<string, string[]> = {
     input: ["输入文本", "参考图片", "参考视频", "参考音频"],
     output: ["生成文字", "生成图片", "生成视频", "生成音频"],
@@ -10,6 +15,9 @@ const mediaTypes = ["text", "image", "video", "audio"];
 // Ark's documented families encode direction, medium and cause separately.
 // PolicyViolation means copyright here; it is not a generic real-person rule.
 export function moderationErrorCopy(code: string, message: string): ModerationCopy | undefined {
+    if (["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument", "content_filter", "moderation_output"].includes(code.toLowerCase()) || /^\d{3}$/.test(code)) {
+        if (message.toLowerCase().includes("the upstream stopped the output with finish_reason content_filter.")) return { ...textContentFilterCopy };
+    }
     const match = code.toLowerCase().match(/^(input|output)(text|image|video|audio)(?:sensitivecontentdetected|riskdetection)(?:\.(policyviolation|privacyinformation|deepfake))?$/);
     let direction = match?.[1];
     let media = match?.[2];
@@ -43,6 +51,7 @@ export function moderationErrorCopy(code: string, message: string): ModerationCo
 
 // Persist only our exact generated copy, never arbitrary provider instructions.
 export function persistedModerationCopy(text: string): ModerationCopy | undefined {
+    if (text.startsWith(`${textContentFilterCopy.reason}。${textContentFilterCopy.action}。`)) return { ...textContentFilterCopy };
     for (const direction of ["input", "output"]) {
         for (const media of mediaTypes) {
             for (const suffix of ["", ".PolicyViolation", ".PrivacyInformation", ".DeepFake"]) {

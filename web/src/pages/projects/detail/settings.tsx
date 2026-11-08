@@ -2,21 +2,25 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { App, Button, Input, Modal } from "antd";
 import { Select } from "@/components/ui/base/select";
-import { Archive, Check, Eye, FolderOpen, Image as ImageIcon, Palette, Pencil, Save, ShieldAlert, Trash2 } from "lucide-react";
+import { Archive, Check, Eye, FolderOpen, Image as ImageIcon, Palette, Pencil, Save, ShieldAlert, Sparkles, Trash2 } from "lucide-react";
 
 import { shouldSuppressAssetViewError } from "@/components/assets/asset-view-session";
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
+import { CachedResourceImage } from "@/components/cached-resource-image";
 import { CanvasStyleDetailModal, CanvasStylePickerModal, resolveProjectCanvasStyle, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { createStyleProfileSnapshot, parseStyleProfile, resolveStyleExecutionPlan, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
-import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import { resourceIdFromStorageKey, resourceStorageKey } from "@/services/api/resources";
 import { listProjectAssetsPage, updateProject } from "@/services/api/projects";
 import { uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelDisplayName, resolveModelRequestConfig, useEffectiveConfig } from "@/stores/use-config-store";
+import { modelDisplayName, resolveModelRequestConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 
 import { projectSettingsSessionKey, shouldApplyProjectSettingsMutation, useProjectSettingsGeneration } from "./project-settings-session";
+import { generateProjectCover } from "./project-settings-cover-generation";
+import { ProjectSettingsCoverGenerationModal } from "./project-settings-cover-generation-modal";
+import type { GenerationTask } from "@/services/api/task-center";
 import type { ProjectDetailViewProps } from "./shared";
 
 export default function ProjectSettingsView(props: ProjectDetailViewProps) {
@@ -52,6 +56,8 @@ function ProjectSettingsSession({ detail, refreshProject }: ProjectDetailViewPro
     const [styleEditorRequested, setStyleEditorRequested] = useState(false);
     const [archiveOpen, setArchiveOpen] = useState(false);
     const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+    const [coverGenerationOpen, setCoverGenerationOpen] = useState(false);
+    const [coverGenerationTask, setCoverGenerationTask] = useState<Pick<GenerationTask, "status" | "stage" | "progress"> | null>(null);
     const [coverPage, setCoverPage] = useState(1);
     const [coverPageSize, setCoverPageSize] = useState(40);
     const coverAssetsQuery = useQuery({
@@ -89,10 +95,10 @@ function ProjectSettingsSession({ detail, refreshProject }: ProjectDetailViewPro
             const resourceId = resourceIdFromStorageKey(asset.storageKey);
             if (!resourceId || seenResourceIds.has(resourceId)) continue;
             seenResourceIds.add(resourceId);
-            result.push({ id: `project:${asset.id}`, title: asset.title, category: "image", kindLabel: "项目图片", imageUrl: resourceFileUrl(resourceId), description: "项目素材库", searchText: asset.title });
+            result.push({ id: `project:${asset.id}`, title: asset.title, category: "image", kindLabel: "项目图片", imageStorageKey: resourceStorageKey(resourceId), description: "项目素材库", searchText: asset.title });
         }
         if (project.coverResourceId && !seenResourceIds.has(project.coverResourceId)) {
-            result.unshift({ id: `current:${project.coverResourceId}`, title: "当前项目主图", category: "image", kindLabel: "当前主图", imageUrl: resourceFileUrl(project.coverResourceId) });
+            result.unshift({ id: `current:${project.coverResourceId}`, title: "当前项目主图", category: "image", kindLabel: "当前主图", imageStorageKey: resourceStorageKey(project.coverResourceId) });
         }
         return result;
     }, [personalAssets, project.coverResourceId, projectCoverAssets]);
@@ -166,6 +172,31 @@ function ProjectSettingsSession({ detail, refreshProject }: ProjectDetailViewPro
             message.error(error instanceof Error ? error.message : "项目主图更新失败");
         },
     });
+    const coverGenerationMutation = useMutation({
+        mutationFn: (input: { expectedScope: CapturedUserScope; projectId: string; prompt: string; config: AiConfig }) => {
+            assertUserScope(input.expectedScope);
+            setCoverGenerationTask({ status: "queued" });
+            return generateProjectCover({
+                project,
+                prompt: input.prompt,
+                config: input.config,
+                expectedScope: input.expectedScope,
+                onTaskUpdate: (task) => setCoverGenerationTask({ status: task.status, stage: task.stage, progress: task.progress }),
+            });
+        },
+        onSuccess: (_result, input) => {
+            if (!canApplySettings(input.expectedScope, input.projectId)) return;
+            setCoverGenerationOpen(false);
+            setCoverGenerationTask(null);
+            refreshProject();
+            message.success("项目封面已生成并设置");
+        },
+        onError: (error, input) => {
+            setCoverGenerationTask(null);
+            if (!canApplySettings(input.expectedScope, input.projectId, error) || shouldSuppressAssetViewError(error, input.expectedScope)) return;
+            message.error(error instanceof Error ? error.message : "项目封面生成失败");
+        },
+    });
 
     return (
         <div>
@@ -202,9 +233,11 @@ function ProjectSettingsSession({ detail, refreshProject }: ProjectDetailViewPro
             <section className="border-t border-border/70 py-5">
                 <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">项目主图</h3><p className="mt-0.5 text-[var(--fs-label)] text-foreground/45">项目列表优先展示这张图片；未设置时使用项目画风示意图</p></div><span className="text-[var(--fs-label)] text-foreground/40">建议使用与项目画幅一致的图片</span></div>
                 <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-surface-active p-3 sm:flex-row sm:items-center">
-                    {project.coverResourceId ? <img src={resourceFileUrl(project.coverResourceId)} alt={`${project.name}项目主图`} className="aspect-video w-full shrink-0 rounded-md bg-foreground/5 object-cover sm:w-52" /> : <span className="grid aspect-video w-full shrink-0 place-items-center rounded-md bg-foreground/5 text-foreground/30 sm:w-52"><ImageIcon className="size-6" /></span>}
-                    <div className="min-w-0 flex-1"><div className="text-sm font-medium">{project.coverResourceId ? "已设置项目主图" : "尚未设置项目主图"}</div><p className="mt-1 text-xs leading-5 text-foreground/48">从个人素材库或项目素材库选择，也可以在选择窗口中上传一张新图片。</p></div>
-                    <div className="flex shrink-0 gap-2"><Button icon={<FolderOpen className="size-3.5" />} onClick={() => { setCoverPage(1); setCoverPickerOpen(true); }}>{project.coverResourceId ? "替换主图" : "设置主图"}</Button>{project.coverResourceId ? <Button danger type="text" icon={<Trash2 className="size-3.5" />} loading={coverMutation.isPending} onClick={() => coverMutation.mutate({ coverResourceId: "", expectedScope: entryScope, projectId: mountedProjectId })}>移除</Button> : null}</div>
+                    <span className="grid aspect-video w-full shrink-0 place-items-center overflow-hidden rounded-md bg-foreground/5 text-foreground/30 sm:w-52">
+                        {project.coverResourceId ? <CachedResourceImage storageKey={resourceStorageKey(project.coverResourceId)} eager alt={`${project.name}项目主图`} className="h-full w-full object-cover" loadingFallback={<span className="px-2 text-xs text-foreground/45">正在加载主图…</span>} fallback={<span className="px-2 text-xs text-foreground/45">主图加载失败</span>} /> : <ImageIcon className="size-6" />}
+                    </span>
+                    <div className="min-w-0 flex-1"><div className="text-sm font-medium">{project.coverResourceId ? "已设置项目主图" : "尚未设置项目主图"}</div><p className="mt-1 text-xs leading-5 text-foreground/48">可选择素材、上传图片，或使用图片模型直接生成项目封面。</p></div>
+                    <div className="flex shrink-0 flex-wrap gap-2"><Button icon={<Sparkles className="size-3.5" />} onClick={() => setCoverGenerationOpen(true)}>AI 生成</Button><Button icon={<FolderOpen className="size-3.5" />} onClick={() => { setCoverPage(1); setCoverPickerOpen(true); }}>{project.coverResourceId ? "替换主图" : "设置主图"}</Button>{project.coverResourceId ? <Button danger type="text" icon={<Trash2 className="size-3.5" />} loading={coverMutation.isPending} onClick={() => coverMutation.mutate({ coverResourceId: "", expectedScope: entryScope, projectId: mountedProjectId })}>移除</Button> : null}</div>
                 </div>
             </section>
 
@@ -270,6 +303,16 @@ function ProjectSettingsSession({ detail, refreshProject }: ProjectDetailViewPro
                     await coverMutation.mutateAsync({ coverResourceId: resourceId, expectedScope, projectId: mountedProjectId });
                 }}
             />
+            {coverGenerationOpen ? <ProjectSettingsCoverGenerationModal
+                open={coverGenerationOpen}
+                project={project}
+                config={effectiveConfig}
+                preferredModel={defaultImageModel || project.defaultImageModel || ""}
+                submitting={coverGenerationMutation.isPending}
+                taskStatus={coverGenerationTask}
+                onClose={() => { setCoverGenerationOpen(false); setCoverGenerationTask(null); }}
+                onGenerate={({ prompt, config }) => coverGenerationMutation.mutate({ expectedScope: entryScope, projectId: mountedProjectId, prompt, config })}
+            /> : null}
             <CanvasStylePickerModal open={stylePickerOpen} value={stylePresetId} currentProfile={styleProfile} startInEditor={styleEditorRequested} onClose={() => { setStylePickerOpen(false); setStyleEditorRequested(false); }} onSelect={(preset) => { applyStyle(preset); setStylePickerOpen(false); setStyleEditorRequested(false); }} />
             <CanvasStyleDetailModal open={Boolean(styleDetail)} preset={styleDetail} selected={styleDetail?.id === stylePresetId} onClose={() => setStyleDetail(null)} onSelect={(preset) => { applyStyle(preset); setStyleDetail(null); }} />
         </div>

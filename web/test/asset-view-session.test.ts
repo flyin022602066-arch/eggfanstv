@@ -238,12 +238,12 @@ describe("asset page and picker wiring", () => {
         expect(picker).toContain("assetPickerQueryKey(entryScope");
         expect(picker).toContain("expectedScope: expectedScopeFromQueryKey(queryKey)");
         expect(picker).toContain("runAssetViewAction(entryScope");
-        expect(picker).toContain("await onConfirm(selectedIds, scope)");
+        expect(picker).toContain("await onConfirm(selectedIds, scope, selectedItems)");
         expect(picker).not.toContain("clearWorkspaceArchivedAssets");
         expect(picker).not.toContain("回收站");
-        expect(picker).toContain("onConfirm: (ids: string[], expectedScope: CapturedUserScope)");
+        expect(picker).toContain("onConfirm: (ids: string[], expectedScope: CapturedUserScope, selectedItems:");
         expect(picker).toContain("onUpload: (files: FileList, expectedScope: CapturedUserScope)");
-        expect(picker).toContain("await onConfirm(selectedIds, scope)");
+        expect(picker).toContain("await onConfirm(selectedIds, scope, selectedItems)");
         expect(picker).toContain("upload!.onUpload(files, scope)");
         expect(picker).toContain("await onFolderAction(folderId, scope)");
         expect(picker).toContain("shouldSuppressAssetViewError");
@@ -274,7 +274,7 @@ describe("asset page and picker wiring", () => {
 
         const canvasPicker = read("../src/components/canvas/asset-picker-modal.tsx");
         expect(canvasPicker).toContain("onInsert: (payloads: InsertAssetPayload[], expectedScope: CapturedUserScope)");
-        expect(canvasPicker).toContain("await onInsert(assetPickerItemsToInsertPayloads(ids, items), expectedScope)");
+        expect(canvasPicker).toContain("await onInsert(assetPickerItemsToInsertPayloads(ids, selectedItems), expectedScope)");
 
         const projectPicker = read("../src/components/canvas/canvas-project-asset-modal.tsx");
         expect(projectPicker).toContain("getWorkspaceAsset(item.project.id, undefined, { expectedScope })");

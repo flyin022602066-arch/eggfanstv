@@ -76,6 +76,26 @@ func TestTaskClientContextPreservesCanvasNodeID(t *testing.T) {
 	}
 }
 
+func TestTaskSummaryProjectsCharacterLookTargetWithoutInput(t *testing.T) {
+	summary := taskSummaryForOutput(model.Task{InputJSON: `{"metadata":{"nodeId":"character-turnaround:hero","characterVersionId":"combat-version"},"config":{"apiKey":"private-test-value"}}`})
+	if summary.ClientContext == nil || summary.ClientContext.CharacterVersionID != "combat-version" {
+		t.Fatalf("character look target missing: %+v", summary.ClientContext)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"private-test-value", "inputJson", "apiKey"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("summary leaked %s", secret)
+		}
+	}
+	context := taskClientContext(`{"metadata":{"nodeId":"unrelated-node","characterVersionId":"combat-version"}}`)
+	if context == nil || context.CharacterVersionID != "" {
+		t.Fatalf("unrelated task gained a character look target: %+v", context)
+	}
+}
+
 func TestTaskSummaryExposesDirectorPanoramaRecoveryIdentityOnly(t *testing.T) {
 	summary := taskSummaryForOutput(model.Task{
 		ID: "task-1", ProjectID: "project-1", Type: "canvas_image",

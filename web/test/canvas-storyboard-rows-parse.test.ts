@@ -11,6 +11,13 @@ function storyboardTask(resultJson: string): GenerationTask {
 // 后端 canvas_text 任务统一落 {mode, reasoning, text} 包装，模型输出正文嵌在 text 里；
 // 分镜解析必须穿透包装取内层 {title, rows}，同时兼容模板路径直接落顶层的结构。
 describe("storyboardRowsFromTask", () => {
+    test("normalizes model character identities before recovery and preserves version selection", () => {
+        const rows = storyboardRowsFromTask(storyboardTask(JSON.stringify({ rows: [{
+            characters: [{ name: "纪昼", assetId: "hero", versionId: "look" }],
+        }] }))).rows;
+        expect(rows[0]!.characters[0]).toMatchObject({ characterName: "纪昼", characterAssetId: "hero", characterVersionId: "look" });
+        expect(() => storyboardRowsFromTask(storyboardTask(JSON.stringify({ rows: [{ characters: [{}] }] })))).toThrow("characters 缺少有效角色名称");
+    });
     test("从 {mode, reasoning, text} 包装的 text 内层解析分镜行", () => {
         const payload = { title: "桃源三结义", rows: [
             { shotNumber: 1, durationSeconds: 8, plotDescription: "朝堂开篇", dialogue: "", characters: ["刘备"], mustHave: ["列队"], optionalDetails: [] },
@@ -64,6 +71,7 @@ describe("storyboardRowsFromTask", () => {
                 plotDescription: "部署任务后，众人回应。",
                 dialogue: ["甲：我们准备好了。", "乙：出发吧。"],
                 audioEffects: ["风声", "脚步声"],
+                systemElements: ["【宿主：苏夜】", "【进化点：0】"],
                 timeBeats: ["镜头1：固定机位，部署任务。", "镜头2：固定机位，众人回应。"],
                 videoMotionPrompt: "完整的镜头与表演原文。",
                 negativePrompt: null,
@@ -77,8 +85,22 @@ describe("storyboardRowsFromTask", () => {
         expect(shots[0].revision.dialogue).toBe("甲：我们准备好了。\n乙：出发吧。");
         expect(shots[0].revision.action).toContain("声音：风声\n脚步声");
         expect(shots[0].revision.actionBeats).toContainEqual({ description: "镜头1：固定机位，部署任务。\n镜头2：固定机位，众人回应。" });
-        expect(shots[0].revision.videoPrompt).toBe("完整的镜头与表演原文。");
+        expect(shots[0].revision.videoPrompt).toContain("完整的镜头与表演原文。");
+        expect(shots[0].revision.videoPrompt).toContain("【宿主：苏夜】");
+        expect(rows[0]!.systemElements).toEqual(["【宿主：苏夜】", "【进化点：0】"]);
         expect(shots[0].revision.negativePrompt).toBe("");
+    });
+
+    test("旧分镜兼容缺少系统字段，存在时严格保留原文", () => {
+        const task = storyboardTask(JSON.stringify({ rows: [
+            { plotDescription: "旧分镜" },
+            { plotDescription: "系统面板", systemElements: "【宿主：苏夜】" },
+        ] }));
+        const rows = storyboardRowsFromTask(task).rows;
+        expect(rows[0]!.systemElements).toEqual([]);
+        expect(rows[1]!.systemElements).toEqual(["【宿主：苏夜】"]);
+        const invalidTask = storyboardTask(JSON.stringify({ rows: [{ systemElements: ["【宿主：苏夜】", 1] }] }));
+        expect(() => storyboardRowsFromTask(invalidTask)).toThrow("systemElements 必须是文本数组");
     });
 
     test("无法识别的分镜字段类型给出具体位置，避免损坏内容被覆盖写入", () => {

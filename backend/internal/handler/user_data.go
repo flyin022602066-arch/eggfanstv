@@ -139,6 +139,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		ok(c, gin.H{"cleared": cleared})
 	})
+    registerSunoMediaRoute(r, svc)
 	r.POST("/resources", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

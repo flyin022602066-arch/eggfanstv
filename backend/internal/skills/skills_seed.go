@@ -134,5 +134,8 @@ func (s *Service) EnsureBuiltinSkillsAdded(userID string) error {
 	if strings.TrimSpace(userID) == "" {
 		return fmt.Errorf("本地技能用户不能为空")
 	}
-	return s.repo.EnsureBuiltinSkillStates(userID, skillSourceUser)
+	if err := s.repo.EnsureBuiltinSkillStates(userID, skillSourceUser); err != nil {
+		return err
+	}
+	return s.ensureBundledSkillsAdded(userID)
 }

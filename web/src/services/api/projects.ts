@@ -65,6 +65,7 @@ export type ProjectAsset = {
     status: string;
     primaryVersionId?: string;
     versionCount: number;
+    characterLookCount?: number;
     usages: string[];
     unitIds?: string[];
     folderId?: string;
@@ -211,12 +212,20 @@ export type ShotAssetReference = {
     role: "reference" | "start_frame" | "end_frame" | "keyframe" | "storyboard" | "output" | string;
     status: string;
     createdAt: string;
+    selectionStatus?: "resolved" | "pending";
+    selectionSource?: "manual" | "auto" | "rule";
+    selectionLocked?: boolean;
+    selectionReason?: string;
+    selectionRevisionId?: string;
     asset?: ProjectAsset;
     referencedVersion?: {
         id: string;
         assetId: string;
         version: number;
         representations: CharacterRepresentation[];
+        referenceProfile?: import("./project-character-references").CharacterReferenceProfile;
+        definition?: Record<string, unknown>;
+        voice?: CharacterCardSummary["voice"];
     };
 };
 
@@ -352,20 +361,20 @@ export function getProject(id: string) {
     return http.get<ProjectDetail>(`/projects/${encodeURIComponent(id)}`).then(normalizeProjectDetail);
 }
 
-export function getProjectCore(id: string, expectedScope?: CapturedUserScope) {
-    return http.get<ProjectCore>(`/projects/${encodeURIComponent(id)}/core`, { expectedScope });
+export function getProjectCore(id: string, expectedScope?: CapturedUserScope, signal?: AbortSignal) {
+    return http.get<ProjectCore>(`/projects/${encodeURIComponent(id)}/core`, { expectedScope, signal, timeout: 30_000 });
 }
 
-export function listProjectUnits(projectId: string) {
-    return http.get<{ units: ProjectUnit[]; canvasCounts: Record<string, number> }>(`/projects/${encodeURIComponent(projectId)}/units`);
+export function listProjectUnits(projectId: string, signal?: AbortSignal) {
+    return http.get<{ units: ProjectUnit[]; canvasCounts: Record<string, number> }>(`/projects/${encodeURIComponent(projectId)}/units`, { signal, timeout: 30_000 });
 }
 
 export function getProjectOverview(projectId: string) {
     return http.get<ProjectOverview>(`/projects/${encodeURIComponent(projectId)}/overview`);
 }
 
-export function getProjectUnitWorkspace(projectId: string, unitId: string) {
-    return http.get<ProjectUnitWorkspace>(`/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/workspace`);
+export function getProjectUnitWorkspace(projectId: string, unitId: string, signal?: AbortSignal) {
+    return http.get<ProjectUnitWorkspace>(`/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/workspace`, { signal, timeout: 30_000 });
 }
 
 export function listProjectCanvases(projectId: string, page = 1, pageSize = 40) {
@@ -529,12 +538,16 @@ export function createProjectAssetVersion(projectId: string, assetId: string, in
     return http.post<{ version: { id: string; assetId: string; version: number; status: string } }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/versions`, input);
 }
 
+export function replaceProjectAssetImage(projectId: string, assetId: string, resourceId: string, expectedScope?: CapturedUserScope) {
+    return http.post<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/replace-image`, { resourceId }, { expectedScope });
+}
+
 export function listVoiceProfiles() {
     return http.get<{ profiles: VoiceProfile[] }>("/voice-profiles");
 }
 
-export function createProjectCharacter(projectId: string, input: { name: string; definition?: Record<string, unknown> }) {
-    return http.post<ProjectCharacterDetail>(`/projects/${encodeURIComponent(projectId)}/characters`, input);
+export function createProjectCharacter(projectId: string, input: { name: string; definition?: Record<string, unknown> }, expectedScope?: CapturedUserScope) {
+    return http.post<ProjectCharacterDetail>(`/projects/${encodeURIComponent(projectId)}/characters`, input, { expectedScope });
 }
 
 export function getProjectCharacter(projectId: string, assetId: string) {

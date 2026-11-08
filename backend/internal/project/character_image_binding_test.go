@@ -183,7 +183,7 @@ func TestBindCharacterTurnaroundImageResourceValidation(t *testing.T) {
 	}
 }
 
-func TestReplaceCharacterImageUpdatesProjectShotReferencesWithoutChangingTaskSnapshots(t *testing.T) {
+func TestReplaceCharacterImagePreservesProjectShotReferencesAndTaskSnapshots(t *testing.T) {
 	service, db := newTestService(t, nil)
 	project, asset := seedProjectCharacterRepresentation(t, db)
 	now := time.Now()
@@ -224,12 +224,12 @@ func TestReplaceCharacterImageUpdatesProjectShotReferencesWithoutChangingTaskSna
 		if err := db.First(&stored, "id = ?", referenceID).Error; err != nil {
 			t.Fatal(err)
 		}
-		if stored.AssetVersionID != result.Character.VersionID || !stored.CreatedAt.Equal(now) {
-			t.Fatalf("reference %s = %+v, want replacement version %s without reordering", referenceID, stored, result.Character.VersionID)
+		if stored.AssetVersionID != asset.PrimaryVersionID || !stored.CreatedAt.Equal(now) {
+			t.Fatalf("reference %s changed after redraw: %+v", referenceID, stored)
 		}
 	}
 	var duplicates int64
-	if err := db.Model(&model.ShotAssetReference{}).Where("id = ?", "duplicate-history").Count(&duplicates).Error; err != nil || duplicates != 0 {
+	if err := db.Model(&model.ShotAssetReference{}).Where("id = ?", "duplicate-history").Count(&duplicates).Error; err != nil || duplicates != 1 {
 		t.Fatalf("duplicate references = %d, error = %v", duplicates, err)
 	}
 	for _, referenceID := range []string{"foreign-project-reference", "unlinked-reference", "other-character-reference"} {
@@ -241,7 +241,7 @@ func TestReplaceCharacterImageUpdatesProjectShotReferencesWithoutChangingTaskSna
 			t.Fatalf("unrelated reference changed: %+v", stored)
 		}
 	}
-	if err := db.First(&artifact, "id = ?", artifact.ID).Error; err != nil || artifact.Status != "stale" || artifact.Selected || artifact.ResourceID != "previous-video-resource" || artifact.MetadataJSON != "saved-version-snapshot" {
+	if err := db.First(&artifact, "id = ?", artifact.ID).Error; err != nil || artifact.Status != "ready" || !artifact.Selected || artifact.ResourceID != "previous-video-resource" || artifact.MetadataJSON != "saved-version-snapshot" {
 		t.Fatalf("historical artifact = %+v, error = %v", artifact, err)
 	}
 	if err := db.First(&runningArtifact, "id = ?", runningArtifact.ID).Error; err != nil || runningArtifact.Status != "running" {
@@ -267,11 +267,11 @@ func TestCharacterImageReplacementRollsBackVersionAndReferencesOnFailure(t *test
 			t.Fatal(err)
 		}
 	}
-	if err := db.Exec("CREATE TRIGGER reject_character_rebind BEFORE UPDATE OF asset_version_id ON shot_asset_references BEGIN SELECT RAISE(ABORT, 'rebind failed'); END").Error; err != nil {
+	if err := db.Exec("CREATE TRIGGER reject_character_image BEFORE INSERT ON asset_representations BEGIN SELECT RAISE(ABORT, 'image write failed'); END").Error; err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.ReplaceProjectCharacterRepresentations(project.UserID, project.ID, asset.ID, ReplaceCharacterRepresentationsRequest{Representations: []CharacterRepresentationInput{{Role: "primary", ResourceID: resource.ID}}}); err == nil {
-		t.Fatal("expected rejected reference write")
+		t.Fatal("expected rejected image write")
 	}
 	storedAsset, err := service.repo.AssetForUser(project.UserID, asset.ID)
 	if err != nil || storedAsset.PrimaryVersionID != asset.PrimaryVersionID {

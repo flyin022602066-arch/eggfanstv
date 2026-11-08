@@ -7,7 +7,7 @@ import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalize
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { isEggfansSeedanceProtocol, normalizeEggfansReferenceMode } from "@/lib/eggfans-seedance";
 import { faceMaskGridOptions, isGridFaceMaskMode, isJiasuSdModel, jiasuModelSupportsServerFace, normalizeJiasuFaceMaskMode } from "@/lib/jiasu-face-mask";
-import { isEggfansSd2DModel, normalizeSd2FaceMaskMode } from "@/lib/eggfans-sd2-face-mask";
+import { isEggfansSd2DModel, isTowoSd25Model, normalizeSd2FaceMaskMode } from "@/lib/eggfans-sd2-face-mask";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, videoDimensionsForRatioAndResolution, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
 import { hasAutomaticVideoAudio, isSeedance25Model, modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, type VideoCapabilityConfig } from "@/lib/model-capabilities";
@@ -37,7 +37,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     if (interfaceType === "volcengine-jimeng-video") {
         return <JiMengVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
-    if (isSeedanceVideoConfig(config)) {
+    if (isSeedanceVideoConfig(config) && interfaceType !== "towo-sd25-video") {
         return <SeedanceVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} taskConstraints={taskConstraints} />;
     }
     // 阿里系中转网关：图生视频时**输出比例跟随首帧参考图**（官方文档 + 2026-10-12 实测：
@@ -55,6 +55,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const generateAudio = automaticAudio || boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
     const isEggfansSd2 = resolveModelRequestConfig(config, config.model).interfaceType === "eggfans-sd2-video";
+    const isTowoSd25 = isTowoSd25Model(interfaceType, config.model);
     const isJiasu = resolveModelRequestConfig(config, config.model).interfaceType === "jiasu-video";
 
     return (
@@ -97,6 +98,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </SettingGroup> : null}
                 {isJiasu ? <JiasuVideoReferenceSettings config={config} theme={theme} onConfigChange={onConfigChange} /> : null}
                 {isEggfansSd2DModel(isEggfansSd2 ? "eggfans-sd2-video" : undefined, config.model) ? <SettingGroup title="本地参考图处理" color={theme.node.muted}><SwitchRow label="自动人脸遮罩" checked={normalizeSd2FaceMaskMode(config.videoSd2FaceMask) !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoSd2FaceMask", enabled ? "grid" : "off")} /><FaceMaskDensityControl mode={normalizeSd2FaceMaskMode(config.videoSd2FaceMask)} theme={theme} onChange={(value) => onConfigChange("videoSd2FaceMask", value)} /><div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>在节点“人脸遮罩”中预览或框选，处理后再上传。本地遮罩与服务器“过人脸”开关独立。</div></SettingGroup> : null}
+                {isTowoSd25 ? <TowoVideoReferenceSettings config={config} theme={theme} onConfigChange={onConfigChange} /> : null}
                 <SettingGroup title="秒数" color={theme.node.muted}>
 					<VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
                 </SettingGroup>
@@ -120,6 +122,15 @@ export function JiasuVideoReferenceSettings({ config, onConfigChange, theme }: P
         </SettingGroup>
         {isJiasuSdModel("jiasu-video", config.model) ? <SettingGroup title="本地参考图处理" color={theme.node.muted}><SwitchRow label="自动人脸遮罩" checked={normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask) !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoJiasuFaceMask", enabled ? "grid" : "off")} /><FaceMaskDensityControl mode={normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask)} theme={theme} onChange={(value) => onConfigChange("videoJiasuFaceMask", value)} /><div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>自动检测参考图并处理后上传；画布节点支持预览和手动框选。</div></SettingGroup> : null}
     </div>;
+}
+
+export function TowoVideoReferenceSettings({ config, onConfigChange, theme }: Pick<VideoSettingsPanelProps, "config" | "onConfigChange" | "theme">) {
+    if (!isTowoSd25Model(resolveModelRequestConfig(config, config.model).interfaceType, config.model)) return null;
+    return <SettingGroup title="人脸处理" color={theme.node.muted}>
+        <SwitchRow label="自动人脸遮罩" checked={normalizeSd2FaceMaskMode(config.videoSd2FaceMask) !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoSd2FaceMask", enabled ? "grid" : "off")} />
+        <FaceMaskDensityControl mode={normalizeSd2FaceMaskMode(config.videoSd2FaceMask)} theme={theme} onChange={(value) => onConfigChange("videoSd2FaceMask", value)} />
+        <div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>Towo 不发送 native_face；生成前会处理参考图并上传 Uguu，再提交最新 HTTPS 链接。</div>
+    </SettingGroup>;
 }
 
 function FaceMaskDensityControl({ mode, theme, onChange }: { mode: string; theme: CanvasTheme; onChange(value: string): void }) {

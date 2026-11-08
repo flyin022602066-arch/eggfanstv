@@ -27,6 +27,8 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
+    const onOpenChangeRef = useRef(onOpenChange);
+    onOpenChangeRef.current = onOpenChange;
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const profile = modelCapabilityConfigFor(config, config.model || config.imageModel).image!;
     const normalized = normalizeImageValue(profile, config);
@@ -42,6 +44,11 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
     };
+
+    useEffect(() => {
+        if (!open) return;
+        return () => onOpenChangeRef.current?.(false);
+    }, [open]);
 
     useEffect(() => {
         if (!open) return;

@@ -10,7 +10,7 @@ import { resolveGenerationWorkflowExecution, type GenerationWorkflowExecution } 
 import { isArkPlanBaseUrl } from "@/lib/seedance-video";
 import { isEggfansSeedanceProtocol } from "@/lib/eggfans-seedance";
 import { isJiasuSdModel, normalizeJiasuFaceMaskMode, type JiasuFaceMaskOverrides } from "@/lib/jiasu-face-mask";
-import { normalizeSd2FaceMaskMode, usesSd2LocalFaceMask } from "@/lib/eggfans-sd2-face-mask";
+import { normalizeSd2FaceMaskMode, usesSd2LocalFaceMask, usesTowoLocalFaceMask } from "@/lib/eggfans-sd2-face-mask";
 import { prepareJiasuFaceMaskedImage } from "@/services/jiasu-face-mask";
 import { portraitGenerationError, resolveVideoOperation } from "@/lib/model-selection";
 import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
@@ -275,17 +275,19 @@ async function prepareGenerationReferences({
     const preferOwnedResource = (eggfansSeedance && !eggfansUsesURL) || mintsSeedance;
     const protocol = resolveModelRequestConfig(config, config.model).interfaceType;
     const sd2LocalMask = mode === "video" && usesSd2LocalFaceMask(protocol, config.model, config.videoSd2FaceMask);
+    const towoLocalMask = mode === "video" && usesTowoLocalFaceMask(protocol, config.model, config.videoSd2FaceMask);
     const jiasuLocalMask = mode === "video" && isJiasuSdModel(protocol, config.model) && normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask) !== "off";
-    if (sd2LocalMask || jiasuLocalMask) {
+    if (sd2LocalMask || towoLocalMask || jiasuLocalMask) {
         const profile = modelCapabilityConfigFor(config, config.model).video;
         if (profile) assertVideoCapability(profile, referenceImages, referenceVideos, referenceAudios, config.videoSeconds, { deferResourceMetadataToBackend: true });
-        const overrides = (sd2LocalMask ? metadata?.sd2FaceMasks : metadata?.jiasuFaceMasks) as JiasuFaceMaskOverrides | undefined;
-        const maskMode = sd2LocalMask ? normalizeSd2FaceMaskMode(config.videoSd2FaceMask) : normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask);
+        const overrides = (sd2LocalMask ? metadata?.sd2FaceMasks : towoLocalMask ? metadata?.towoFaceMasks : metadata?.jiasuFaceMasks) as JiasuFaceMaskOverrides | undefined;
+        const maskMode = sd2LocalMask || towoLocalMask ? normalizeSd2FaceMaskMode(config.videoSd2FaceMask) : normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask);
+        const maskChannel = sd2LocalMask ? "eggfans-sd2" : towoLocalMask ? "towo" : "jiasu";
         const transformed: ReferenceImage[] = [];
         for (const image of referenceImages) {
             throwIfAborted(signal);
             const override = overrides?.[image.id] || Object.values(overrides || {}).find((candidate) => candidate.storageKey && candidate.storageKey === image.storageKey);
-            transformed.push(await prepareJiasuFaceMaskedImage(image, maskMode, override, signal, sd2LocalMask ? "eggfans-sd2" : "jiasu"));
+            transformed.push(await prepareJiasuFaceMaskedImage(image, maskMode, override, signal, maskChannel));
         }
         referenceImages = transformed;
     }
@@ -300,7 +302,7 @@ async function prepareGenerationReferences({
 // 跳过可信素材上传同步（适合已录入方舟素材 ID 的素材，例如被授权的真人像素材）。
 function usesArkVideoAssetReference(config: AiConfig) {
     const interfaceType = resolveModelRequestConfig(config, config.model).interfaceType;
-    if (interfaceType === "eggfans-sd2-video" || interfaceType === "jiasu-video" || interfaceType === "mints-seedance-video") return false;
+    if (interfaceType === "hanbao-video" || interfaceType === "eggfans-sd2-video" || interfaceType === "jiasu-video" || interfaceType === "mints-seedance-video") return false;
     if (interfaceType === "volcengine-ark-video" || interfaceType === "volcengine-ark-agent-plan-video") return true;
     if (isEggfansSeedanceProtocol(interfaceType)) return true;
     if (interfaceType === "volcengine-ark-image" || interfaceType === "volcengine-ark-agent-plan-image") return false;
