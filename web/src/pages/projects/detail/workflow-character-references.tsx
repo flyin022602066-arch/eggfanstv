@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, App, Button, Form, Input, Select } from "antd";
 import { LockKeyhole, UnlockKeyhole, UsersRound, X } from "lucide-react";
 import { CachedResourceImage } from "@/components/cached-resource-image";
-import { characterReferenceImage, characterReferenceNeedsReview, characterSelectionShots, referenceAssetId } from "@/lib/character-look-selection";
+import { characterReferenceImage, characterReferenceLockPlan, characterReferenceNeedsReview, characterSelectionShots, referenceAssetId } from "@/lib/character-look-selection";
 import { captureUserScope } from "@/lib/user-scope-guard";
 import { getCharacterReferenceCatalog, saveCharacterReferenceChoices, type CharacterReferenceChoice } from "@/services/api/project-character-references";
 import { getProjectUnitWorkspace, listProjectAssets, type ProjectAsset, type ProjectDetail, type ShotAssetReference } from "@/services/api/projects";
@@ -44,6 +44,27 @@ export function WorkflowCharacterReferences({ detail, projectId, unitId, shotId,
         const choice: CharacterReferenceChoice = { shotId, assetId: input.assetId, versionId: input.versionId, status: input.status || "resolved", source: "manual", locked: input.locked, reason: input.locked ? input.status === "pending" ? "用户手动指定出镜角色并锁定，待补参考图" : "用户手动指定并锁定造型" : "用户解除造型锁定，允许重新识别", expectedShotRevisionId: shot.currentRevisionId };
         return saveCharacterReferenceChoices(projectId, unitId, { expectedRevision: revision, choices: [choice] }, scope);
     }, onSuccess: async () => { setAddingCharacter(false); await refresh(); }, onError: (error) => { message.error(error.message); void refresh(); } });
+    const lockAll = useMutation({ mutationFn: async () => {
+        const scope = captureUserScope();
+        const data = query.data;
+        if (!data) throw new Error("请先读取角色造型列表");
+        const [catalog, workspace] = await Promise.all([getCharacterReferenceCatalog(projectId, scope), getProjectUnitWorkspace(projectId, unitId)]);
+        const current = workspace.shots.find((item) => item.id === shotId);
+        if (!current?.currentRevisionId) throw new Error("镜头没有可用脚本版本，请先保存脚本");
+        if (current.currentRevisionId !== data.shots.find((item) => item.shotId === shotId)?.revisionId || catalog.revision !== data.catalog.revision) throw new Error("项目或镜头已变化，请刷新造型列表后重选");
+        const currentShot = characterSelectionShots(workspace, data.assets).find((item) => item.shotId === shotId);
+        if (currentShot?.busy) throw new Error("镜头正在生成，请稍后再锁定造型");
+        const plan = characterReferenceLockPlan(currentShot, catalog.versions);
+        if (!plan.choices.length) throw new Error("暂无可锁定造型，请检查是否已锁定、未绑定、缺少参考图或存在版本冲突");
+        const result = await saveCharacterReferenceChoices(projectId, unitId, { expectedRevision: catalog.revision, choices: plan.choices }, scope);
+        if (!result.saved) throw new Error("造型锁定未保存，请刷新后重试");
+        return { count: plan.choices.length, skippedNames: plan.skippedAssetIds.map((assetId) => data.assets.find((asset) => asset.id === assetId)?.title || assetId) };
+    }, onSuccess: async ({ count, skippedNames }) => {
+        await refresh();
+        const summary = `已锁定当前镜头 ${count} 个角色造型`;
+        if (skippedNames.length) message.warning(`${summary}；${skippedNames.join("、")} 未锁定（未绑定、缺参考图或版本冲突），请逐项确认`, 8);
+        else message.success(summary);
+    }, onError: (error) => { message.error(error.message); void refresh(); } });
     const create = useMutation({ mutationFn: async (values: { name: string; appearance: string }) => {
         if (disabled) throw new Error("镜头正在更新，请稍后再新增出镜角色");
         return createAndBindProjectShotCharacter({ projectId, unitId, shotId, expectedShotRevisionId: query.data?.shots.find((item) => item.shotId === shotId)?.revisionId || "", name: values.name, appearance: values.appearance || "" });
@@ -52,19 +73,20 @@ export function WorkflowCharacterReferences({ detail, projectId, unitId, shotId,
         if (result.bindingError) { setAddingCharacter(true); message.warning(result.bindingError, 8); }
         else message.success("已新增并绑定本镜，可在角色卡片中补参考图");
     }, onError: (error) => { message.error(error.message); } });
-    const busy = identify.isPending || manual.isPending || create.isPending;
+    const busy = identify.isPending || manual.isPending || lockAll.isPending || create.isPending;
     useEffect(() => { onBusyChange(busy); return () => onBusyChange(false); }, [busy, onBusyChange]);
     const shot = query.data?.shots.find((item) => item.shotId === shotId);
+    const lockPlan = characterReferenceLockPlan(shot, query.data?.catalog.versions || []);
     const currentShot = query.data?.workspace.shots.find((item) => item.id === shotId);
     const currentRevision = query.data?.workspace.shotRevisions.find((item) => item.id === currentShot?.currentRevisionId);
     const closeUp = /特写|近景|close/iu.test(currentRevision?.shotSize || "");
     const unboundVersions = query.data?.catalog.versions.filter((version) => !shot?.references.some((reference) => referenceAssetId(reference) === version.assetId)) || [];
     return <section className="workflow-character-references" aria-label="角色造型参考">
-        <div className="workflow-character-reference-toolbar"><span className="inline-flex items-center gap-1 text-xs"><UsersRound className="size-3.5" />角色造型</span><div className="flex flex-wrap gap-1"><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("shot")}>识别本镜</Button><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("chapter")}>识别本章</Button><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("pending")}>仅待确认</Button></div></div>
+        <div className="workflow-character-reference-toolbar"><span className="inline-flex items-center gap-1 text-xs"><UsersRound className="size-3.5" />角色造型</span><div className="flex flex-wrap gap-1"><Button size="small" icon={<LockKeyhole className="size-3" />} loading={lockAll.isPending} disabled={disabled || busy || query.isPending || query.isError || !lockPlan.choices.length} title="锁定当前镜头全部已选造型，保留当前版本；未绑定、缺图或版本冲突项将跳过" onClick={() => lockAll.mutate()}>一键锁定全部</Button><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("shot")}>识别本镜</Button><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("chapter")}>识别本章</Button><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("pending")}>仅待确认</Button></div></div>
         <div className="mb-2"><div className="flex flex-wrap gap-1"><Button size="small" disabled={disabled || busy || !shot || shot.busy || query.isError || !unboundVersions.length} aria-expanded={addingCharacter} onClick={() => setAddingCharacter((value) => !value)}>手动绑定角色</Button><Button size="small" disabled={disabled || busy || !shot || shot.busy || query.isError} onClick={() => { create.reset(); setCreatingCharacter(true); }}>新增角色</Button></div>{addingCharacter ? <Select<string | undefined> className="mt-2 w-full" aria-label="从项目资产绑定角色" placeholder="选择角色与造型；缺图也可先绑定" value={undefined} showSearch optionFilterProp="label" disabled={disabled || busy || shot?.busy} options={unboundVersions.map((version) => ({ value: version.versionId, label: `${query.data?.assets.find((asset) => asset.id === version.assetId)?.title || version.title} · ${version.referenceProfile?.name || "角色参考图"} · v${version.version}${!characterReferenceImage(version) ? " · 待补图" : ""}` }))} onChange={(versionId) => { const version = unboundVersions.find((item) => item.versionId === versionId); if (version) manual.mutate({ assetId: version.assetId, versionId: version.versionId, locked: true, status: characterReferenceImage(version) ? "resolved" : "pending" }); }} /> : null}</div>
         {dirty ? <p className="mb-2 text-xs text-foreground/55">脚本有未保存修改；手动绑定与切换造型仍可操作，自动识别需先保存脚本。</p> : null}
         {identify.isPending ? <div className="mb-2 text-xs text-foreground/60">{progress || "正在读取剧情与造型目录…"}<Button type="link" size="small" onClick={() => controller.current?.abort()}>停止并保留原绑定</Button></div> : null}
-        {manual.isError || identify.isError ? <Alert type="error" title="造型更新失败" description={(manual.error || identify.error)?.message} /> : null}
+        {manual.isError || identify.isError || lockAll.isError ? <Alert type="error" title="造型更新失败" description={(lockAll.error || manual.error || identify.error)?.message} /> : null}
         {query.isError ? <Alert type="error" title="造型目录读取失败" description={query.error.message} action={<Button size="small" onClick={() => void query.refetch()}>重试</Button>} /> : query.isPending ? <p className="text-xs text-foreground/55">正在读取造型…</p> : !shot?.assetIds.length ? <p className="text-xs text-foreground/55">本镜暂无出镜角色，可手动绑定项目角色，或新增遗漏角色后补图。</p> : <div className="workflow-character-reference-grid">{shot.assetIds.map((assetId) => {
             const asset = query.data.assets.find((item) => item.id === assetId);
             const refs = shot.references.filter((ref) => referenceAssetId(ref) === assetId);

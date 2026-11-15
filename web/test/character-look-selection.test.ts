@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { characterLookCandidates, characterLookDraft, characterLookDisplayVersions, characterLookImageTargets, characterReferenceImage, characterSelectionShots, characterSelectionTargets, parseCharacterSelectionResponse, validateCharacterSelections, type CharacterSelectionShot } from "@/lib/character-look-selection";
+import { characterLookCandidates, characterLookDraft, characterLookDisplayVersions, characterLookImageTargets, characterReferenceImage, characterReferenceLockPlan, characterSelectionShots, characterSelectionTargets, parseCharacterSelectionResponse, validateCharacterSelections, type CharacterSelectionShot } from "@/lib/character-look-selection";
 import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
 import { createAndBindProjectShotCharacter, identifyProjectCharacterReferences } from "@/services/project-character-references";
 import type { ProjectAsset, ProjectUnitWorkspace, ShotAssetReference } from "@/services/api/projects";
@@ -19,6 +19,31 @@ const response = (shotId = "shot-1", overrides = {}) => ({ shotId, assetId: "her
 const validate = (responses: ReturnType<typeof response>[], shots = [shot()], versions = [look()]) => validateCharacterSelections({ shots, versions, responses });
 
 describe("character look selection", () => {
+    test("bulk locking preserves the selected version and confirms pending choices only for this shot", () => {
+        const ref = { id: "r", shotId: "shot-1", assetVersionId: "armor", role: "reference", status: "linked", selectionStatus: "pending", referencedVersion: { id: "armor", assetId: "hero", version: 2, representations: [] }, createdAt: "" } satisfies ShotAssetReference;
+        const result = characterReferenceLockPlan(shot("shot-1", { assetIds: ["hero", "hero"], references: [ref] }), [look(), look("armor", { version: 2 })]);
+        expect(result.choices).toEqual([{ shotId: "shot-1", assetId: "hero", versionId: "armor", status: "resolved", source: "manual", locked: true, reason: expect.any(String), expectedShotRevisionId: "revision-shot-1" }]);
+        expect(result.skippedAssetIds).toEqual([]);
+        expect(ref.selectionStatus).toBe("pending");
+        expect(ref.assetVersionId).toBe("armor");
+    });
+    test("bulk locking skips unbound, missing, ambiguous and mismatched asset versions", () => {
+        const reference = (assetId: string, versionId: string) => ({ id: versionId, shotId: "shot-1", assetVersionId: versionId, role: "reference", status: "linked", referencedVersion: { id: versionId, assetId, version: 1, representations: [] }, createdAt: "" } satisfies ShotAssetReference);
+        const selected = shot("shot-1", { assetIds: ["unbound", "missing", "conflict", "wrong-owner"], references: [reference("missing", "missing-v1"), reference("conflict", "conflict-v1"), reference("conflict", "conflict-v2"), reference("wrong-owner", "daily")] });
+        const result = characterReferenceLockPlan(selected, [look(), look("missing-v1", { assetId: "missing", representations: [] }), look("conflict-v1", { assetId: "conflict" })]);
+        expect(result.choices).toEqual([]);
+        expect(result.skippedAssetIds).toEqual(selected.assetIds);
+    });
+    test("bulk locking skips resolved locks but can confirm a locked pending version once its image exists", () => {
+        const ref = { id: "r", shotId: "shot-1", assetVersionId: "daily", role: "reference", status: "linked", selectionStatus: "resolved", selectionLocked: true, referencedVersion: { id: "daily", assetId: "hero", version: 1, representations: [] }, createdAt: "" } satisfies ShotAssetReference;
+        expect(characterReferenceLockPlan(shot("shot-1", { references: [ref] }), [look()]).choices).toEqual([]);
+        expect(characterReferenceLockPlan(shot("shot-1", { references: [{ ...ref, selectionStatus: "pending" }] }), [look()]).choices).toHaveLength(1);
+    });
+    test("bulk locking never targets a generating or unsaved shot", () => {
+        expect(characterReferenceLockPlan(undefined, [look()]).choices).toEqual([]);
+        expect(characterReferenceLockPlan(shot("shot-1", { busy: true }), [look()]).choices).toEqual([]);
+        expect(characterReferenceLockPlan(shot("shot-1", { revisionId: "" }), [look()]).choices).toEqual([]);
+    });
     test("automatic look detection skips manually removed characters until explicitly bound again", () => {
         const assets = [{ id: "hero", title: "苏卉", category: "character", primaryVersionId: "daily" }] as ProjectAsset[];
         const workspace = {

@@ -96,6 +96,24 @@ export function characterReferenceNeedsReview(ref: ShotAssetReference, revisionI
     return ref.selectionStatus === "pending" || Boolean(ref.selectionSource === "auto" && !ref.selectionLocked && ref.selectionRevisionId !== revisionId);
 }
 
+export function characterReferenceLockPlan(shot: CharacterSelectionShot | undefined, versions: CharacterReferenceVersion[]) {
+    const choices: CharacterReferenceChoice[] = [];
+    const skippedAssetIds: string[] = [];
+    if (!shot?.revisionId || shot.busy) return { choices, skippedAssetIds };
+    for (const assetId of new Set(shot.assetIds)) {
+        const refs = shot.references.filter((ref) => referenceAssetId(ref) === assetId);
+        const ref = refs[0];
+        const selected = versions.find((version) => version.assetId === assetId && version.versionId === ref?.assetVersionId);
+        if (refs.length !== 1 || !ref || !selected || !characterReferenceImage(selected)) {
+            skippedAssetIds.push(assetId);
+            continue;
+        }
+        if (ref.selectionLocked && !characterReferenceNeedsReview(ref, shot.revisionId)) continue;
+        choices.push({ shotId: shot.shotId, assetId, versionId: selected.versionId, status: "resolved", source: "manual", locked: true, reason: "用户一键确认并锁定当前镜头已选造型，保留所选版本", expectedShotRevisionId: shot.revisionId });
+    }
+    return { choices, skippedAssetIds };
+}
+
 export function characterSelectionTargets(shots: CharacterSelectionShot[], onlyShotId?: string, pendingOnly = false) {
     return shots.filter((shot) => !shot.busy && (!onlyShotId || shot.shotId === onlyShotId)).flatMap((shot) => shot.assetIds.flatMap((assetId) => {
         if (shot.visibleAssetIds && !shot.visibleAssetIds.includes(assetId)) return [];

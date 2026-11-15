@@ -59,3 +59,10 @@ test("look sidebar and version manager persist manual locks and metadata without
     if (code) throw new Error(stdout + stderr);
     expect(code).toBe(0);
 }, 60000);
+test("locks all selected looks in one request without changing versions or other shots", async () => {
+    const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/character-lock-all-browser.mjs"), server.url.toString(), artifactDir], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    console.log(stdout);
+    if (code) throw new Error(stdout + stderr);
+    expect(code).toBe(0);
+}, 60000);
