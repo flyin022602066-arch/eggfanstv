@@ -37,7 +37,7 @@ beforeAll(async () => {
 
 afterAll(() => server?.stop(true));
 
-for (const scenario of ["remove", "download", "download-error", "missing-image", "candidate-look", "library-bind"]) {
+for (const scenario of ["remove", "download", "download-error", "missing-image", "candidate-look", "library-bind", "image-recovery", "prop-merge", "prop-merge-retry"]) {
     test(`project asset ${scenario} uses actual buttons and visible feedback offline`, async () => {
         const child = Bun.spawn([process.env.NODE_BINARY || "node", join(import.meta.dir, "fixtures/project-asset-actions-browser.mjs"), server.url.toString(), artifactDir, scenario], { stdout: "pipe", stderr: "pipe" });
         const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);

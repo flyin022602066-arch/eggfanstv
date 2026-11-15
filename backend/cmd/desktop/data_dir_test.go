@@ -37,6 +37,20 @@ func TestProjectWorkspaceDataDirDoesNotUseWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestDesktopDoubaoOutputRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "run-eggfans-tv.cmd"), []byte("@echo off"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := desktopDoubaoOutputDir(filepath.Join(root, "backend", "cmd", "desktop", "build", "bin", "EggfansTV.exe")); got != filepath.Join(root, "output") {
+		t.Fatalf("project output: %s", got)
+	}
+	installed := filepath.Join(t.TempDir(), "installed eggfansTV", "EggfansTV.exe")
+	if got := desktopDoubaoOutputDir(installed); got != filepath.Join(filepath.Dir(installed), "output") {
+		t.Fatalf("installed output: %s", got)
+	}
+}
+
 func TestWebviewUserDataDirIsOutsideExecutablePath(t *testing.T) {
 	dataDir := filepath.Join(`S:\project\eggfans beeftv`, ".local", "EggfansTV")
 	got := filepath.Join(dataDir, "webview2")

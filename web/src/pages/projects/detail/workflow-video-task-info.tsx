@@ -23,7 +23,6 @@ export function WorkflowVideoTaskInfo({ projectId, taskId, task, showingHistory 
     if (!taskId) return null;
 
     const currentTask = task?.id === taskId ? task : taskQuery.data;
-    if (currentTask?.status === "failed" || currentTask?.status === "cancelled") return null;
     const providerRequestId = currentTask?.providerRequestId?.trim();
     const submittedAt = formatTaskTime(currentTask?.createdAt);
     const succeededAt = currentTask?.status === "succeeded" ? formatTaskTime(currentTask.completedAt) : "";
@@ -41,7 +40,7 @@ export function WorkflowVideoTaskInfo({ projectId, taskId, task, showingHistory 
         <strong>{showingHistory ? "当前预览任务" : "最新提交任务"}</strong>
         <div className="workflow-video-task-id">
             <span>API Task ID</span>
-            {providerRequestId ? <><code title={providerRequestId}>{providerRequestId}</code><Button type="text" size="small" icon={<Copy className="size-3.5" />} aria-label="复制 API Task ID" onClick={() => void copyId(providerRequestId)} /></> : <small role="status">{taskQuery.isError ? "任务信息读取失败，请刷新重试" : currentTask?.status === "queued" || currentTask?.status === "running" || taskQuery.isFetching ? "等待上游返回任务 ID" : "上游未返回任务 ID"}</small>}
+            {providerRequestId ? <><code title={providerRequestId}>{providerRequestId}</code><Button type="text" size="small" icon={<Copy className="size-3.5" />} aria-label="复制 API Task ID" onClick={() => void copyId(providerRequestId)} /></> : <small role="status">{taskQuery.isError ? "任务信息读取失败，请刷新重试" : currentTask?.status === "queued" || currentTask?.status === "running" || taskQuery.isFetching ? "等待上游返回任务 ID" : "本地未记录上游任务 ID"}</small>}
         </div>
         <div className="workflow-video-task-id">
             <span>本地任务 ID</span><code title={taskId}>{taskId}</code><Button type="text" size="small" icon={<Copy className="size-3.5" />} aria-label="复制本地任务 ID" onClick={() => void copyId(taskId)} />

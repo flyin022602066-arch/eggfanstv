@@ -16,7 +16,10 @@ var opaqueVideoAssetPattern = regexp.MustCompile(`^asset://[A-Za-z0-9_-]+$`)
 
 var sdVideoVersionPattern = regexp.MustCompile(`(?:sd|seedance)[-_]?2[._-]([05])(?:[^0-9]|$)`)
 
-func sdVideoImageReferenceLimit(_ string, modelName string) (int, bool) {
+func sdVideoImageReferenceLimit(protocol string, modelName string) (int, bool) {
+	if protocol == "kanhai-video" || protocol == "nono-video" {
+		return 0, false
+	}
 	version := sdVideoVersionPattern.FindStringSubmatch(strings.ToLower(strings.TrimSpace(modelName)))
 	if len(version) < 2 {
 		return 0, false
@@ -129,6 +132,9 @@ func overlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) Vi
 }
 
 func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput) error {
+	if input.Config.InterfaceType == "nono-video" {
+		return nil
+	}
 	if profile == nil {
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}

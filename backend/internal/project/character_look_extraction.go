@@ -3,6 +3,7 @@ package project
 import (
 	"encoding/json"
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/characterkind"
 	"infinite-canvas/backend/internal/characterlooks"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -23,6 +24,10 @@ func countCharacterLooks(versions []model.AssetVersion) int {
 		}
 		var definition map[string]any
 		if json.Unmarshal([]byte(version.DefinitionJSON), &definition) != nil {
+			continue
+		}
+		if characterkind.IsGroup("", definition) {
+			groups["group"] = true
 			continue
 		}
 		looks, err := characterlooks.Extract(definition)
@@ -157,6 +162,9 @@ func (s *Service) ValidateCharacterTurnaroundSource(userID, assetID, versionID s
 	if json.Unmarshal([]byte(version.DefinitionJSON), &definition) != nil {
 		return kernel.BadAuthRequest("角色设定格式无效")
 	}
+	if characterkind.IsGroup(asset.Title, definition) {
+		return nil
+	}
 	looks, err := characterlooks.Extract(definition)
 	if err != nil {
 		return kernel.BadAuthRequest(err.Error())
@@ -188,6 +196,9 @@ func (s *Service) ExtractCharacterLooks(userID, projectID, assetID string, req E
 	var d map[string]any
 	if err := json.Unmarshal([]byte(base.DefinitionJSON), &d); err != nil {
 		return nil, err
+	}
+	if characterkind.IsGroup(asset.Title, d) {
+		return nil, kernel.BadAuthRequest("群体演员的不同成员不是同一人的多套造型，请编辑群体设定后生成多人同框参考图")
 	}
 	looks, err := characterlooks.Extract(d)
 	if err != nil {
@@ -251,10 +262,19 @@ func (s *Service) ExtractCharacterLooks(userID, projectID, assetID string, req E
 	return created, nil
 }
 
-func isolatedCharacterLookVersions(version *model.AssetVersion, source string) ([]model.AssetVersion, error) {
+func isolatedCharacterLookVersions(version *model.AssetVersion, source, name string) ([]model.AssetVersion, error) {
 	var definition map[string]any
 	if err := json.Unmarshal([]byte(source), &definition); err != nil {
 		return nil, kernel.BadAuthRequest("角色造型设定格式无效")
+	}
+	if characterkind.IsGroup(name, definition) {
+		definition["characterType"] = "group"
+		encoded, err := json.Marshal(definition)
+		if err != nil {
+			return nil, err
+		}
+		version.DefinitionJSON = string(encoded)
+		return nil, nil
 	}
 	looks, err := characterlooks.Extract(definition)
 	if err != nil {

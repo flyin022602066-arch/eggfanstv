@@ -19,3 +19,7 @@ export function usesSd2LocalFaceMask(protocol: string | undefined, model: string
 export function usesTowoLocalFaceMask(protocol: string | undefined, model: string, mode: unknown) {
     return isTowoSd25Model(protocol, model) && normalizeSd2FaceMaskMode(mode) !== "off";
 }
+
+export function usesHanbaoLocalFaceMask(protocol: string | undefined, mode: unknown) {
+    return protocol === "hanbao-video" && normalizeSd2FaceMaskMode(mode) !== "off";
+}

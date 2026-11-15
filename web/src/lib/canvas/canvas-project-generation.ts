@@ -204,7 +204,7 @@ export function createGenerationBatchRetryContexts(taskIds: readonly string[], a
 
 export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
     const progress = normalizeTaskProgress(task.progress, task.status);
-    return {
+      return {
         taskId: task.id,
         taskClientOperationId: task.clientOperationId,
         retryOf: task.retryOf,
@@ -408,6 +408,9 @@ export function buildVideoGenerationMetadata(
     const startFrame = workflowVideo ? undefined : requireConnectedVideoFrame(metadata?.videoStartFrameNodeId, "首帧", referenceImageIds);
     const endFrame = workflowVideo ? undefined : requireConnectedVideoFrame(metadata?.videoEndFrameNodeId, "尾帧", referenceImageIds);
     return {
+        chapterId: metadata?.chapterId,
+        chapterTitle: metadata?.chapterTitle,
+        shotIndex: metadata?.shotIndex,
         ...(config ? generationWorkflowMetadata(config) : {}),
         videoEditOperation: resolveVideoEditOperation(node, context),
         videoCameraMoveId: metadata?.videoCameraMoveId,
@@ -417,6 +420,8 @@ export function buildVideoGenerationMetadata(
         ...(config && isJiasuSdModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model) ? { jiasuFaceMask: metadata?.jiasuFaceMask ?? config.videoJiasuFaceMask, jiasuFaceMasks: metadata?.jiasuFaceMasks } : {}),
         ...(config && isEggfansSd2DModel(resolveModelRequestConfig(config, config.model).interfaceType, config.model) ? { sd2FaceMask: metadata?.sd2FaceMask ?? config.videoSd2FaceMask, sd2FaceMasks: metadata?.sd2FaceMasks } : {}),
         ...(config && isTowoSd25Model(resolveModelRequestConfig(config, config.model).interfaceType, config.model) ? { towoFaceMask: metadata?.towoFaceMask ?? config.videoSd2FaceMask, towoFaceMasks: metadata?.towoFaceMasks } : {}),
+        ...(config && resolveModelRequestConfig(config, config.model).interfaceType === "hanbao-video" ? { hanbaoFaceMask: metadata?.hanbaoFaceMask ?? config.videoHanbaoFaceMask, hanbaoFaceMasks: metadata?.hanbaoFaceMasks } : {}),
+        ...(config && resolveModelRequestConfig(config, config.model).interfaceType === "doubao-browser-video" ? { doubaoBrowserFaceMask: metadata?.doubaoBrowserFaceMask ?? config.videoDoubaoBrowserFaceMask, doubaoBrowserFaceMasks: metadata?.doubaoBrowserFaceMasks } : {}),
     };
 }
 
@@ -526,6 +531,8 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoJiasuFaceMode: node?.metadata?.jiasuFaceMode ?? config.videoJiasuFaceMode ?? defaultConfig.videoJiasuFaceMode,
         videoJiasuFaceMask: node?.metadata?.jiasuFaceMask ?? config.videoJiasuFaceMask ?? defaultConfig.videoJiasuFaceMask,
         videoSd2FaceMask: localFaceMask ?? config.videoSd2FaceMask ?? defaultConfig.videoSd2FaceMask,
+        videoHanbaoFaceMask: node?.metadata?.hanbaoFaceMask ?? config.videoHanbaoFaceMask ?? defaultConfig.videoHanbaoFaceMask,
+        videoDoubaoBrowserFaceMask: node?.metadata?.doubaoBrowserFaceMask ?? config.videoDoubaoBrowserFaceMask ?? defaultConfig.videoDoubaoBrowserFaceMask,
         ...resolveAudioSpeechSettings(preferredModel, {
             audioVoice: node?.metadata?.audioVoice ?? config.audioVoice,
             audioFormat: node?.metadata?.audioFormat ?? config.audioFormat,

@@ -1,5 +1,5 @@
 import { useId, useRef } from "react";
-import { Button, Select } from "antd";
+import { Button, Select, Switch } from "antd";
 import { Upload, UserRound } from "lucide-react";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { CHARACTER_FACE_ROLES, characterFaceRoleLabels, type CharacterFacePreset, type CharacterFacePresets, type CharacterFaceRole } from "@/lib/project-character-face-presets";
@@ -29,8 +29,9 @@ function FacePresetSlot({ role, value, characters, otherIds, disabled, uploading
         <p className="mb-3 truncate text-xs text-foreground/50" title={value?.fileName}>{value?.fileName || "支持 JPG、PNG、WebP"}</p>
         <div className="mb-4 flex flex-wrap gap-2"><Button icon={<Upload className="size-3.5" />} loading={uploading} disabled={disabled} onClick={() => inputRef.current?.click()}>{value ? `替换${label}参考图` : `上传${label}参考图`}</Button>{value ? <Button disabled={disabled} onClick={() => onChange(undefined)}>清除</Button> : null}</div>
         <input ref={inputRef} aria-label={`上传${label}人脸参考图`} className="hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onUpload(file); }} />
-        <label className="mb-2 block text-xs" htmlFor={selectId}>应用到角色（可多选不同造型版本）</label>
-        <Select id={selectId} aria-label={`${label}绑定角色`} mode="multiple" className="w-full" value={value?.assetIds || []} disabled={disabled || !value} placeholder={value ? "选择对应角色" : "请先上传人脸图"} optionFilterProp="label" options={[...characters.map((asset) => ({ value: asset.id, label: asset.title, disabled: otherIds.includes(asset.id) })), ...missingIds.map((assetId) => ({ value: assetId, label: "已移除的角色（请移除）" }))]} onChange={(assetIds: string[]) => value && onChange({ ...value, assetIds })} />
-        <p className="mt-2 text-xs text-foreground/50">{value?.assetIds.length ? `已绑定 ${value.assetIds.length} 个角色，生成时使用此面孔。` : "未绑定角色，暂不应用此面孔。"}</p>
+        <label className="mb-2 block text-xs" htmlFor={selectId}>应用到角色（必选；所选角色的各造型共用）</label>
+        <Select id={selectId} aria-label={`${label}绑定角色`} mode="multiple" className="w-full" value={value?.assetIds || []} disabled={disabled || !value} placeholder={value ? "选择对应角色" : "请先上传人脸图"} optionFilterProp="label" options={[...characters.map((asset) => ({ value: asset.id, label: asset.title, disabled: otherIds.includes(asset.id) })), ...missingIds.map((assetId) => ({ value: assetId, label: "已移除的角色（请移除）" }))]} onChange={(assetIds: string[]) => value && onChange({ ...value, assetIds, useAsIdentity: value.useAsIdentity ?? !value.assetIds.length })} />
+        <p className="mt-2 text-xs text-foreground/50">{value?.assetIds.length ? `已选择：${value.assetIds.map((assetId) => characters.find((asset) => asset.id === assetId)?.title || "已移除角色").join("、")}。${value.useAsIdentity ? "保存后重绘和新造型均使用此面孔。" : "保存后首次建立基础身份时使用此面孔。"}` : value ? "只上传图片不会生效，请在上方选择对应角色并保存。" : "上传后请选择对应角色。"}</p>
+        {value ? <div className="mt-3"><label className="flex items-center gap-2 text-xs"><Switch size="small" aria-label={`${label}预设作为身份参考`} checked={value.useAsIdentity === true} disabled={disabled} onChange={(useAsIdentity) => onChange({ ...value, useAsIdentity })} />以此预设作为角色身份参考</label><p className="mt-2 text-xs text-foreground/50">开启后，重绘已有角色和其他造型都参考此面孔；关闭后，已有角色继续继承基础版人脸。保存不会自动重绘或修改镜头绑定。</p></div> : null}
     </section>;
 }

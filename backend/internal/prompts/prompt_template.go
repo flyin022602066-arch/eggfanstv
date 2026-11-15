@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/characterkind"
 	"infinite-canvas/backend/internal/characterlooks"
 	"infinite-canvas/backend/internal/kernel"
 	"regexp"
@@ -301,6 +302,14 @@ func (s *Service) CompilePrompt(userID string, operation string, values map[stri
 		return CompiledPrompt{}, err
 	}
 	creative := template.Content
+	if operation == OperationCharacterTurnaround {
+		if template.CreatedBy == "" && strings.TrimSpace(creative) == legacyCharacterTurnaroundTemplate {
+			creative = definition.DefaultContent
+		}
+		if groupCharacterPrompt(values) && creative == definition.DefaultContent {
+			creative = "制作符合项目画风的专业群体演员选角设定图。"
+		}
+	}
 	compiled := CompiledPrompt{TemplateID: template.ID, TemplateVersion: template.Version}
 	customization, customizationErr := s.repo.UserPromptCustomization(userID, operation)
 	if customizationErr == nil {
@@ -325,6 +334,10 @@ func (s *Service) CompilePrompt(userID string, operation string, values map[stri
 	}
 	compiled.Content = strings.Join(parts, "\n\n")
 	return compiled, nil
+}
+
+func groupCharacterPrompt(values map[string]string) bool {
+	return characterkind.IsGroup(values["角色名称"], map[string]any{"characterType": values["角色类型"], "role": values["角色设定"]})
 }
 
 func validatePromptTemplateContent(definition PromptOperationDefinition, name string, content string) (string, string, error) {

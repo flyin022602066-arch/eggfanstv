@@ -108,6 +108,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	repo := repository.New(db)
 	svc := app.NewLocal(repo, cfg.DataDir)
 	svc.SetGeneratedVideoOutputDir(cfg.GeneratedVideoOutputDir)
+	svc.SetDoubaoBrowserOutputDir(cfg.DoubaoBrowserOutputDir)
 	cleanupService := func() {
 		_ = svc.Close()
 		cleanupDB()
@@ -173,6 +174,12 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		return nil, ownerErr
 	}
 	scope := workspace.Context{ID: owner.ID, DataDir: cfg.DataDir}
+	if err := svc.ReconcileDoubaoBrowserDeliveries(owner.ID); err != nil {
+		fmt.Fprintln(os.Stderr, "豆包浏览器历史交付核对失败，原任务环境继续保留")
+	}
+	if err := svc.DoubaoBrowserDomain().Resume(owner.ID); err != nil {
+		fmt.Fprintln(os.Stderr, "豆包浏览器自动维护未恢复，请在账号管理中检查运行文件")
+	}
 
 	// 桌面启动令牌在构建路由前解析：它既是整个 API 的入口凭据，也是「本机受信任 UI」
 	// 的判据（内置助手签发 UI 会话时使用）。服务端形态没有它，DesktopTrust 为 nil。
@@ -221,6 +228,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		Generation:         localRoot.Generation,
 		BeefAPI:            beefAPIConnection,
 		Hanbao:             svc.HanbaoDomain(),
+		DoubaoBrowser:      svc.DoubaoBrowserDomain(),
 		AssistantHost:      assistantHost,
 		Conversations:      conversation.New(conversation.NewStore(repo)),
 		TextReplay:         svc.TextReplay(),

@@ -43,3 +43,11 @@ test("completed storyboard can be reviewed, written and navigated without regene
     if (code) throw new Error(stdout + stderr);
     expect(code).toBe(0);
 }, 60000);
+
+test("invalid character versions can be corrected per shot before resolving asset ambiguity and writing", async () => {
+    const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/chapter-version-recovery-browser.mjs"), server.url.toString(), artifactDir], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    console.log(stdout);
+    if (code) throw new Error(stdout + stderr);
+    expect(code).toBe(0);
+}, 60000);

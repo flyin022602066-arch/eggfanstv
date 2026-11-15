@@ -105,6 +105,9 @@ func mergeBuiltinProviderPresets(config map[string]any) (map[string]any, error) 
 
 	for _, preset := range providerpreset.BuiltinChannels() {
 		local := channels[preset.ID]
+		if local == nil && containsString(channelModelIDs(result["deletedChannelIds"]), preset.ID) {
+			continue
+		}
 		merged, err := presetChannelMap(preset, local)
 		if err != nil {
 			return nil, err
@@ -291,10 +294,13 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 			"model": profile.Model, "capability": profile.Capability,
 			"protocol": profile.Protocol, "capabilityConfig": capabilityConfig,
 		})
+		if profile.DisplayName != "" {
+			profiles[len(profiles)-1].(map[string]any)["displayName"] = profile.DisplayName
+		}
 	}
 	if localModels, ok := local["models"].([]any); ok {
 		for _, value := range localModels {
-			if preset.ID == "towo-sd25-video" || preset.ID == "hanbao" {
+			if preset.ID == "towo-sd25-video" || preset.ID == "hanbao" || preset.ID == "doubao-browser" {
 				continue
 			}
 			model, ok := value.(string)
@@ -311,7 +317,7 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 	}
 	if localProfiles, ok := local["modelProfiles"].([]any); ok {
 		for _, value := range localProfiles {
-			if preset.ID == "towo-sd25-video" || preset.ID == "hanbao" {
+			if preset.ID == "towo-sd25-video" || preset.ID == "hanbao" || preset.ID == "doubao-browser" {
 				continue
 			}
 			profile, ok := value.(map[string]any)
@@ -366,6 +372,16 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 	if preset.ID == "hanbao" {
 		result["baseUrl"], result["apiKey"], result["secretKey"] = preset.BaseURL, "", ""
 		result["headers"], result["interfaceType"] = []any{}, "hanbao-video"
+	}
+	if preset.ID == "doubao-browser" {
+		result["baseUrl"], result["apiKey"], result["secretKey"] = preset.BaseURL, "", ""
+		result["headers"], result["interfaceType"] = []any{}, "doubao-browser-video"
+	}
+	if preset.ID == "kanhai-video" || preset.ID == "nono-video" {
+		result["interfaceType"] = preset.ID
+		if _, saved := local["models"]; saved {
+			result["models"], result["modelProfiles"] = local["models"], local["modelProfiles"]
+		}
 	}
 	return result, nil
 }

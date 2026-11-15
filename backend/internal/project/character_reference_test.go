@@ -155,6 +155,20 @@ func TestCharacterReferenceSubmissionAndScriptReview(t *testing.T) {
 	if err := s.ValidateCharacterReferenceSubmission(p.UserID, input, []string{imageID}); err != nil {
 		t.Fatal(err)
 	}
+	masked := model.Resource{ID: "masked-image", UserID: p.UserID, Kind: "image", MimeType: "image/png", Status: model.ResourceStatusReady, SourceResourceID: imageID}
+	if err := db.Create(&masked).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ValidateCharacterReferenceSubmission(p.UserID, input, []string{masked.ID}); err != nil {
+		t.Fatalf("derived face-mask resource rejected: %v", err)
+	}
+	unrelated := model.Resource{ID: "unrelated-image", UserID: p.UserID, Kind: "image", MimeType: "image/png", Status: model.ResourceStatusReady}
+	if err := db.Create(&unrelated).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ValidateCharacterReferenceSubmission(p.UserID, input, []string{unrelated.ID}); err == nil {
+		t.Fatal("unrelated processed resource accepted")
+	}
 	if err := s.ValidateCharacterReferenceSubmission(p.UserID, input, []string{"wrong-image"}); err == nil {
 		t.Fatal("wrong submitted resource accepted")
 	}

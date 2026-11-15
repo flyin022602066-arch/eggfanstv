@@ -245,9 +245,11 @@ func TestChapterSystemCharacterTurnaroundRequiresExactMarker(t *testing.T) {
 						t.Error("marked system character is still forced into the human headless sheet")
 					}
 				} else {
-					expected := "【角色名称】\n阿灵\n\n【项目画风】\n水墨动画\n\n【角色设定】\n" + testCase.definition + "\n\n【人物设定图固定规则】\n" + characterReferenceSheetLayout
-					if context != expected {
-						t.Error("turnaround without the exact role marker must preserve the original protected context")
+					if !strings.Contains(context, characterReferenceSheetLayout) || strings.Contains(context, systemCharacterReferenceSheetLayout) {
+						t.Error("turnaround without the exact role marker must preserve the human reference layout")
+					}
+					if !strings.Contains(context, characterVisualDesignRule) {
+						t.Error("turnaround lost the protected visual design rules")
 					}
 				}
 			}

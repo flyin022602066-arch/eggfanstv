@@ -428,7 +428,7 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 		}
 		merged["looks"] = looks
 		lookSource, _ := json.Marshal(merged)
-		extra, lookErr := isolatedCharacterLookVersions(&nextVersion, string(lookSource))
+		extra, lookErr := isolatedCharacterLookVersions(&nextVersion, string(lookSource), asset.Title)
 		if lookErr != nil {
 			return AssetSummary{}, lookErr
 		}
@@ -475,7 +475,7 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 		asset = model.Asset{ID: assetID, UserID: userID, Kind: kind, Category: candidate.Category, Status: model.AssetVersionStatusConfirmed, PrimaryVersionID: versionID, Title: candidate.Name, PayloadJSON: string(payload), CreatedAt: now, UpdatedAt: now}
 		version = model.AssetVersion{ID: versionID, AssetID: assetID, Version: 1, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: candidate.DetailsJSON, CreatedAt: now, UpdatedAt: now}
 		if candidate.Category == model.AssetCategoryCharacter {
-			extraLooks, err = isolatedCharacterLookVersions(&version, candidate.DetailsJSON)
+			extraLooks, err = isolatedCharacterLookVersions(&version, candidate.DetailsJSON, candidate.Name)
 			if err != nil {
 				return AssetSummary{}, err
 			}
@@ -612,6 +612,13 @@ func (s *Service) assetSummary(userID string, projectID string, asset *model.Ass
 			return AssetSummary{}, cardErr
 		}
 		summary.Character = &card
+	}
+	if asset.Category == model.AssetCategoryProp {
+		definition, mergeErr := s.mergedPropDefinition(projectID, asset.ID, summary.DefinitionJSON)
+		if mergeErr != nil {
+			return AssetSummary{}, mergeErr
+		}
+		summary.DefinitionJSON = definition
 	}
 	return summary, nil
 }

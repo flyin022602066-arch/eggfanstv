@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,7 +37,29 @@ type Order struct {
 type SMSRequest struct {
 	Account string            `json:"account"`
 	OrderID string            `json:"orderId"`
+	Name    string            `json:"name"`
 	Filters map[string]string `json:"filters"`
+}
+
+var smsErrorURL = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
+
+func smsErrorMessage(message string, settings FeihuSettings, fields url.Values) string {
+	secrets := []string{settings.APIKey, settings.APISecret, fields.Get("token"), fields.Get("user"), fields.Get("pass")}
+	sort.Slice(secrets, func(first, second int) bool { return len(secrets[first]) > len(secrets[second]) })
+	for _, secret := range secrets {
+		if secret != "" {
+			for _, encoded := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
+				message = strings.ReplaceAll(message, encoded, "[已隐藏]")
+			}
+		}
+	}
+	message = smsErrorURL.ReplaceAllString(message, "[链接已隐藏]")
+	message = strings.Join(strings.Fields(message), " ")
+	characters := []rune(message)
+	if len(characters) > 240 {
+		message = string(characters[:240]) + "…"
+	}
+	return message
 }
 
 func validateFeihuBase(value string) (string, error) {
@@ -56,6 +80,7 @@ func validateFeihuBase(value string) (string, error) {
 }
 
 func (s *Service) smsCall(ctx context.Context, settings FeihuSettings, action string, fields url.Values) (map[string]any, error) {
+	stage := map[string]string{"login": "认证", "userInfo": "查询余额", "projectList": "查询项目", "getPhone": "取号", "getMessage": "查询短信", "cancelRecv": "释放号码", "addBlackList": "拉黑号码"}[action]
 	base, err := validateFeihuBase(settings.BaseURL)
 	if err != nil {
 		return nil, err
@@ -75,24 +100,37 @@ func (s *Service) smsCall(ctx context.Context, settings FeihuSettings, action st
 		return nil, errors.New("飞狐接码连接失败，请检查服务地址和网络")
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("飞狐接码 HTTP 请求失败（%d）", response.StatusCode)
-	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
 	if err != nil || len(body) > 2<<20 {
 		return nil, errors.New("飞狐接码响应无效或过大")
 	}
 	var envelope struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
+		Code    int             `json:"code"`
+		Msg     string          `json:"msg"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data"`
 	}
-	if json.Unmarshal(body, &envelope) != nil {
+	decodeErr := json.Unmarshal(body, &envelope)
+	if response.StatusCode < 200 || response.StatusCode >= 300 || (decodeErr == nil && envelope.Code != 200) {
+		reason := envelope.Msg
+		if strings.TrimSpace(reason) == "" {
+			reason = envelope.Message
+		}
+		reason = smsErrorMessage(reason, settings, fields)
+		detail := fmt.Sprintf("飞狐接码%s失败（HTTP=%d，code=%d）", stage, response.StatusCode, envelope.Code)
+		if reason != "" {
+			detail += "：" + reason
+		}
+		return nil, errors.New(detail)
+	}
+	if decodeErr != nil {
 		return nil, errors.New("飞狐接码未返回有效 JSON")
 	}
-	if envelope.Code != 200 {
-		return nil, fmt.Errorf("飞狐接码业务请求失败（code=%d）", envelope.Code)
+	var data map[string]any
+	if len(envelope.Data) != 0 && json.Unmarshal(envelope.Data, &data) != nil {
+		return nil, errors.New("飞狐接码响应数据格式无效")
 	}
-	return envelope.Data, nil
+	return data, nil
 }
 
 func (s *Service) smsToken(ctx context.Context, settings FeihuSettings) (string, error) {
@@ -100,7 +138,7 @@ func (s *Service) smsToken(ctx context.Context, settings FeihuSettings) (string,
 		return s.token, nil
 	}
 	if settings.APIKey == "" || settings.APISecret == "" {
-		return "", errors.New("请先保存飞狐 API Key 和 API 密钥")
+		return "", errors.New("请先保存飞狐 API账号和 API密钥")
 	}
 	data, err := s.smsCall(ctx, settings, "login", url.Values{"user": {settings.APIKey}, "pass": {settings.APISecret}})
 	if err != nil {
@@ -245,7 +283,11 @@ func (s *Service) SMS(ctx context.Context, action string, input SMSRequest) (any
 	case "info":
 		return s.smsCall(ctx, settings.Feihu, "userInfo", fields)
 	case "projects":
-		fields.Set("name", "豆包")
+		name := strings.TrimSpace(input.Name)
+		if name == "" {
+			return nil, errors.New("请填写要搜索的平台名称")
+		}
+		fields.Set("name", name)
 		return s.smsCall(ctx, settings.Feihu, "projectList", fields)
 	case "receive":
 		fields.Set("pid", settings.Feihu.ProjectID)
@@ -273,6 +315,9 @@ func (s *Service) SMS(ctx context.Context, action string, input SMSRequest) (any
 				}
 				fields.Set(key, value)
 			}
+		}
+		if fields.Get("mode") == "" {
+			fields.Set("mode", "1")
 		}
 		data, err := s.smsCall(ctx, settings.Feihu, "getPhone", fields)
 		if err != nil {
@@ -309,7 +354,9 @@ func (s *Service) SMS(ctx context.Context, action string, input SMSRequest) (any
 		if _, err := s.smsCall(ctx, settings.Feihu, upstream, fields); err != nil {
 			return nil, err
 		}
-		order.Status = 5
+		if action == "release" || order.Status == 1 {
+			order.Status = 5
+		}
 	}
 	s.orders[order.ID] = order
 	if err := s.saveOrders(); err != nil {

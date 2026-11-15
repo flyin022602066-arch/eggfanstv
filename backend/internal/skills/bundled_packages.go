@@ -22,6 +22,7 @@ var bundledSkillPackages = []bundledSkillPackage{
 	{Category: "short-drama-editing", Directory: "short-drama-multicam-microshots", DisplayName: "高级短剧分镜·30秒段内多机位快切", Reference: "references/microshot-direction.md"},
 	{Category: "short-drama-editing", Directory: "chixie-rusong-v1", DisplayName: "持械入宋第一版", Reference: "references/director-optics-dialogue.md"},
 	{Category: "short-drama-editing", Directory: "chixie-rusong-plus-v2", DisplayName: "持械入宋plus第二版", Reference: "references/director-optics-dialogue.md"},
+	{Category: "short-drama-editing", Directory: "chixie-rusong-plus-v2-15s", DisplayName: "持械入宋plus第二版·15秒起落2.3", Reference: "references/director-optics-dialogue.md"},
 	{Category: "short-drama-editing", Directory: "chixie-rusong-plus-v2-blocking", DisplayName: "持械入宋plus第二版·站位连续2.4", Reference: "references/spatial-continuity.md"},
 	{Category: "short-drama-editing", Directory: "chixie-rusong-action-master", DisplayName: "持械入宋·打戏动作导演大师版1.0", Reference: "references/action-direction.md"},
 	{Category: "short-drama-editing", Directory: "chixie-rusong-fantasy-vfx-master", DisplayName: "持械入宋·玄幻奇观特效导演大师版1.0", Reference: "references/fantasy-vfx-direction.md"},

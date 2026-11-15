@@ -681,6 +681,8 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         videoJiasuFaceMode: node.metadata?.jiasuFaceMode ?? globalConfig.videoJiasuFaceMode ?? defaultConfig.videoJiasuFaceMode,
         videoJiasuFaceMask: node.metadata?.jiasuFaceMask ?? globalConfig.videoJiasuFaceMask ?? defaultConfig.videoJiasuFaceMask,
         videoSd2FaceMask: node.metadata?.sd2FaceMask ?? globalConfig.videoSd2FaceMask ?? defaultConfig.videoSd2FaceMask,
+        videoHanbaoFaceMask: node.metadata?.hanbaoFaceMask ?? globalConfig.videoHanbaoFaceMask ?? defaultConfig.videoHanbaoFaceMask,
+        videoDoubaoBrowserFaceMask: node.metadata?.doubaoBrowserFaceMask ?? globalConfig.videoDoubaoBrowserFaceMask ?? defaultConfig.videoDoubaoBrowserFaceMask,
         ...resolveAudioSpeechSettings(model, {
             audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice,
             audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat,
@@ -746,6 +748,8 @@ function buildModelNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode
         videoJiasuFaceMode: node.metadata?.jiasuFaceMode ?? globalConfig.videoJiasuFaceMode ?? defaultConfig.videoJiasuFaceMode,
         videoJiasuFaceMask: node.metadata?.jiasuFaceMask ?? globalConfig.videoJiasuFaceMask ?? defaultConfig.videoJiasuFaceMask,
         videoSd2FaceMask: node.metadata?.sd2FaceMask ?? globalConfig.videoSd2FaceMask ?? defaultConfig.videoSd2FaceMask,
+        videoHanbaoFaceMask: node.metadata?.hanbaoFaceMask ?? globalConfig.videoHanbaoFaceMask ?? defaultConfig.videoHanbaoFaceMask,
+        videoDoubaoBrowserFaceMask: node.metadata?.doubaoBrowserFaceMask ?? globalConfig.videoDoubaoBrowserFaceMask ?? defaultConfig.videoDoubaoBrowserFaceMask,
         ...resolveAudioSpeechSettings(model, {
             audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice,
             audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat,
@@ -769,6 +773,8 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoJiasuFaceMode") return { jiasuFaceMode: value };
     if (key === "videoJiasuFaceMask") return { jiasuFaceMask: value };
     if (key === "videoSd2FaceMask") return { sd2FaceMask: value };
+    if (key === "videoHanbaoFaceMask") return { hanbaoFaceMask: value };
+    if (key === "videoDoubaoBrowserFaceMask") return { doubaoBrowserFaceMask: value };
     return { [key]: value };
 }
 

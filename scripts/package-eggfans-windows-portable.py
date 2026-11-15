@@ -52,6 +52,15 @@ def collect_hanbao_runtime(sources, source_root):
         sources['tools/hanbao/' + name] = source
 
 
+def collect_doubao_browser_runtime(sources, source_root):
+    for name in ('server.mjs', 'pool.mjs', 'engine.mjs'):
+        relative = 'tools/doubao-browser/' + name
+        source = source_root / relative
+        if not source.is_file() or source.stat().st_size == 0:
+            raise ValueError('Required browser runtime missing: ' + relative)
+        sources[relative] = source
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--executable', required=True, type=Path)
@@ -96,6 +105,7 @@ def main():
             raise ValueError('Required release input missing: ' + name)
     collect_runtime_tree(sources, args.executable.parent)
     collect_hanbao_runtime(sources, args.executable.parent)
+    collect_doubao_browser_runtime(sources, args.executable.parent)
     destination.mkdir(parents=True)
     for name, source in sources.items():
         target = destination / name

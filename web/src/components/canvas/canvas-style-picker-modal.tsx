@@ -13,6 +13,7 @@ import {
     compileCanvasStylePreset,
     customCanvasStylePreset,
     recommendedCanvasStylePresets,
+    projectStyleSelectionFromSnapshot,
     type CanvasStylePreset,
     type ProjectStyleSelection,
 } from "@/lib/canvas/canvas-style-system";
@@ -414,7 +415,7 @@ export function resolveProjectCanvasStyle(presetId?: string, profileJson?: strin
         tags: [...profile.tags],
         prompt: profile.prompt,
         imageUrl: profile.coverUrl || preset?.imageUrl || "/short-drama-styles/real-life.jpg",
-        selection: preset?.selection,
+        selection: projectStyleSelectionFromSnapshot(profile.selection) || preset?.selection,
         profile,
     };
 }
@@ -450,7 +451,7 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     const [recentIds, setRecentIds] = useState<string[]>([]);
     const [editor, setEditor] = useState<StyleEditorState | null>(null);
     const [composerOpen, setComposerOpen] = useState(false);
-    const composerInitialSelection = useMemo(() => resolveCanvasStylePreset(value)?.selection, [value]);
+    const composerInitialSelection = useMemo(() => projectStyleSelectionFromSnapshot(currentProfile?.selection) || resolveCanvasStylePreset(value)?.selection, [currentProfile, value]);
     const [localProfiles, setLocalProfiles] = useState<UserStyleProfile[]>(readLocalStyleProfiles);
     const profilesQuery = useQuery({ queryKey: ["style-profiles"], queryFn: listStyleProfiles, enabled: open && !localMode });
     const profileEntities = localMode ? localProfiles : profilesQuery.data?.profiles || [];
@@ -472,7 +473,7 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
         return preset ? [{ kind: "user" as const, preset, entity }] : [];
     }), [profileEntities]);
     const systemItems = useMemo<SystemStyleLibraryItem[]>(() => canvasStylePresets.map((preset) => ({ kind: "system", preset })), []);
-    const categories = useMemo(() => ["全部", ...Array.from(new Set(canvasStylePresets.map((preset) => preset.category)))], []);
+    const categories = useMemo(() => ["全部", "海外画风", ...Array.from(new Set(canvasStylePresets.map((preset) => preset.category)))], []);
 
     useEffect(() => {
         if (!open || !startInEditor || !currentProfile || currentProfile.source !== "user" || editor || (!localMode && (profilesQuery.isFetching || profilesQuery.isError))) return;
@@ -491,7 +492,7 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
         let source: StyleLibraryItem[] = tab === "system" ? systemItems : tab === "mine" ? userItems : tab === "favorites"
             ? [...systemFavoriteIds.flatMap((id) => { const preset = resolveCanvasStylePreset(id); return preset ? [{ kind: "system" as const, preset }] : []; }), ...userItems.filter((item) => item.kind === "user" && item.entity.favorite)]
             : [...userItems.filter((item) => item.kind === "user" && item.entity.lastUsedAt).sort((a, b) => String(b.entity.lastUsedAt).localeCompare(String(a.entity.lastUsedAt))), ...recentIds.flatMap((id) => { const preset = resolveCanvasStylePreset(id); return preset ? [{ kind: "system" as const, preset }] : []; })];
-        if (tab === "system" && category !== "全部") source = source.filter((item) => item.preset.category === category);
+        if (tab === "system" && category !== "全部") source = source.filter((item) => category === "海外画风" ? item.preset.tags.includes("海外") : item.preset.category === category);
         if (keyword) source = source.filter((item) => `${item.preset.title} ${item.preset.category} ${item.preset.description} ${item.preset.tags.join(" ")}`.toLocaleLowerCase("zh-CN").includes(keyword));
         return source;
     }, [category, query, recentIds, systemFavoriteIds, systemItems, tab, userItems]);
@@ -693,7 +694,7 @@ function StyleCenterCard({ item, active, applying, favorite, theme, onApply, onD
         <article className={`style-center-card group flex min-w-0 flex-col overflow-hidden rounded-md border ${active ? "is-active" : ""}`} style={{ background: theme.canvas.background, borderColor: active ? theme.node.activeStroke : theme.node.stroke, boxShadow: active ? `inset 0 0 0 1px ${theme.node.activeStroke}` : undefined }}>
             <div className="relative overflow-hidden border-b" style={{ borderColor: theme.node.stroke }}>
                 <button type="button" className="style-center-card-cover block w-full overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset" style={{ "--tw-ring-color": theme.node.activeStroke } as CSSProperties} onClick={onDetail} aria-label={`查看${preset.title}规范`}>
-                    <img src={preset.imageUrl} width="640" height="360" alt={`${preset.title}画风示意`} className="h-full w-full object-cover transition-transform" />
+                    <img src={preset.thumbnailUrl || preset.imageUrl} width="640" height="360" loading="lazy" decoding="async" alt={`${preset.title}画风示意`} className="h-full w-full object-cover transition-transform" />
                 </button>
                 <button type="button" className={`style-center-favorite-action absolute right-2 top-2 grid size-8 place-items-center rounded-md outline-none focus-visible:ring-2 ${favorite ? "is-active" : ""}`} onClick={onFavorite} aria-label={favorite ? "取消收藏" : "收藏"} title={favorite ? "取消收藏" : "收藏"}><Star className="size-3.5" fill={favorite ? "currentColor" : "none"} /></button>
             </div>

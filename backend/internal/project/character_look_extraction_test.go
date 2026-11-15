@@ -49,6 +49,56 @@ func TestCharacterCandidateCreatesSeparateLookVersions(t *testing.T) {
 	}
 }
 
+func TestCharacterCandidatePersistsIndependentLookEquipmentAndBody(t *testing.T) {
+	s, db := newTestService(t, nil)
+	p, _ := seedProjectCharacterRepresentation(t, db)
+	unit := model.ProjectUnit{ID: "equipment-chapter", ProjectID: p.ID, Title: "卸甲", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&unit).Error; err != nil {
+		t.Fatal(err)
+	}
+	definition := map[string]any{
+		"name": "陈尧", "role": "战士", "appearance": "黑发方脸青年", "clothing": "黑甲", "physique": "负重姿态", "props": "头盔、胸甲",
+		"voiceLanguage": "中文", "voiceAge": "青年", "voiceTimbre": "沉稳",
+		"looks": []map[string]any{
+			{"name": "战甲", "clothing": "黑甲", "props": "头盔、胸甲", "physique": "负重姿态"},
+			{"name": "卸甲常服", "clothing": "卸除头盔与胸甲，穿白衬衫", "props": "", "physique": "轻装挺拔姿态"},
+		},
+	}
+	candidates, err := s.CreateProjectAssetCandidates(p.UserID, p.ID, CreateAssetCandidatesRequest{Source: AssetCandidateSourceChapterCharacter, Candidates: []AssetCandidateInput{{UnitID: unit.ID, Name: "陈尧", Category: "character", Details: definition}}})
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidate count=%d error=%v", len(candidates), err)
+	}
+	asset, err := s.ConfirmProjectAssetCandidate(p.UserID, p.ID, candidates[0].ID, ConfirmProjectAssetCandidateRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions, err := s.repo.AssetVersions(asset.ID)
+	if err != nil || len(versions) != 2 {
+		t.Fatalf("version count=%d error=%v", len(versions), err)
+	}
+	for _, version := range versions {
+		var saved map[string]any
+		if err := json.Unmarshal([]byte(version.DefinitionJSON), &saved); err != nil {
+			t.Fatal(err)
+		}
+		profile := referenceProfile(version.ReferenceProfileJSON)
+		if profile == nil {
+			t.Fatal("missing look profile")
+		}
+		if profile.Name == "卸甲常服" {
+			if saved["props"] != "" || saved["physique"] != "轻装挺拔姿态" {
+				t.Fatalf("unarmored look inherited old equipment or body: %v", saved)
+			}
+			prompt, _ := saved["consistencyPrompt"].(string)
+			if strings.Contains(prompt, "头盔、胸甲") {
+				t.Fatal("unarmored prompt restored removed equipment")
+			}
+		} else if saved["props"] != "头盔、胸甲" || saved["physique"] != "负重姿态" {
+			t.Fatal("armored look lost its equipment or body")
+		}
+	}
+}
+
 func TestCharacterLookCountSeparatesLooksFromImageHistory(t *testing.T) {
 	versions := []model.AssetVersion{
 		{DefinitionJSON: `{"clothing":"战术制服"}`, Status: model.AssetVersionStatusConfirmed, ReferenceProfileJSON: `{"lookId":"daily","name":"默认造型"}`},

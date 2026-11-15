@@ -1,5 +1,6 @@
 import type { StoryboardRow } from "@/types/canvas";
 import { formatShotOrdinal } from "@/lib/shot-label";
+import { resolveShotCameraLanguage } from "@/lib/shot-camera-language";
 import { normalizeProjectAssetMentions } from "@/lib/project-asset-mentions";
 import { matchProjectShotSequenceAssets, type ShotAssetMatchOptions } from "@/lib/project-shot-asset-matching";
 import { extractChapterSystemInterfaceProps } from "@/lib/chapter-system-interface";
@@ -45,6 +46,44 @@ export type ChapterStoryboardReplaceImpact = {
     candidateCount: number;
 };
 
+export type StoryboardCharacterReferenceIssue = {
+    key: string;
+    shotLabel: string;
+    characterName: string;
+    assetId: string;
+    versionId: string;
+    reason: string;
+    candidates: CharacterReferenceVersion[];
+};
+
+export function reviewStoryboardCharacterReferences(rows: StoryboardRow[], detail: ProjectDetail | undefined, versions: CharacterReferenceVersion[], selections: Record<string, string> = {}) {
+    const issues: StoryboardCharacterReferenceIssue[] = [];
+    const reviewedRows = rows.map((row, rowIndex) => ({
+        ...row,
+        characters: (row.characters || []).map((character, characterIndex) => {
+            if (!character.characterAssetId || !character.characterVersionId) return character;
+            const assetId = character.characterAssetId;
+            if (versions.some((version) => version.assetId === assetId && version.versionId === character.characterVersionId)) return character;
+            const key = `${rowIndex}:${characterIndex}`;
+            const candidates = versions.filter((version) => version.assetId === assetId);
+            const selected = candidates.find((version) => version.versionId === selections[key]);
+            if (selected) return { ...character, characterVersionId: selected.versionId };
+            const owner = versions.find((version) => version.versionId === character.characterVersionId);
+            issues.push({
+                key,
+                shotLabel: formatShotOrdinal(rowIndex),
+                characterName: detail?.assets.find((asset) => asset.id === assetId)?.title || character.characterName || assetId,
+                assetId,
+                versionId: character.characterVersionId,
+                reason: owner ? `该版本属于“${owner.title}”（资产 ID：${owner.assetId}），不属于该角色` : "该版本不存在或已被移除，可能是模型写错了版本 ID，并非已确认引用了其他角色",
+                candidates,
+            });
+            return character;
+        }),
+    }));
+    return { rows: reviewedRows, issues };
+}
+
 export function chapterStoryboardCharacters(detail: ProjectDetail, unitId?: string): ChapterStoryboardCharacter[] {
     const confirmed = detail.assets.flatMap((asset): ChapterStoryboardCharacter[] => {
         const card = asset.character;
@@ -89,13 +128,14 @@ export function chapterStoryboardAssets(detail: ProjectDetail, versions: Charact
 }
 
 export function storyboardRowsToProjectShots(rows: StoryboardRow[], detail?: ProjectDetail, versions?: CharacterReferenceVersion[], matchOptions?: ShotAssetMatchOptions): ProjectShotReplacementInput[] {
-    if (versions) for (const row of rows) {
+    const referenceIssues = versions ? reviewStoryboardCharacterReferences(rows, detail, versions).issues : [];
+    if (referenceIssues.length) throw new Error(referenceIssues.map((issue) => `${issue.shotLabel} · 角色“${issue.characterName}”（资产 ID：${issue.assetId}）· 返回版本 ID：${issue.versionId}：${issue.reason}。请在核对窗口选择该角色的正确版本，无需重新生成。`).join("\n"));
+    if (versions) for (const [rowIndex, row] of rows.entries()) {
         const seen = new Set<string>();
         for (const character of row.characters || []) {
             if (!character.characterAssetId) continue;
-            if (seen.has(character.characterAssetId)) throw new Error("同一镜头出现同一角色的多个版本，请拆镜头后再写入");
+            if (seen.has(character.characterAssetId)) throw new Error(`${formatShotOrdinal(rowIndex)} · 角色“${character.characterName || character.characterAssetId}”（资产 ID：${character.characterAssetId}）在同一镜头重复出现多个版本，请核对角色列表或拆镜头后再写入`);
             seen.add(character.characterAssetId);
-            if (character.characterVersionId && !versions.some((version) => version.assetId === character.characterAssetId && version.versionId === character.characterVersionId)) throw new Error("分镜选择了不属于该角色的版本，请重新生成或修正造型引用");
         }
     }
     rows = rows.map((row) => ({
@@ -147,9 +187,7 @@ export function storyboardRowsToProjectShots(rows: StoryboardRow[], detail?: Pro
                 plotDescription: description,
                 action: joinStoryboardAction(row),
                 dialogue: row.dialogue.trim(),
-                shotSize: row.shotSize.trim(),
-                cameraAngle: row.camera.trim(),
-                cameraMovement: row.motion.trim(),
+                ...resolveShotCameraLanguage({ shotSize: row.shotSize, cameraAngle: row.camera, cameraMovement: row.motion, videoPrompt: row.videoMotionPrompt, cameraDescriptions: row.directorScript?.shots.map((shot) => shot.camera) }),
                 durationMs,
                 imagePrompt: ensureSystemElementsInPrompt(row.imageGenerationPrompt, row.systemElements, row.systemPresentation),
                 videoPrompt: ensureSystemElementsInPrompt(ensureShotAssetMentionPrompt(row.videoMotionPrompt, mentionReferences, detail?.assets), row.systemElements, row.systemPresentation),

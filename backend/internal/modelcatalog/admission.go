@@ -7,6 +7,7 @@ import (
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/provider/doubaobrowser"
 )
 
 // TaskSelectRequest is the typed admission input. App supplies the live
@@ -263,7 +264,7 @@ func TaskInputUsesCustomChannel(input map[string]any) bool {
 	baseURL, _ := config["baseUrl"].(string)
 	apiKey, _ := config["apiKey"].(string)
 	credentialRef, _ := config["credentialRef"].(string)
-	if admissionString(config["interfaceType"]) == "hanbao-video" && strings.TrimSpace(channelID) == "" {
+	if (admissionString(config["interfaceType"]) == "hanbao-video" || admissionString(config["interfaceType"]) == doubaobrowser.Protocol) && strings.TrimSpace(channelID) == "" {
 		return true
 	}
 	if strings.EqualFold(strings.TrimSpace(credentialRef), beefapi.CredentialRef) || strings.TrimSpace(channelID) == beefapi.ChannelID {
@@ -312,6 +313,9 @@ func HasExecutableVideoConfig(input map[string]any) bool {
 		return false
 	}
 	interfaceType := admissionString(config["interfaceType"])
+	if interfaceType == doubaobrowser.Protocol {
+		return admissionString(config["channelId"]) == "" && doubaobrowser.IsModel(admissionString(config["model"]))
+	}
 	if interfaceType == "hanbao-video" {
 		return admissionString(config["channelId"]) == "" && isHanbaoModel(admissionString(config["model"]))
 	}

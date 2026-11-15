@@ -32,14 +32,22 @@ test("queued and running tasks do not imply success from a stale completion fiel
     }
 });
 
-test("failed and cancelled task information is hidden", () => {
+test("failed and cancelled tasks preserve original IDs for recovery without implying success", () => {
     for (const status of ["failed", "cancelled"] as const) {
         const html = renderTask(status);
-        expect(html).not.toContain("workflow-video-task-info");
-        expect(html).not.toContain("upstream-video-task");
-        expect(html).not.toContain("提交时间");
+        expect(html).toContain("workflow-video-task-info");
+        expect(html).toContain("upstream-video-task");
+        expect(html).toContain("local-video-task");
+        expect(html).toContain("提交时间");
         expect(html).not.toContain("成功时间");
     }
+});
+
+test("failed tasks without a receipt identify the missing local record rather than claiming upstream rejection", () => {
+    const html = renderTask("failed", { providerRequestId: undefined });
+    expect(html).toContain("local-video-task");
+    expect(html).toContain("本地未记录上游任务 ID");
+    expect(html).not.toContain("上游未返回任务 ID");
 });
 
 test("history uses the selected task and missing timestamps are never fabricated", () => {

@@ -9,7 +9,10 @@ import (
 )
 
 func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPolicy {
-	if input.Mode == "video" && (input.Config.InterfaceType == "jiasu-video" || input.Config.InterfaceType == "eggfans-sd2-video" || input.Config.InterfaceType == "towo-sd25-video") {
+	if input.Mode == "video" && input.Config.InterfaceType == "nono-video" {
+		return MediaHydrationPolicy{RequireURL: true, PreferURL: true, PublicOnly: true}
+	}
+	if input.Mode == "video" && (input.Config.InterfaceType == "jiasu-video" || input.Config.InterfaceType == "eggfans-sd2-video" || input.Config.InterfaceType == "towo-sd25-video" || input.Config.InterfaceType == "kanhai-video") {
 		return MediaHydrationPolicy{RequireURL: true, PreferURL: true, PublicOnly: true}
 	}
 	if input.Config.InterfaceType == "full-video" {

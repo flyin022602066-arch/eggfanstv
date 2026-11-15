@@ -75,15 +75,16 @@ export function characterSelectionShots(workspace: ProjectUnitWorkspace, assets:
     return workspace.shots.filter((shot) => !workspace.unit?.id || !shot.unitId || shot.unitId === workspace.unit.id).sort((a, b) => a.position - b.position).map((shot) => {
         const revision = workspace.shotRevisions.find((item) => item.id === shot.currentRevisionId);
         const context = shotAssetContext(revision?.actionBeatsJson);
-        const matched = matchProjectShotCharacters(assets, { ...revision, plotDescription: revision?.plotDescription || shot.description, ...context, chapterSourceText: workspace.unit?.sourceText });
-        const visibleAssetIds = matched.map((match) => match.asset.id);
+        const excludedAssetIds = new Set(workspace.shotReferences.filter((ref) => ref.shotId === shot.id && ref.role === "reference" && ref.status === "excluded").flatMap((ref) => referenceAssetId(ref) || assets.find((asset) => asset.primaryVersionId === ref.assetVersionId)?.id || []));
+        const matched = matchProjectShotCharacters(assets.filter((asset) => !excludedAssetIds.has(asset.id)), { ...revision, plotDescription: revision?.plotDescription || shot.description, ...context, chapterSourceText: workspace.unit?.sourceText });
+        const visibleAssetIds = matched.map((match) => match.asset.id).filter((assetId) => !excludedAssetIds.has(assetId));
         const refs = workspace.shotReferences.filter((ref) => ref.shotId === shot.id && ref.role === "reference" && ref.status === "linked" && (ref.asset?.category === "character" || assets.some((asset) => asset.id === ref.referencedVersion?.assetId && asset.category === "character")) && (!isAutomaticShotAssetReference(ref) || visibleAssetIds.includes(referenceAssetId(ref) || "")));
         return {
             shotId: shot.id, revisionId: shot.currentRevisionId || "", position: shot.position,
-            text: [revision?.plotDescription || shot.description, revision?.action, revision?.imagePrompt, revision?.videoPrompt, revision?.continuityNotes].filter(Boolean).join("\n"),
+            text: [revision?.plotDescription || shot.description, revision?.action, revision?.imagePrompt, revision?.videoPrompt, revision?.dialogue, revision?.continuityNotes].filter(Boolean).join("\n"),
             ...context,
             visibleAssetIds,
-            assetIds: [...new Set([...matched.map((match) => match.asset.id), ...refs.flatMap((ref) => ref.asset?.id || ref.referencedVersion?.assetId || [])])],
+            assetIds: [...new Set([...visibleAssetIds, ...refs.flatMap((ref) => ref.asset?.id || ref.referencedVersion?.assetId || [])])].filter((assetId) => !excludedAssetIds.has(assetId)),
             references: refs, busy: busy.has(shot.id),
         };
     });

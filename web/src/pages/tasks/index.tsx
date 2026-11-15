@@ -17,7 +17,8 @@ import { formatTaskKind, operationOptions, statusLabel } from "@/lib/generation-
 import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
-import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryFailedVideoProviderTask, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
+import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryFailedVideoProviderTask, recoverImageTaskResult, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
+import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { VideoTaskLocalStop } from "@/components/generation/video-task-local-stop";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -367,14 +368,31 @@ export default function TasksPage() {
 
     const queryProviderTask = async (task: GenerationTask) => {
         const request = detailRequestRef.current;
+        const scope = captureUserScope();
         setActingId(task.id);
         try {
+            if (task.type === "canvas_image") {
+                const result = await recoverImageTaskResult(task.id, scope);
+                if (request !== detailRequestRef.current || !userScopeMatches(scope)) return;
+                setDetailTask(current => current?.id === task.id ? { ...current, ...result.task } : current);
+                setTasks(items => items.map(item => item.id === task.id ? { ...item, ...result.task } : item));
+                if (result.recovered) {
+                    await syncGenerationTaskToCanvasStore(result.task);
+                    if (!userScopeMatches(scope)) return;
+                    message.success(result.message);
+                } else message.info(result.message);
+                void loadTasks(false);
+                return;
+            }
             const result = await queryFailedVideoProviderTask(task.id);
             if (!result.recovered) {
+                if (request === detailRequestRef.current) setDetailTask(result.task);
+                setTasks((items) => items.map((item) => item.id === task.id ? { ...item, ...result.task } : item));
                 const logs = await listTaskLogs(task.id);
                 if (request === detailRequestRef.current) {
                     setTaskLogs(logs);
-                    message.info("原任务仍在处理中，请稍后再取回结果");
+                    if (result.task.status === "failed") message.error(result.task.failureDiagnostics?.summary || result.task.error || "上游已确认生成失败，请查看任务详情");
+                    else message.info("原任务仍在处理中，请稍后再取回结果");
                 }
                 return;
             }
@@ -557,7 +575,7 @@ export default function TasksPage() {
                             {detailTask.providerCancelRequestedAt ? <InfoItem label="请求取消时间" value={formatDate(detailTask.providerCancelRequestedAt)} /> : null}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                            {canQueryProviderTask(detailTask) ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>取回结果</Button> : null}
+                            {canQueryProviderTask(detailTask) || detailTask.type === "canvas_image" ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>{detailTask.type === "canvas_image" ? "检查并取回图片" : "取回结果"}</Button> : null}
                             {isTaskFailed(detailTask) ? <Button icon={<Bug className="size-4" />} onClick={() => navigate(`/settings?section=diagnostics&taskId=${encodeURIComponent(detailTask.id)}${detailTask.projectId ? `&projectId=${encodeURIComponent(detailTask.projectId)}` : ""}`)}>导出诊断包</Button> : null}
                         </div>
                         {detailTask.error || isTaskFailed(detailTask) ? (
@@ -609,7 +627,7 @@ export default function TasksPage() {
 }
 
 function canQueryProviderTask(task: GenerationTask) {
-    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
+    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_"));
 }
 
 function TaskResultMedia({ value, taskType }: { value?: string; taskType: string }) {

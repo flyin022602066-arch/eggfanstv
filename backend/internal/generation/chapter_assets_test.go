@@ -250,7 +250,7 @@ func TestChapterAssetsContinuesExactlyOnceBeforeReturningCompleteAssets(t *testi
 					if len(messages) != 4 || messages[2].(map[string]any)["role"] != "assistant" || messages[2].(map[string]any)["content"] != partial || !strings.Contains(messages[1].(map[string]any)["content"].(string), "系统表现模式 panel") {
 						t.Fatalf("continuation lost the original task or exact partial output: %#v", messages)
 					}
-					if len(stages) != 1 || !strings.Contains(stages[0], "1/1") || !strings.Contains(received.String(), "林夏") || !strings.Contains(received.String(), "小夜灯特写") {
+					if len(stages) != 1 || !strings.Contains(stages[0], "1/2") || !strings.Contains(received.String(), "林夏") || !strings.Contains(received.String(), "小夜灯特写") {
 						t.Fatalf("continuation must be observable and preserve the received output: stages=%v", stages)
 					}
 				})
@@ -322,8 +322,17 @@ func TestChapterAssetsNeverReturnsPartialAssetsOrRetriesWholeGeneration(t *testi
 				if requests != 1 {
 					t.Fatalf("schema errors must not trigger a continuation: %d", requests)
 				}
-			} else if requests != 2 || !strings.Contains(err.Error(), "续接一次") {
-				t.Fatalf("truncation must stop after exactly one continuation: err=%v requests=%d", err, requests)
+			} else {
+				expectedRequests := 3
+				if scenario == "continuation-error" {
+					expectedRequests = 2
+				}
+				if requests != expectedRequests || !strings.Contains(err.Error(), "续接一次") {
+					t.Fatalf("recovery must stop after two rounds or an explicit upstream failure: err=%v requests=%d", err, requests)
+				}
+				if expectedRequests == 3 && !strings.Contains(ClassifyError(err).UserMessage(), "二轮补充") {
+					t.Fatalf("failure must report both attempted recovery rounds: %v", err)
+				}
 			}
 			if scenario != "invalid-fields" && !strings.Contains(ClassifyError(err).UserMessage(), "续接一次") {
 				t.Fatalf("the displayed failure must explain the continuation attempt: %v", ClassifyError(err))

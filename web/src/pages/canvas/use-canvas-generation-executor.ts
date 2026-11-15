@@ -66,6 +66,7 @@ export type CanvasNodeGenerationOptions = {
     retryContext?: { retryOf: string; attemptGroupId: string; clientOperationId: string };
     onTaskUpdate?: (task: GenerationTask) => void;
     skipDuplicateConfirmation?: boolean;
+    retryIntent?: "manual";
 };
 
 export function useCanvasGenerationExecutor({
@@ -91,11 +92,11 @@ export function useCanvasGenerationExecutor({
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const submissionLocksRef = useRef(new Map<string, Promise<unknown>>());
     const confirmDuplicateSubmission = useCallback(
-        () =>
+        (previousFailure?: string) =>
             new Promise<boolean>((resolve) => {
                 modal.confirm({
-                    title: "再次生成相同内容？",
-                    content: "当前节点已使用相同提示词、模型、参数和参考素材提交过任务。再次生成会新建任务，并可能再次消耗积分。",
+                    title: previousFailure ? "确认重新生成失败任务？" : "再次生成相同内容？",
+                    content: previousFailure ? "上次失败原因：" + previousFailure + "。请先检查并按需调整提示词、参考素材或模型参数。确认后会新建生成任务，可能再次消耗积分；不会自动连续重试。" : "当前节点已使用相同提示词、模型、参数和参考素材提交过任务。再次生成会新建任务，并可能再次消耗积分。",
                     okText: "仍然生成",
                     cancelText: "取消",
                     centered: true,
@@ -229,7 +230,7 @@ export function useCanvasGenerationExecutor({
                         return;
                     }
                     const generationContext = { ...rawGenerationContext, prompt: effectivePrompt };
-                    if (canvasGenerationRetryBlocked(sourceNode?.metadata, { ...generationContext, mode })) {
+                    if (canvasGenerationRetryBlocked(sourceNode?.metadata, { ...generationContext, mode }, options?.retryIntent)) {
                         message.warning(sourceNode?.metadata?.errorDetails || "请先查看失败原因并调整输入，再重新生成");
                         return;
                     }
@@ -270,8 +271,9 @@ export function useCanvasGenerationExecutor({
                         promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables,
                         context: generationContext,
                     });
-                    const duplicateConfirmationRequired = !options?.skipDuplicateConfirmation && !options?.retryContext && sourceNode?.metadata?.lastGenerationRequestFingerprint === requestFingerprint;
-                    if (duplicateConfirmationRequired && !(await confirmDuplicateSubmission())) return;
+                    const manualFailedRetry = options?.retryIntent === "manual" && (sourceNode?.metadata?.taskStatus === "failed" || sourceNode?.metadata?.taskStatus === "cancelled");
+                    const duplicateConfirmationRequired = manualFailedRetry || (!options?.skipDuplicateConfirmation && !options?.retryContext && sourceNode?.metadata?.lastGenerationRequestFingerprint === requestFingerprint);
+                    if (duplicateConfirmationRequired && !(await confirmDuplicateSubmission(manualFailedRetry ? sourceNode?.metadata?.errorDetails || "原任务已结束" : undefined))) return;
 
                     const ratioWarning = mode === "video" && !usesWorkflowProvider ? seedanceReferenceRatioWarning({
                         ...resolveModelRequestConfig(generationConfig, generationConfig.model),

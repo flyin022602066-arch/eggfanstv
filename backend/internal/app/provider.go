@@ -11,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/provider/hanbao"
+	"infinite-canvas/backend/internal/provider/doubaobrowser"
 	"strconv"
 	"strings"
 
@@ -429,9 +430,20 @@ func normalizedMediaMimeType(declared string, data []byte) string {
 }
 
 func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, error) {
-	if config.InterfaceType == hanbao.Protocol {
-		if !s.IsLocalMode() || config.ChannelID != "" || !hanbao.SupportedModel(config.Model) { return providerConfig{}, errors.New("憨包仅支持本地工作区的内置视频模型") }
+	if config.InterfaceType == "doubao-browser-video" {
+		if !s.IsLocalMode() || config.ChannelID != "" || !doubaobrowser.IsModel(config.Model) {
+			return providerConfig{}, errors.New("豆包浏览器仅支持本地工作区的内置视频模型")
+		}
 		config.BaseURL, config.APIKey, config.SecretKey, config.Headers = "https://www.doubao.com", "", "", nil
+		return config, nil
+	}
+	if config.InterfaceType == hanbao.Protocol {
+		canonicalModel := hanbao.CanonicalModel(config.Model)
+		if !s.IsLocalMode() || config.ChannelID != "" || canonicalModel == "" {
+			return providerConfig{}, errors.New("憨包仅支持本地工作区的内置视频模型")
+		}
+		config.BaseURL, config.APIKey, config.SecretKey, config.Headers = "https://www.doubao.com", "", "", nil
+		config.Model = canonicalModel
 		return config, nil
 	}
 	headers, err := NormalizeOutboundHeaders(config.Headers)

@@ -6,7 +6,7 @@ import { imageResolutionUsesQuality } from "@/lib/image-size-presets";
 import type { ProjectAssetImagePreset } from "@/lib/project-asset-image-preferences";
 import { configuredModelMatchesCapability, type AiConfig } from "@/stores/use-config-store";
 
-export function ProjectAssetImageFields({ config, value, onChange, promptLabel = "本类资产通用补充要求（记忆）", disabled = false }: { config: AiConfig; value: ProjectAssetImagePreset; onChange: (value: ProjectAssetImagePreset) => void; promptLabel?: string; disabled?: boolean }) {
+export function ProjectAssetImageFields({ config, value, onChange, promptLabel, promptScope = "category", disabled = false }: { config: AiConfig; value: ProjectAssetImagePreset; onChange: (value: ProjectAssetImagePreset) => void; promptLabel?: string; promptScope?: "asset" | "category"; disabled?: boolean }) {
     const available = configuredModelMatchesCapability(config, value.model, "image");
     const profile = available ? modelCapabilityConfigFor(config, value.model).image : undefined;
     return <Form layout="vertical" disabled={disabled}>
@@ -18,6 +18,6 @@ export function ProjectAssetImageFields({ config, value, onChange, promptLabel =
         }} /></div></Form.Item>
         {profile?.quality.supported && !imageResolutionUsesQuality(profile) ? <Form.Item label="画质"><Select aria-label="资产生图画质" value={value.quality} options={profile.quality.values.map((quality) => ({ value: quality, label: quality.toUpperCase() }))} onChange={(quality) => onChange({ ...value, quality })} /></Form.Item> : null}
         {profile ? <ImageSizePicker profile={profile} size={value.size} quality={value.quality} onChange={(size, quality) => onChange({ ...value, size, quality: quality || value.quality })} /> : null}
-        <Form.Item label={promptLabel}><Input.TextArea aria-label="通用生图补充要求" rows={3} value={value.extraPrompt} onChange={(event) => onChange({ ...value, extraPrompt: event.target.value })} placeholder="只填写所有同类资产都要遵循的要求；每个资产的原始设定会自动保留" /></Form.Item>
+        <Form.Item label={promptLabel || (promptScope === "asset" ? "当前资产补充要求（仅本次）" : "本类资产通用补充要求（记忆）")}><Input.TextArea aria-label={promptScope === "asset" ? "本次资产生图补充要求" : "通用生图补充要求"} rows={3} value={value.extraPrompt} onChange={(event) => onChange({ ...value, extraPrompt: event.target.value })} placeholder={promptScope === "asset" ? "仅用于当前资产本次生成，不会应用到其他资产，也不会保存为通用要求" : "只填写所有同类资产都要遵循的要求；每个资产的原始设定会自动保留"} /></Form.Item>
     </Form>;
 }

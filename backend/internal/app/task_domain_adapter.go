@@ -166,7 +166,13 @@ func (a taskMediaAdapter) ValidateTransport(userID string, input map[string]any)
 		for _, image := range prepared.ReferenceImages {
 			resourceIDs = append(resourceIDs, strings.TrimPrefix(image.StorageKey, "resource:"))
 		}
-		if err := a.s.projectDomain().ValidateCharacterIdentityReference(userID, strings.TrimSpace(assetID), strings.TrimSpace(versionID), referenceVersionID, resourceID, resourceIDs); err != nil {
+		presetResourceID, _ := prepared.Metadata["characterFacePresetResourceId"].(string)
+		if presetResourceID != "" {
+			projectID, _ := prepared.Metadata["domainProjectId"].(string)
+			if err := a.s.projectDomain().ValidateCharacterFacePresetReference(userID, strings.TrimSpace(projectID), strings.TrimSpace(assetID), strings.TrimSpace(versionID), presetResourceID, resourceIDs); err != nil {
+				return err
+			}
+		} else if err := a.s.projectDomain().ValidateCharacterIdentityReference(userID, strings.TrimSpace(assetID), strings.TrimSpace(versionID), referenceVersionID, resourceID, resourceIDs); err != nil {
 			return err
 		}
 	}

@@ -28,9 +28,10 @@ func positiveID(value string) bool   { return idValue.MatchString(value) }
 
 type Runner func(context.Context, string, []string, []string, string) ([]byte, error)
 type Reply struct {
-	Success bool           `json:"success"`
-	Data    map[string]any `json:"data"`
-	Error   string         `json:"error"`
+	Success bool            `json:"success"`
+	Data    map[string]any  `json:"data"`
+	Error   string          `json:"error"`
+	Code    json.RawMessage `json:"code"`
 }
 type TaskRef struct {
 	SubmitID string `json:"submit_id"`
@@ -44,11 +45,16 @@ type VideoRequest struct {
 	Images          [][]byte
 	ImageExtensions []string
 }
-type UncertainError struct{ Reason string }
+type UncertainError struct {
+	Reason string
+	Cause  error
+}
 
 func (e UncertainError) Error() string {
 	return e.Reason + "；上游可能已受理，请先核对任务，避免重复提交"
 }
+
+func (e UncertainError) Unwrap() error { return e.Cause }
 
 func (s *Service) checkExecutable() error {
 	if runtime.GOOS != "windows" {
@@ -74,25 +80,56 @@ func (s *Service) checkExecutable() error {
 }
 
 func parseReply(body []byte) (Reply, error) {
-	lines := bytes.Split(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf")), []byte("\n"))
-	for i := len(lines) - 1; i >= 0; i-- {
+	var result Reply
+	found := false
+	for offset := 0; offset < len(body); {
+		start := bytes.IndexByte(body[offset:], '{')
+		if start < 0 {
+			break
+		}
+		offset += start
+		decoder := json.NewDecoder(bytes.NewReader(body[offset:]))
 		var raw map[string]json.RawMessage
-		if json.Unmarshal(bytes.TrimSpace(lines[i]), &raw) != nil {
+		if decoder.Decode(&raw) != nil {
+			offset++
 			continue
 		}
-		var success bool
+		offset += int(decoder.InputOffset())
 		if string(raw["success"]) != "true" && string(raw["success"]) != "false" {
 			continue
 		}
-		_ = json.Unmarshal(raw["success"], &success)
+		encoded, _ := json.Marshal(raw)
 		var reply Reply
-		if err := json.Unmarshal(bytes.TrimSpace(lines[i]), &reply); err != nil {
+		replyDecoder := json.NewDecoder(bytes.NewReader(encoded))
+		replyDecoder.UseNumber()
+		if err := replyDecoder.Decode(&reply); err != nil {
 			continue
 		}
-		reply.Success = success
-		return reply, nil
+		result, found = reply, true
+	}
+	if found {
+		return result, nil
 	}
 	return Reply{}, errors.New("憨包组件未返回有效响应")
+}
+
+func submissionTaskRef(reply Reply) (TaskRef, bool) {
+	var id string
+	for _, key := range []string{"submit_id", "conversation_id"} {
+		switch value := reply.Data[key].(type) {
+		case string:
+			id = strings.TrimSpace(value)
+		case json.Number:
+			if positiveID(value.String()) {
+				id = value.String()
+			}
+		}
+		if id != "" {
+			break
+		}
+	}
+	account, _ := reply.Data["account"].(string)
+	return TaskRef{SubmitID: id, Account: account}, id != "" && validAccount(account)
 }
 
 func (s *Service) run(ctx context.Context, command string, params []string, timeout time.Duration) (Reply, error) {
@@ -122,48 +159,73 @@ func (s *Service) run(ctx context.Context, command string, params []string, time
 	childCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	body, processErr := s.runner(childCtx, s.executable, append([]string{command}, params...), environment, s.dataDir)
+	if command == "login" && childCtx.Err() != nil {
+		return Reply{}, fmt.Errorf("憨包登录等待已结束：%w", childCtx.Err())
+	}
 	reply, err := parseReply(body)
 	submitting := command == "text2video" || command == "image2video"
-	if err != nil || processErr != nil {
-		if submitting {
-			return Reply{}, UncertainError{"憨包提交进程中断或响应无效"}
+	if err == nil && submitting {
+		if _, accepted := submissionTaskRef(reply); accepted {
+			return reply, nil
 		}
-		if childCtx.Err() != nil {
-			return Reply{}, errors.New("憨包组件等待超时或已中止")
-		}
-		return Reply{}, errors.New("憨包组件执行失败")
 	}
-	if !reply.Success {
-		// Do not expose process logs, browser session data, or raw upstream replies.
-		reason := "憨包调用失败，请检查账号状态"
-		for _, item := range []struct{ match, text string }{{"额度", "憨包账号额度不足"}, {"登录", "憨包账号需要重新登录"}, {"审核", "憨包生成未通过审核"}, {"频繁", "憨包访问频繁，请稍后重试"}} {
-			if strings.Contains(reply.Error, item.match) {
-				reason = item.text
-				break
+	if err == nil && reply.Success {
+		return reply, nil
+	}
+	if err == nil && command == "query_result" && TerminalStatus(reply.Data) {
+		return reply, nil
+	}
+	reason := "组件未返回有效 JSON 回执"
+	if err == nil {
+		reason = safeRuntimeMessage(reply.Error, settings)
+		if reason == "" {
+			reason = "组件返回调用失败，未提供详细原因"
+		}
+	}
+	if childCtx.Err() != nil {
+		reason += "；组件等待超时或已中止"
+	}
+	var exit *exec.ExitError
+	if errors.As(processErr, &exit) {
+		reason += fmt.Sprintf("；进程退出码=%d", exit.ExitCode())
+	}
+	failure := &CallError{Source: "local_runtime", Stage: command, Code: replyCode(reply.Code), Reason: reason}
+	if submitting {
+		if err == nil && !reply.Success && ConfirmedCanvasFailure(reply.Error) {
+			failure.Source = "upstream_response"
+			if failure.Code != "" {
+				failure.Reason += "；组件返回码=" + failure.Code
+				failure.Code = ""
 			}
+			return Reply{}, failure
 		}
-		if submitting {
-			return Reply{}, UncertainError{reason}
+		var missing *exec.Error
+		var path *os.PathError
+		if errors.As(processErr, &missing) || errors.As(processErr, &path) {
+			failure.Reason = "本地组件未能启动，尚未提交生成"
+			return Reply{}, failure
 		}
-		return Reply{}, errors.New(reason)
+		return Reply{}, UncertainError{Reason: failure.Error(), Cause: failure}
 	}
-	return reply, nil
+	return Reply{}, failure
 }
 
 func runProcess(ctx context.Context, executable string, args, environment []string, dir string) ([]byte, error) {
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Env, command.Dir = environment, dir
 	hideProcessWindow(command)
-	var out bytes.Buffer
+	var out, stderr bytes.Buffer
 	command.Stdout = &out
-	command.Stderr = &limitedDiscard{}
+	command.Stderr = &stderr
 	err := command.Run()
+	if _, parseErr := parseReply(out.Bytes()); parseErr != nil {
+		if reply, stderrErr := parseReply(stderr.Bytes()); stderrErr == nil {
+			body, _ := json.Marshal(reply)
+			return body, err
+		}
+	}
 	return out.Bytes(), err
 }
-
-type limitedDiscard struct{}
-
-func (*limitedDiscard) Write(p []byte) (int, error) { return len(p), nil }
 
 func (s *Service) Control(ctx context.Context, command, account string, plan string, dailyLimit, dailySeconds *int) (map[string]any, error) {
 	if s.mutableGuard != nil {
@@ -212,6 +274,9 @@ func (s *Service) Control(ctx context.Context, command, account string, plan str
 	if err != nil {
 		return nil, err
 	}
+	if command == "login" && reply.Data["logged_in"] != true {
+		return nil, &CallError{Source: "local_runtime", Stage: "login", Reason: "未确认登录完成，请点击账号的“检查登录”核对；如未登录，请重新打开登录窗口"}
+	}
 	return publicAccountData(reply.Data), nil
 }
 
@@ -241,6 +306,7 @@ func publicAccountData(data map[string]any) map[string]any {
 }
 
 func (s *Service) Submit(ctx context.Context, request VideoRequest) (TaskRef, error) {
+	request.Model = CanonicalModel(request.Model)
 	if strings.TrimSpace(request.Prompt) == "" || len(request.Images) > 9 || request.Duration < 4 || request.Duration > 30 {
 		return TaskRef{}, errors.New("憨包需要提示词、4～30 秒时长及最多 9 张参考图")
 	}
@@ -256,10 +322,7 @@ func (s *Service) Submit(ctx context.Context, request VideoRequest) (TaskRef, er
 	if err != nil {
 		return TaskRef{}, err
 	}
-	if !validAccount(settings.Account) {
-		return TaskRef{}, errors.New("请先在憨包账号管理中选择生成账号")
-	}
-	params := []string{"--account=" + settings.Account, "--prompt=" + request.Prompt, "--model=" + request.Model, "--duration=" + strconv.Itoa(request.Duration), "--ratio=" + request.Ratio, "--poll=0"}
+	params := []string{"--prompt=" + request.Prompt, "--model=" + request.Model, "--duration=" + strconv.Itoa(request.Duration), "--ratio=" + request.Ratio, "--poll=0"}
 	command := "text2video"
 	if len(request.Images) > 0 {
 		if err := os.MkdirAll(s.dataDir, 0700); err != nil {
@@ -270,12 +333,7 @@ func (s *Service) Submit(ctx context.Context, request VideoRequest) (TaskRef, er
 			return TaskRef{}, err
 		}
 		defer os.RemoveAll(dir)
-		var total int
 		for index, data := range request.Images {
-			total += len(data)
-			if total > 4<<20 {
-				return TaskRef{}, errors.New("憨包参考图总大小需不超过 4 MiB，请先压缩，避免组件丢弃参考图")
-			}
 			extension := ".png"
 			if index < len(request.ImageExtensions) {
 				switch request.ImageExtensions[index] {
@@ -291,29 +349,51 @@ func (s *Service) Submit(ctx context.Context, request VideoRequest) (TaskRef, er
 		}
 		command = "image2video"
 	}
+	account, err := s.selectAccount(ctx, settings.Account, request.Duration)
+	if err != nil {
+		return TaskRef{}, err
+	}
+	params = append([]string{"--account=" + account}, params...)
 	reply, err := s.run(ctx, command, params, 300*time.Second)
 	if err != nil {
 		return TaskRef{}, err
 	}
-	id, _ := reply.Data["submit_id"].(string)
-	actualAccount, _ := reply.Data["account"].(string)
-	if strings.TrimSpace(id) == "" || !validAccount(actualAccount) {
-		return TaskRef{}, UncertainError{"憨包响应缺少完整任务号或实际账号"}
+	ref, accepted := submissionTaskRef(reply)
+	if !accepted {
+		failure := &CallError{Source: "local_runtime", Stage: command, Reason: "响应缺少完整任务号或实际账号"}
+		return TaskRef{}, UncertainError{Reason: failure.Error(), Cause: failure}
 	}
-	return TaskRef{SubmitID: id, Account: actualAccount}, nil
+	return ref, nil
 }
 
 func (s *Service) Query(ctx context.Context, task TaskRef) (map[string]any, error) {
 	if strings.TrimSpace(task.SubmitID) == "" || !validAccount(task.Account) {
 		return nil, errors.New("憨包任务号或实际账号缺失")
 	}
-	reply, err := s.run(ctx, "query_result", []string{"--submit_id=" + task.SubmitID, "--account=" + task.Account, "--once", "--timeout=300"}, 180*time.Second)
+	reply, err := s.run(ctx, "query_result", []string{"--submit_id=" + task.SubmitID, "--account=" + task.Account, "--once", "--timeout=300"}, 330*time.Second)
 	return reply.Data, err
 }
 
 func SupportedModel(model string) bool {
-	return model == "seedance_v2.5" || model == "seedance_v2.0_mini" || model == "seedance_v2.0"
+	return CanonicalModel(model) != ""
 }
+
+// CanonicalModel accepts the display names used by the supplied CLI as well
+// as the stable enum values persisted by BeefTV. Older workspaces may have
+// saved a display name, so normalize it before admission and submission.
+func CanonicalModel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "seedance_v2.5", "seedance 2.5", "seedance-2.5", "seedance2.5":
+		return "seedance_v2.5"
+	case "seedance_v2.0_mini", "seedance 2.0 mini", "seedance-2.0-mini", "seedance2.0 mini":
+		return "seedance_v2.0_mini"
+	case "seedance_v2.0", "seedance 2.0", "seedance-2.0", "seedance2.0", "seedance 2.0 fast":
+		return "seedance_v2.0"
+	default:
+		return ""
+	}
+}
+
 func SupportedRatio(ratio string) bool {
 	return ratio == "16:9" || ratio == "9:16" || ratio == "1:1" || ratio == "4:3" || ratio == "3:4"
 }

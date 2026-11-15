@@ -7,7 +7,7 @@ import { chapterAssetsFromGenerationTask, chapterStoryboardFromGenerationTask } 
 test("提取携带项目全部角色和造型，不把总库当本章出镜证据", async () => {
     const run = spyOn(canvasGeneration, "runBackendCanvasGenerationTask").mockImplementation(async (input) => {
         input.onTaskCreated?.({id:"offline-catalog-task", type:"canvas_text", status:"succeeded", prompt:"", attempts:1, createdAt:"", updatedAt:""});
-        return { text: JSON.stringify({ characters: [], scenes: [], props: [] }) };
+        return { text: JSON.stringify({ characters: [], scenes: [{ name: "教室", description: "纪昼走进的教室", prompt: "教室内景" }], props: [] }) };
     });
     try {
         await extractChapterAssets({ projectId:"p", projectName:"项目", chapterId:"u", chapterTitle:"21", sourceText:"纪昼走进教室。", projectStyle:"3D", config:{...useConfigStore.getInitialState().config, model:"offline"}, existingCharacters:[{assetId:"existing", title:"纪昼", versionId:"v1", version:1, definition:{aliases:["小纪"], clothing:"灰色训练服"}, representations:[], visualStatus:"ready", voiceStatus:"missing", updatedAt:""}] });
@@ -16,6 +16,26 @@ test("提取携带项目全部角色和造型，不把总库当本章出镜证�
         expect(variables.已有角色与造型).toContain("灰色训练服");
         expect(variables.已有角色与造型).toContain("小纪");
     } finally { run.mockRestore(); }
+});
+
+test("合法空 JSON 不是有效的章节资产提取结果", async () => {
+    const text = JSON.stringify({ characters: [], scenes: [], props: [] });
+    const run = spyOn(canvasGeneration, "runBackendCanvasGenerationTask").mockImplementation(async (input) => {
+        input.onTaskCreated?.({ id: "empty-assets", type: "canvas_text", status: "succeeded", prompt: "", attempts: 1, createdAt: "", updatedAt: "" });
+        return { text };
+    });
+    try {
+        await expect(extractChapterAssets({ projectId: "p", projectName: "测试", chapterId: "u", chapterTitle: "序章", sourceText: "人物介绍：林夏，青年女子，短发。", projectStyle: "写实", config: { ...useConfigStore.getInitialState().config, model: "offline" } })).rejects.toThrow("未识别到任何角色、场景或道具");
+        expect(run).toHaveBeenCalledTimes(1);
+    } finally { run.mockRestore(); }
+});
+
+test("刷新恢复空提取不能标记完成，旧角色提取空结果同样拒绝", () => {
+    for (const operation of ["chapter_assets_extract", "character_extract"]) {
+        const task = { id: "empty-assets", type: "canvas_text", status: "succeeded" as const, prompt: "", attempts: 1, createdAt: "", updatedAt: "", inputJson: JSON.stringify({ metadata: { promptTemplateOperation: operation, promptTemplateVariables: { 章节正文: "人物介绍：林夏，短发青年女子。" } } }), resultJson: JSON.stringify({ text: JSON.stringify({ characters: [], scenes: [], props: [] }) }) };
+        if (operation === "chapter_assets_extract") expect(() => chapterAssetsFromGenerationTask(task)).toThrow("未识别到任何角色、场景或道具");
+        else expect(() => chapterAssetsFromGenerationTask(task)).toThrow();
+    }
 });
 
 test("资产恢复保留模型角色清单，分镜绑定仍核对本镜实际出场", () => {

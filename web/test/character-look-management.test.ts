@@ -50,3 +50,13 @@ test("new look inherits identity and voice but uses explicit new clothing instea
     expect(definition).toMatchObject({ appearance: "黑发方脸", voiceTimbre: "浑厚", clothing: "战甲沾雨", state: "", hairstyle: "束发" });
     expect(base.definition.clothing).toBe("白衣");
 });
+
+test("new looks discard copied outfit prompts and equipment without mutating the base", () => {
+    const base = version("base", 1, "黑甲");
+    base.definition = { ...base.definition, props: "头盔、胸甲", consistencyPrompt: "始终穿黑甲戴头盔", multiViewPrompt: "黑甲三视图", looks: [{ name: "旧造型", clothing: "黑甲" }] };
+    const next = newCharacterLookDefinition(base, "卸除黑甲与头盔，穿白衬衫", {});
+    expect(next).toMatchObject({ appearance: "黑发方脸", voiceTimbre: "浑厚", props: "", consistencyPrompt: "", multiViewPrompt: "" });
+    expect(next.looks).toBeUndefined();
+    expect(base.definition.props).toBe("头盔、胸甲");
+    expect(newCharacterLookDefinition(base, "白衬衫", { props: "怀表", consistencyPrompt: "左眼保留泪痣" })).toMatchObject({ props: "怀表", consistencyPrompt: "左眼保留泪痣" });
+});

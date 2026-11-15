@@ -10,6 +10,7 @@ import (
 
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/provider/hanbao"
 	"infinite-canvas/backend/internal/taskruntime"
 )
 
@@ -145,6 +146,14 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 			return leaseLostOutcome(session, providerAccepted)
 		}
 		decryptedInput, decryptErr := s.decryptTaskInputJSON(task.InputJSON)
+		var archiveErr doubaoArchiveError
+		if errors.As(err, &archiveErr) {
+			if deferErr := s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, "视频已下载，等待本地 output 归档", 30*time.Second, task.FailureDiagnostics); deferErr != nil {
+				return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: deferErr, ProviderAccepted: true}
+			}
+			_ = s.log(task.UserID, task.ID, "warn", "视频原件已保存，仅重试本地归档", archiveErr.Error())
+			return taskruntime.Outcome{Kind: taskruntime.KindSuspended, Applied: true, ProviderAccepted: true}
+		}
 		if s.shouldDeferImageRecovery(*task, err, providerSucceeded) {
 			deferErr := s.deferImageRecovery(*task)
 			return taskruntime.Outcome{Kind: taskruntime.KindSuspended, Err: deferErr, Applied: deferErr == nil, ProviderAccepted: true}
@@ -152,6 +161,11 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		if decryptErr == nil && s.shouldDeferVideoProviderTask(*task, decryptedInput, err) {
 			stage := "后台仍在生成"
 			message := "前台等待结束，上游视频仍在生成，将继续回查原任务"
+			hanbaoTask := strings.HasPrefix(task.ProviderRequestID, "hanbao:") && strings.HasPrefix(task.Model, "hanbao::")
+			if hanbaoTask {
+				stage = "已提交，等待继续查询原任务"
+				message = "憨包本轮等待结束，将继续查询原回执，不重复提交"
+			}
 			var downloadErr videoDownloadError
 			if errors.As(err, &downloadErr) {
 				stage = "正在取回生成结果"
@@ -161,6 +175,14 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 			if errors.As(err, &pendingErr) {
 				stage = "等待上游任务同步"
 				message = "上游任务状态暂未同步，将继续回查原任务"
+				if hanbaoTask {
+					stage = "查询暂不可用，稍后继续查询原任务"
+					message = "憨包本轮查询未确认结果，将继续查询原回执，不代表生成失败"
+					var componentError *hanbao.CallError
+					if errors.As(pendingErr, &componentError) && componentError.Source == "local_runtime" && componentError.Stage == "查询等待超时" {
+						stage = "本地组件查询等待超时，继续查询原任务"
+					}
+				}
 			}
 			if task.FailureDiagnostics != nil {
 				task.FailureDiagnostics.ExecutionResult = "pending"
@@ -351,12 +373,12 @@ func (s *Service) shouldDeferVideoProviderTask(task model.Task, decryptedInput s
 	}
 	var pendingErr providerStatePendingError
 	if errors.As(err, &pendingErr) {
-		deferSignal = strings.TrimSpace(pendingErr.TaskID) == providerRequestID && (resolved.InterfaceType == "hanbao-video" || !newAPIChannel2TaskSyncExpired(task, err, time.Now()))
+		deferSignal = strings.TrimSpace(pendingErr.TaskID) == providerRequestID && (resolved.InterfaceType == "hanbao-video" || resolved.InterfaceType == "doubao-browser-video" || !newAPIChannel2TaskSyncExpired(task, err, time.Now()))
 	}
 	if !deferSignal {
 		return false
 	}
-	return resolved.InterfaceType == "hanbao-video" || resolved.InterfaceType == string(model.ChannelInterfaceNewAPIChannel2) || isBeefAPIVideoConfig(context.Background(), resolved)
+	return resolved.InterfaceType == "nono-video" || resolved.InterfaceType == "hanbao-video" || resolved.InterfaceType == "doubao-browser-video" || resolved.InterfaceType == string(model.ChannelInterfaceNewAPIChannel2) || isBeefAPIVideoConfig(context.Background(), resolved)
 }
 
 func newAPIChannel2TaskSyncExpired(task model.Task, err error, now time.Time) bool {

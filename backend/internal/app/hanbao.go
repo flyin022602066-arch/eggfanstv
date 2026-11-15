@@ -40,7 +40,7 @@ func (r hanbaoReceipt) Ready(ctx context.Context) error {
 	}
 	meta, _ := generation.CallMetaFromContext(ctx)
 	if r.service == nil || r.service.repo == nil || meta.UserID == "" || meta.TaskID == "" {
-		return errors.New("憨包缺少本地任务回执上下文")
+		return errors.New("本地视频缺少任务回执上下文")
 	}
 	task, err := r.service.repo.TaskForUser(meta.UserID, meta.TaskID)
 	if err != nil {
@@ -48,10 +48,10 @@ func (r hanbaoReceipt) Ready(ctx context.Context) error {
 	}
 	current, ok := ctx.Value(imageTaskContext{}).(model.Task)
 	if !ok || current.ID != task.ID || current.LeaseOwner == "" || current.LeaseOwner != task.LeaseOwner || task.Status != model.TaskStatusRunning || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(time.Now()) {
-		return errors.New("憨包本地任务租约无效")
+		return errors.New("本地视频任务租约无效")
 	}
 	if attempt, _ := ctx.Value(imageAttemptContext{}).(string); attempt == "" {
-		return errors.New("憨包缺少持久提交记录")
+		return errors.New("本地视频缺少持久提交记录")
 	}
 	return nil
 }

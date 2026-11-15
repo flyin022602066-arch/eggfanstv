@@ -3,15 +3,18 @@ import { APP_STATE_STORE_NAME, localForageInstance } from '@/lib/localforage-sto
 import { scopedStorageKey } from '@/lib/user-scope';
 import { assertUserScope, captureUserScope, type CapturedUserScope } from '@/lib/user-scope-guard';
 import { validateReferenceTemplate, type CanvasReferenceTemplate, type ReferenceTemplateImage, type ReferenceTemplateItem } from '@/lib/canvas/canvas-reference-templates';
+import { BUILTIN_REFERENCE_TEMPLATES, isBuiltinReferenceTemplate, renderBuiltinReferenceSvg } from '@/lib/canvas/canvas-reference-builtins';
+import { fetchRuiCReferenceImage, isRuiCReferenceTemplate, loadRuiCReferenceTemplates } from '@/lib/canvas/canvas-reference-ruic';
 
 type StoredImage = { blob: Blob; width: number; height: number; mimeType: string; resource?: Omit<ReferenceTemplateImage, 'url'> };
 type Store = { getItem<T>(key: string): Promise<T | null>; setItem<T>(key: string, value: T): Promise<T> };
-type Dependencies = { store: Store; dimensions: (file: File) => Promise<{ width: number; height: number }>; upload: (blob: Blob, scope: CapturedUserScope) => Promise<Omit<ReferenceTemplateImage, 'mediaId'>>; resolve: (key: string) => Promise<string> };
+type Dependencies = { store: Store; dimensions: (file: File) => Promise<{ width: number; height: number }>; upload: (blob: Blob, scope: CapturedUserScope) => Promise<Omit<ReferenceTemplateImage, 'mediaId'>>; resolve: (key: string) => Promise<string>; renderBuiltin?: (id: string) => Promise<Blob>; loadRuiC?: typeof loadRuiCReferenceTemplates; readSource?: typeof fetchRuiCReferenceImage };
 export const REFERENCE_TEMPLATE_MAX_BYTES = 12 * 1024 * 1024;
 
 export function createReferenceTemplateRepository(deps: Dependencies) {
     const queues = new Map<string, Promise<unknown>>();
     const uploads = new Map<string, Promise<ReferenceTemplateImage[]>>();
+    let ruicCatalog: CanvasReferenceTemplate[] | undefined;
     const key = (name: string, scope: CapturedUserScope) => scopedStorageKey(`canvas-reference-templates:${name}`, scope.userScope);
     const check = (scope: CapturedUserScope, signal?: AbortSignal) => { assertUserScope(scope); signal?.throwIfAborted(); };
     const list = async (scope = captureUserScope()) => {
@@ -37,9 +40,11 @@ export function createReferenceTemplateRepository(deps: Dependencies) {
     }
     async function save(row: CanvasReferenceTemplate, scope = captureUserScope(), signal?: AbortSignal) {
         validateReferenceTemplate(row);
+        if (isBuiltinReferenceTemplate(row.id)) throw new Error('内置模板不能覆盖，请另存为我的模板');
+        if (isRuiCReferenceTemplate(row)) throw new Error('原站模板不能覆盖，请另存为我的模板');
         for (const item of row.items) {
             check(scope, signal);
-            if (!await deps.store.getItem<StoredImage>(key('image:' + item.mediaId, scope))) throw new Error('参考图片不存在，请重新导入');
+            if (!item.sourceImage && !isBuiltinReferenceTemplate(item.mediaId) && !await deps.store.getItem<StoredImage>(key('image:' + item.mediaId, scope))) throw new Error('参考图片不存在，请重新导入');
         }
         check(scope, signal);
         return mutate(rows => [row, ...rows.filter(value => value.id !== row.id)], scope, signal);
@@ -78,12 +83,27 @@ export function createReferenceTemplateRepository(deps: Dependencies) {
         for (const item of row.items) {
             check(scope, signal);
             const imageKey = key('image:' + item.mediaId, scope);
-            const flightKey = imageKey + ':' + scope.epoch;
+            const flightKey = imageKey + ':' + scope.epoch + (item.sourceImage ? ':' + item.sourceImage.url : '');
             let flight = uploads.get(flightKey);
             if (!flight) {
                 flight = (async () => {
-                    const image = await deps.store.getItem<StoredImage>(imageKey);
-                    check(scope);
+                    let image = await deps.store.getItem<StoredImage>(imageKey);
+                    if (!image && item.sourceImage) {
+                        const blob = await (deps.readSource || fetchRuiCReferenceImage)(item.sourceImage, signal);
+                        check(scope, signal);
+                        const dimensions = await deps.dimensions(new File([blob], 'ruic-reference', { type: blob.type }));
+                        check(scope, signal);
+                        if (!(dimensions.width > 0 && dimensions.height > 0)) throw new Error('RuiC 原图尺寸无效');
+                        image = { blob, ...dimensions, mimeType: blob.type };
+                        await deps.store.setItem(imageKey, image);
+                    }
+                    if (!image && isBuiltinReferenceTemplate(item.mediaId)) {
+                        const blob = await (deps.renderBuiltin || rasterizeBuiltinReference)(item.mediaId);
+                        check(scope);
+                        image = { blob, width: 768, height: 1024, mimeType: 'image/png' };
+                        await deps.store.setItem(imageKey, image);
+                    }
+                    check(scope, signal);
                     if (!image) throw new Error('模板图片已缺失，请重新导入');
                     if (image.resource) {
                         const url = await deps.resolve(image.resource.storageKey);
@@ -91,6 +111,7 @@ export function createReferenceTemplateRepository(deps: Dependencies) {
                         if (!url) throw new Error('模板项目资源无法读取，请稍后重试');
                         return [{ ...image.resource, mediaId: item.mediaId, url }];
                     }
+                    check(scope, signal);
                     const uploaded = await deps.upload(image.blob, scope);
                     check(scope);
                     const result: ReferenceTemplateImage = { ...uploaded, mediaId: item.mediaId };
@@ -108,12 +129,40 @@ export function createReferenceTemplateRepository(deps: Dependencies) {
         check(scope, signal);
         return output;
     }
-    return { list, save, importImage, materialize,
-        async imageBlob(mediaId: string, scope = captureUserScope()) { const value = await deps.store.getItem<StoredImage>(key('image:' + mediaId, scope)); check(scope); if (!value) throw new Error('模板图片缺失'); return value.blob; },
-        remove: (id: string, scope = captureUserScope()) => mutate(rows => rows.filter(row => row.id !== id), scope),
-        toggleFavorite: (id: string, scope = captureUserScope()) => mutate(rows => rows.map(row => row.id === id ? { ...row, favorite: !row.favorite } : row), scope),
-        markUsed: (id: string, scope = captureUserScope()) => mutate(rows => rows.map(row => row.id === id ? { ...row, lastUsedAt: new Date().toISOString() } : row), scope),
+    const withBuiltin = (rows: CanvasReferenceTemplate[], id: string) => {
+        if (rows.some(row => row.id === id)) return rows;
+        const definition = BUILTIN_REFERENCE_TEMPLATES.find(row => row.id === id) || ruicCatalog?.find(row => row.id === id);
+        return definition ? [...rows, definition] : rows;
     };
+    return { list: async (scope = captureUserScope()) => (await list(scope)).filter(row => !isBuiltinReferenceTemplate(row.id) && !isRuiCReferenceTemplate(row)), save, importImage, materialize,
+        async listRuiC(scope = captureUserScope(), signal?: AbortSignal) {
+            check(scope, signal);
+            if (!ruicCatalog) ruicCatalog = await (deps.loadRuiC || loadRuiCReferenceTemplates)(signal);
+            check(scope, signal);
+            ruicCatalog.forEach(validateReferenceTemplate);
+            const saved = new Map((await list(scope)).map(row => [row.id, row]));
+            check(scope, signal);
+            return ruicCatalog.map(row => ({ ...row, favorite: saved.get(row.id)?.favorite || false, lastUsedAt: saved.get(row.id)?.lastUsedAt }));
+        },
+        async listBuiltins(scope = captureUserScope()) { const saved = new Map((await list(scope)).map(row => [row.id, row])); return BUILTIN_REFERENCE_TEMPLATES.map(row => ({ ...row, favorite: saved.get(row.id)?.favorite || false, lastUsedAt: saved.get(row.id)?.lastUsedAt })); },
+        async imageBlob(mediaId: string, scope = captureUserScope()) { check(scope); if (isBuiltinReferenceTemplate(mediaId)) return new Blob([renderBuiltinReferenceSvg(mediaId)], { type: 'image/svg+xml' }); const value = await deps.store.getItem<StoredImage>(key('image:' + mediaId, scope)); check(scope); if (!value) throw new Error('模板图片缺失'); return value.blob; },
+        async remove(id: string, scope = captureUserScope()) { if (isBuiltinReferenceTemplate(id)) throw new Error('内置模板不能删除，可另存为我的模板后编辑'); return mutate(rows => rows.filter(row => row.id !== id), scope); },
+        toggleFavorite: (id: string, scope = captureUserScope()) => mutate(rows => withBuiltin(rows, id).map(row => row.id === id ? { ...row, favorite: !row.favorite } : row), scope),
+        markUsed: (id: string, scope = captureUserScope()) => mutate(rows => withBuiltin(rows, id).map(row => row.id === id ? { ...row, lastUsedAt: new Date().toISOString() } : row), scope),
+    };
+}
+
+async function rasterizeBuiltinReference(id: string): Promise<Blob> {
+    const url = URL.createObjectURL(new Blob([renderBuiltinReferenceSvg(id)], { type: 'image/svg+xml' }));
+    try {
+        const image = new Image();
+        await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error('内置参考图加载失败')); image.src = url; });
+        const canvas = document.createElement('canvas'); canvas.width = 768; canvas.height = 1024;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('无法准备内置参考图片');
+        context.drawImage(image, 0, 0);
+        return await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('内置参考图片转换失败')), 'image/png'));
+    } finally { URL.revokeObjectURL(url); }
 }
 
 export const referenceTemplateRepository = createReferenceTemplateRepository({

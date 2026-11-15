@@ -19,6 +19,16 @@ const response = (shotId = "shot-1", overrides = {}) => ({ shotId, assetId: "her
 const validate = (responses: ReturnType<typeof response>[], shots = [shot()], versions = [look()]) => validateCharacterSelections({ shots, versions, responses });
 
 describe("character look selection", () => {
+    test("automatic look detection skips manually removed characters until explicitly bound again", () => {
+        const assets = [{ id: "hero", title: "苏卉", category: "character", primaryVersionId: "daily" }] as ProjectAsset[];
+        const workspace = {
+            unit: { id: "unit" }, shots: [{ id: "shot-1", position: 0, description: "苏卉穿白衣推门。" }], shotRevisions: [], tasks: [],
+            shotReferences: [{ id: "excluded", shotId: "shot-1", role: "reference", status: "excluded", assetVersionId: "previous", referencedVersion: { assetId: "hero" } }],
+        } as unknown as ProjectUnitWorkspace;
+        expect(characterSelectionTargets(characterSelectionShots(workspace, assets))).toEqual([]);
+        workspace.shotReferences[0]!.status = "linked";
+        expect(characterSelectionTargets(characterSelectionShots(workspace, assets))).toHaveLength(1);
+    });
     test("prop alias collisions and scene declarations cannot break the character-only catalog", () => {
         const assets = [
             { id: "hero", title: "苏卉", category: "character", primaryVersionId: "daily" },

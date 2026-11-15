@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func TestGroupCharacterDoesNotRequireSingleFaceIdentity(t *testing.T) {
+	service, db := newTestService(t, nil)
+	project, asset := seedProjectCharacterRepresentation(t, db)
+	if err := db.Model(&model.AssetVersion{}).Where("id = ?", asset.PrimaryVersionID).Update("definition_json", `{"characterType":"group","clothing":"工人穿工装，食客穿常服"}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	imageID := seedReadyCharacterReference(t, db, project.UserID, asset.PrimaryVersionID)
+	if err := service.ValidateCharacterIdentityReference(project.UserID, asset.ID, asset.PrimaryVersionID, "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ValidateCharacterIdentityReference(project.UserID, asset.ID, asset.PrimaryVersionID, asset.PrimaryVersionID, imageID, []string{imageID}); err == nil {
+		t.Fatal("group unexpectedly accepts single-face identity lock")
+	}
+	if err := service.ValidateCharacterIdentityReference("foreign", asset.ID, asset.PrimaryVersionID, "", "", nil); err == nil {
+		t.Fatal("group bypassed resource ownership")
+	}
+}
+
 func TestCharacterTurnaroundIdentityRequiresBaseImage(t *testing.T) {
 	service, db := newTestService(t, nil)
 	project, asset := seedProjectCharacterRepresentation(t, db)

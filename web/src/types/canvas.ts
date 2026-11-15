@@ -397,6 +397,10 @@ export type CanvasNodeMetadata = {
     sd2FaceMasks?: JiasuFaceMaskOverrides;
     towoFaceMask?: string;
     towoFaceMasks?: JiasuFaceMaskOverrides;
+    hanbaoFaceMask?: string;
+        hanbaoFaceMasks?: JiasuFaceMaskOverrides;
+        doubaoBrowserFaceMask?: string;
+        doubaoBrowserFaceMasks?: JiasuFaceMaskOverrides;
     videoCameraMoveId?: string;
     videoCameraMovePrompt?: string;
     videoStartFrameNodeId?: string;

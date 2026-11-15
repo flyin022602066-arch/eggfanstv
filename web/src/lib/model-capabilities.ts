@@ -35,7 +35,7 @@ export type ImageSizeParameter = "none" | "size" | "aspect_ratio";
 export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 8000;
 
 export function hasAutomaticVideoAudio(protocol: ModelProtocol | undefined) {
-    return protocol === "jiasu-video" || protocol === "towo-sd25-video" || protocol === "eggfans-sd2-video";
+    return protocol === "nono-video" || protocol === "kanhai-video" || protocol === "hanbao-video" || protocol === "doubao-browser-video" || protocol === "jiasu-video" || protocol === "towo-sd25-video" || protocol === "eggfans-sd2-video";
 }
 
 export type ImageCapabilityConfig = {
@@ -127,8 +127,8 @@ export function normalizeCapabilityString(value: unknown) {
     return normalized.startsWith("string:") ? normalized.slice("string:".length) : normalized;
 }
 
-function normalizeCapabilityStrings(values: unknown[]) {
-    return Array.from(new Set(values.map(normalizeCapabilityString)));
+function normalizeCapabilityStrings(values: unknown) {
+    return Array.from(new Set((Array.isArray(values) ? values : []).map(normalizeCapabilityString)));
 }
 
 export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): ModelCapabilityConfig {
@@ -165,7 +165,7 @@ export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): M
 }
 
 const catalogIntBounds: Record<string, [number, number]> = {
-    promptMaxChars: [1, 1_000_000],
+    promptMaxChars: [0, 1_000_000],
     minImages: [0, 100],
     maxImages: [0, 100],
     maxVideos: [0, 100],
@@ -608,6 +608,12 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.resolutions = ["480p", "720p", "1080p"];
         video.duration = { selection: "range", min: j3Doubao ? 4 : fullModalSeedance25 ? 5 : 1, max: fullModalSeedance25 || dola25 ? 30 : 15, step: 1, default: 5 };
         video.operations = ["text_to_video", "image_to_video", "reference_to_video", "audio_to_video"];
+        if (modelName === "wan3-特惠") {
+            video.duration = { selection: "range", min: 5, max: 30, step: 1, default: 5 };
+            video.ratios = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
+            video.resolutions = ["1080p"];
+            video.defaultResolution = "1080p";
+        }
         if (fullModalSeedance25) {
             video.references.maxImageBytes = 0;
             if (modelName === "sd-2.5-j2-v" || j3Doubao) video.references.maxTotalBytes = 100 * 1024 * 1024;
@@ -623,9 +629,52 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
             video.defaultResolution = "2k";
         }
     }
+    if (protocol === "nono-video") {
+        video.generateAudio = { supported: true, default: true };
+        video.references = { promptMaxChars: 15000, minImages: 0, maxImages: 30, maxImageBytes: 0, maxVideos: 10, maxVideoBytes: 0, maxVideoDurationSeconds: 0, maxAudios: 10, maxAudioBytes: 0, maxAudioDurationSeconds: 0 };
+        video.duration = { selection: "range", min: 5, max: 30, step: 1, default: 10 };
+        if (model === "按条福利seedance-2.5-720P") {
+            video.references.maxImages = 20;
+            video.references.maxVideos = 5;
+            video.references.maxAudios = 5;
+        }
+        if (model === "按条seedance-2.5-720P 只支持参考图") {
+            video.duration = { selection: "enum", values: [30], default: 30 };
+            video.references.maxImages = 9;
+            video.references.maxVideos = 0;
+            video.references.maxAudios = 0;
+        }
+        video.ratios = ["16:9", "9:16", "1:1"];
+        video.defaultRatio = "16:9";
+        video.resolutions = ["720p"];
+        video.defaultResolution = "720p";
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+    }
+    if (protocol === "kanhai-video") {
+        video.references = { promptMaxChars: 0, minImages: 0, maxImages: 30, maxImageBytes: 0, maxVideos: 10, maxVideoBytes: 0, maxVideoDurationSeconds: 0, maxAudios: 10, maxAudioBytes: 0, maxAudioDurationSeconds: 0 };
+        video.duration = { selection: "range", min: 1, max: 30, step: 1, default: 30 };
+        video.generateAudio = { supported: true, default: true };
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video", "audio_to_video"];
+    }
+    if (protocol === "doubao-browser-video") {
+        video.references.maxImages = 10;
+        video.references.promptMaxChars = 8000;
+        video.references.maxImageBytes = 0;
+        video.references.maxVideos = 0;
+        video.references.maxAudios = 0;
+        video.duration = { selection: "range", min: 1, max: model === "seedance_v2.5" ? 30 : 15, step: 1, default: 5 };
+        video.ratios = ["16:9", "9:16", "1:1", "4:3", "3:4"];
+        video.defaultRatio = "16:9";
+        video.resolutions = [];
+        video.defaultResolution = "";
+        video.generateAudio = { supported: false, default: false };
+        video.watermark = { supported: false, default: false };
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+        video.defaultOperation = "text_to_video";
+    }
     if (protocol === "hanbao-video") {
         video.references.maxImages = 9;
-        video.references.maxImageBytes = 4 * 1024 * 1024;
+        video.references.maxImageBytes = 0;
         video.references.maxVideos = 0;
         video.references.maxAudios = 0;
         video.duration = { selection: "range", min: 4, max: 30, step: 1, default: 5 };
@@ -633,7 +682,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.defaultRatio = "16:9";
         video.resolutions = [];
         video.defaultResolution = "";
-        video.generateAudio = { supported: false, default: false };
+        video.generateAudio = { supported: true, default: true };
         video.watermark = { supported: false, default: false };
         video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
         video.defaultOperation = "text_to_video";
@@ -748,6 +797,7 @@ export function modelCapabilityConfigFor(
     const profile = channel?.modelProfiles?.find((item) => item.model === modelName && item.capabilityConfig && !Array.isArray(item.capabilityConfig)) || channel?.modelProfiles?.find((item) => item.model === modelName);
     const protocol = profile?.protocol || channel?.interfaceType;
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
+    if (protocol === "hanbao-video" || protocol === "doubao-browser-video") return fallback;
     const alignMaterialPixels = (video: VideoCapabilityConfig | undefined) => {
         let host = "";
         try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
@@ -787,8 +837,14 @@ export function modelCapabilityConfigFor(
           })()
         : fallback.image;
     const merged = { ...fallback, ...capabilityConfig, text, image, video };
+    if (protocol === "nono-video" && merged.video) {
+        merged.video = { ...merged.video, references: { ...merged.video.references, promptMaxChars: 15000 } };
+    }
     if (hasAutomaticVideoAudio(protocol) && merged.video) {
         merged.video = { ...merged.video, generateAudio: { supported: true, default: true } };
+    }
+    if (protocol === "jiasu-video" && modelName.trim().toLowerCase() === "wan3-特惠" && merged.video && fallback.video) {
+        merged.video = { ...merged.video, duration: fallback.video.duration, ratios: fallback.video.ratios, defaultRatio: fallback.video.defaultRatio, resolutions: fallback.video.resolutions, defaultResolution: fallback.video.defaultResolution };
     }
     if (protocol === "jiasu-video" && isSeedance25Model(modelName) && merged.video && fallback.video) {
         merged.video = {
@@ -809,14 +865,15 @@ export function modelCapabilityConfigFor(
         };
     }
     const imageLimit = sdVideoImageReferenceLimit(protocol, modelName);
-    if (merged.video) {
+    if (merged.video && protocol !== "kanhai-video" && protocol !== "nono-video") {
         const references = merged.video.references;
         merged.video = { ...merged.video, references: { ...references, maxImages: imageLimit ?? (references.maxImages > 0 ? Math.max(10, references.maxImages) : references.maxImages), ...(imageLimit === 30 ? { promptMaxChars: 15000 } : {}) } };
     }
     return merged;
 }
 
-export function sdVideoImageReferenceLimit(_protocol: ModelProtocol | undefined, modelName: string) {
+export function sdVideoImageReferenceLimit(protocol: ModelProtocol | undefined, modelName: string) {
+    if (protocol === "kanhai-video" || protocol === "nono-video") return undefined;
     const version = String(modelName).match(/(?:sd|seedance)[-_]?2[._-]([05])(?:[^0-9]|$)/i)?.[1];
     return version === "5" ? 30 : version === "0" ? 10 : undefined;
 }

@@ -1,0 +1,227 @@
+{
+  "data": [
+    {
+      "id": "按条特惠seedance-2.5-720P 满血",
+      "name": "Seedance 2.5  满血 按条计费",
+      "type": "VIDEO",
+      "description": null,
+      "capabilities": {
+        "manufacturer": "官转Seedance视频",
+        "referenceModes": [
+          {
+            "label": "文生视频",
+            "value": "text",
+            "limits": {
+              "AUDIO": 0,
+              "IMAGE": 0,
+              "VIDEO": 0
+            }
+          },
+          {
+            "label": "全能参考",
+            "value": "omni",
+            "limits": {
+              "AUDIO": 10,
+              "IMAGE": 30,
+              "VIDEO": 10
+            },
+            "minimumTotal": 1
+          }
+        ],
+        "referenceTypes": [
+          "IMAGE",
+          "VIDEO",
+          "AUDIO"
+        ],
+        "maxTotalReferences": 50,
+        "maxReferenceUploads": 30,
+        "catalogOriginalPrices": {},
+        "supportsFirstLastFrame": false,
+        "catalogGroupDescription": "",
+        "maxReferenceUploadsByType": {
+          "AUDIO": 10,
+          "IMAGE": 30,
+          "VIDEO": 10
+        }
+      },
+      "specs": [
+        {
+          "code": "720p",
+          "name": "720p",
+          "default_params": {
+            "ratio": "16:9",
+            "duration": 10,
+            "resolution": "720p"
+          },
+          "allowed_params": {
+            "ratio": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ],
+            "duration": {
+              "max": 30,
+              "min": 5,
+              "step": 1
+            },
+            "resolution": [
+              "720p"
+            ]
+          },
+          "price_credits": 5.5000,
+          "billing_unit": "REQUEST",
+          "reference_video_price_credits": 0.0000,
+          "reference_video_billing_mode": "SEPARATE"
+        }
+      ]
+    },
+    {
+      "id": "按条福利seedance-2.5-720P",
+      "name": "Seedance 2.5 按条计费",
+      "type": "VIDEO",
+      "description": null,
+      "capabilities": {
+        "manufacturer": "官转Seedance视频",
+        "referenceModes": [
+          {
+            "label": "文生视频",
+            "value": "text",
+            "limits": {
+              "AUDIO": 0,
+              "IMAGE": 0,
+              "VIDEO": 0
+            }
+          },
+          {
+            "label": "全能参考",
+            "value": "omni",
+            "limits": {
+              "AUDIO": 5,
+              "IMAGE": 20,
+              "VIDEO": 5
+            },
+            "minimumTotal": 1
+          }
+        ],
+        "referenceTypes": [
+          "IMAGE",
+          "VIDEO",
+          "AUDIO"
+        ],
+        "maxTotalReferences": 30,
+        "maxReferenceUploads": 20,
+        "catalogOriginalPrices": {},
+        "supportsFirstLastFrame": false,
+        "catalogGroupDescription": "",
+        "maxReferenceUploadsByType": {
+          "AUDIO": 5,
+          "IMAGE": 20,
+          "VIDEO": 5
+        }
+      },
+      "specs": [
+        {
+          "code": "720p",
+          "name": "720p",
+          "default_params": {
+            "ratio": "16:9",
+            "duration": 10,
+            "resolution": "720p"
+          },
+          "allowed_params": {
+            "ratio": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ],
+            "duration": {
+              "max": 30,
+              "min": 5,
+              "step": 1
+            },
+            "resolution": [
+              "720p"
+            ]
+          },
+          "price_credits": 4.8000,
+          "billing_unit": "REQUEST",
+          "reference_video_price_credits": 0.0000,
+          "reference_video_billing_mode": "SEPARATE"
+        }
+      ]
+    },
+    {
+      "id": "按条seedance-2.5-720P 只支持参考图",
+      "name": "Seedance 2.5 只支持参考图",
+      "type": "VIDEO",
+      "description": null,
+      "capabilities": {
+        "manufacturer": "官转Seedance视频",
+        "referenceModes": [
+          {
+            "label": "文生视频",
+            "value": "text",
+            "limits": {
+              "AUDIO": 0,
+              "IMAGE": 0,
+              "VIDEO": 0
+            }
+          },
+          {
+            "label": "全能参考",
+            "value": "omni",
+            "limits": {
+              "AUDIO": 0,
+              "IMAGE": 9,
+              "VIDEO": 0
+            },
+            "minimumTotal": 1
+          }
+        ],
+        "referenceTypes": [
+          "IMAGE"
+        ],
+        "maxTotalReferences": 9,
+        "maxReferenceUploads": 9,
+        "catalogOriginalPrices": {},
+        "supportsFirstLastFrame": false,
+        "catalogGroupDescription": "",
+        "maxReferenceUploadsByType": {
+          "AUDIO": 0,
+          "IMAGE": 9,
+          "VIDEO": 0
+        }
+      },
+      "specs": [
+        {
+          "code": "720p",
+          "name": "720p",
+          "default_params": {
+            "ratio": "16:9",
+            "duration": 30,
+            "resolution": "720p"
+          },
+          "allowed_params": {
+            "ratio": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ],
+            "duration": {
+              "max": 30,
+              "min": 30,
+              "step": 1
+            },
+            "resolution": [
+              "720p"
+            ]
+          },
+          "price_credits": 3.5000,
+          "billing_unit": "REQUEST",
+          "reference_video_price_credits": 0.0000,
+          "reference_video_billing_mode": "SEPARATE"
+        }
+      ]
+    }
+  ]
+}

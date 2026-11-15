@@ -56,6 +56,10 @@ func EnsureOfficialProtocolAdapter(ctx context.Context, interfaceType string) co
 
 func OfficialDeclarativeVideoInterface(interfaceType string) (string, bool) {
 	switch strings.TrimSpace(interfaceType) {
+	case "kanhai-video":
+		return "看海视频", true
+	case "nono-video":
+		return "nono Seedance 2.5", true
 	case "jiasu-video":
 		return "极途 Gway", true
 	case "towo-sd25-video":

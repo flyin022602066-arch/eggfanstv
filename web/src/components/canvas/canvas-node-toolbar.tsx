@@ -42,6 +42,7 @@ type CanvasNodeToolbarProps = {
     onMaskEdit: (node: CanvasNodeData) => void;
     onEmotion: (node: CanvasNodeData) => void;
     onPortraitTexture: (node: CanvasNodeData) => void;
+    onReferenceLibrary?: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData, params: ImageSplitParams) => void;
     onUpscale: (node: CanvasNodeData) => void;
@@ -106,6 +107,7 @@ export function CanvasNodeToolbar({
     onMaskEdit,
     onEmotion,
     onPortraitTexture,
+    onReferenceLibrary,
     onCrop,
     onSplit,
     onUpscale,
@@ -461,6 +463,7 @@ export function CanvasNodeToolbar({
                         {panoramaTools.map((tool) => (
                             <NodeDockToolButton key={tool.id} tool={tool} />
                         ))}
+                        {isImage && onReferenceLibrary && !readOnly ? <NodeDockToolButton tool={{ id: 'reference-library', label: '姿势 / 服装 / 人脸', icon: <Images className="size-3.5" />, group: 'primary', order: 15, disabled: Boolean(node.metadata?.locked || node.metadata?.status === 'loading' || node.metadata?.fileUpload === 'uploading'), onClick: () => onReferenceLibrary(node) }} showTooltip={false} /> : null}
                         {portraitTools.length ? <NodeDockMenuButton menuId="portrait" label="人像调整" icon={<UserRound className="size-3.5" />} tools={portraitTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} /> : null}
                         {viewpointLightingTools.length ? (
                             <NodeDockMenuButton menuId="viewpoint-lighting" label={isImage ? "视角调整" : "视角"} icon={<Camera className="size-3.5" />} tools={viewpointLightingTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} />

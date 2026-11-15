@@ -2,6 +2,11 @@ export const PROJECT_WORKFLOW_MODEL_STAGES = ["storyboard", "previz", "video", "
 export type ProjectWorkflowModelStage = (typeof PROJECT_WORKFLOW_MODEL_STAGES)[number];
 export type ProjectWorkflowModels = Record<string, Partial<Record<ProjectWorkflowModelStage, string>>>;
 
+export function normalizeProjectWorkflowVideoRatios(value: unknown): Record<string, string> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).flatMap(([projectId, ratio]) => projectId.trim() && typeof ratio === "string" && ratio.trim() ? [[projectId, ratio.trim()]] : []));
+}
+
 export function normalizeProjectWorkflowModels(value: unknown): ProjectWorkflowModels {
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).flatMap(([projectId, raw]) => {

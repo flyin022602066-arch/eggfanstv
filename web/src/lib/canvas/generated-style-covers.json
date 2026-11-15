@@ -1,0 +1,368 @@
+{
+  "v2-xianxia--epic--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-xianxia--epic--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-xianxia--epic--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-xianxia--dark--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-xianxia--dark--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-xianxia--dark--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-xianxia--light-comedy--3d-cartoon--stylized": {
+    "imageUrl": "/short-drama-styles/covers/v2-xianxia--light-comedy--3d-cartoon--stylized.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-xianxia--light-comedy--3d-cartoon--stylized.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-xianxia--epic--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-xianxia--epic--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-xianxia--epic--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-urban--light-comedy--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-urban--light-comedy--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-urban--light-comedy--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-suspense--dark--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-suspense--dark--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-suspense--dark--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-pastoral--healing--3d-cartoon--stylized": {
+    "imageUrl": "/short-drama-styles/covers/v2-pastoral--healing--3d-cartoon--stylized.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-pastoral--healing--3d-cartoon--stylized.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-historical--romantic--2d-guoman--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-historical--romantic--2d-guoman--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-historical--romantic--2d-guoman--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-historical--epic--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-historical--epic--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-historical--epic--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-urban--romantic--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-urban--romantic--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-urban--romantic--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-urban--healing--3d-realistic--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-urban--healing--3d-realistic--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-urban--healing--3d-realistic--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-urban--light-comedy--2d-anime--anime": {
+    "imageUrl": "/short-drama-styles/covers/v2-urban--light-comedy--2d-anime--anime.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-urban--light-comedy--2d-anime--anime.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-historical--epic--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-historical--epic--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-historical--epic--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-historical--epic--3d-realistic--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-historical--epic--3d-realistic--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-historical--epic--3d-realistic--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-suspense--dark--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-suspense--dark--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-suspense--dark--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-suspense--dark--3d-realistic--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-suspense--dark--3d-realistic--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-suspense--dark--3d-realistic--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-suspense--dark--2d-anime--anime": {
+    "imageUrl": "/short-drama-styles/covers/v2-suspense--dark--2d-anime--anime.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-suspense--dark--2d-anime--anime.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-science-fiction--epic--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-science-fiction--epic--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-science-fiction--epic--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-science-fiction--epic--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-science-fiction--epic--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-science-fiction--epic--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-science-fiction--epic--3d-realistic--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-science-fiction--epic--3d-realistic--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-science-fiction--epic--3d-realistic--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-science-fiction--epic--2d-anime--anime": {
+    "imageUrl": "/short-drama-styles/covers/v2-science-fiction--epic--2d-anime--anime.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-science-fiction--epic--2d-anime--anime.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-pastoral--healing--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-pastoral--healing--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-pastoral--healing--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-pastoral--healing--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-pastoral--healing--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-pastoral--healing--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-pastoral--healing--2d-guoman--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-pastoral--healing--2d-guoman--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-pastoral--healing--2d-guoman--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-apocalypse--dark--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-apocalypse--dark--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-apocalypse--dark--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-apocalypse--dark--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-apocalypse--dark--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-apocalypse--dark--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-apocalypse--dark--3d-realistic--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-apocalypse--dark--3d-realistic--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-apocalypse--dark--3d-realistic--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-apocalypse--dark--2d-anime--anime": {
+    "imageUrl": "/short-drama-styles/covers/v2-apocalypse--dark--2d-anime--anime.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-apocalypse--dark--2d-anime--anime.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-wuxia--epic--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-wuxia--epic--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-wuxia--epic--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-wuxia--epic--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-wuxia--epic--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-wuxia--epic--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-wuxia--epic--2d-guoman--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-wuxia--epic--2d-guoman--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-wuxia--epic--2d-guoman--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-wuxia--epic--ink--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-wuxia--epic--ink--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-wuxia--epic--ink--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-republican--romantic--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-republican--romantic--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-republican--romantic--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-republican--dark--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-republican--dark--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-republican--dark--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-republican--romantic--2d-guoman--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-republican--romantic--2d-guoman--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-republican--romantic--2d-guoman--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-mythology--epic--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-mythology--epic--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-mythology--epic--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-mythology--epic--3d-anime--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-mythology--epic--3d-anime--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-mythology--epic--3d-anime--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-mythology--epic--3d-realistic--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-mythology--epic--3d-realistic--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-mythology--epic--3d-realistic--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-mythology--epic--2d-guoman--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-mythology--epic--2d-guoman--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-mythology--epic--2d-guoman--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--live-action--realistic--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--3d-realistic--realistic--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--3d-realistic--realistic--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--3d-realistic--realistic--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--2d-anime--anime--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--2d-anime--anime--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--2d-anime--anime--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-period--romantic--live-action--realistic--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-period--romantic--live-action--realistic--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-period--romantic--live-action--realistic--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-period--romantic--3d-realistic--realistic--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-period--romantic--3d-realistic--realistic--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-period--romantic--3d-realistic--realistic--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-period--romantic--2d-anime--anime--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-period--romantic--2d-anime--anime--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-period--romantic--2d-anime--anime--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-fantasy--epic--live-action--realistic--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-fantasy--epic--live-action--realistic--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-fantasy--epic--live-action--realistic--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-fantasy--epic--3d-realistic--realistic--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-fantasy--epic--3d-realistic--realistic--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-fantasy--epic--3d-realistic--realistic--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-fantasy--epic--2d-anime--anime--western": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-fantasy--epic--2d-anime--anime--western.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-fantasy--epic--2d-anime--anime--western.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--live-action--realistic--east-asian": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--east-asian.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--east-asian.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--live-action--realistic--south-asian": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--south-asian.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--south-asian.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--live-action--realistic--southeast-asian": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--southeast-asian.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--southeast-asian.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--live-action--realistic--latin-american": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--latin-american.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--latin-american.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--live-action--realistic--middle-eastern": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--middle-eastern.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--middle-eastern.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--live-action--realistic--african": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--african.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--african.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v3-western-urban--romantic--live-action--realistic--diverse": {
+    "imageUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--diverse.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v3-western-urban--romantic--live-action--realistic--diverse.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-urban--romantic--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-urban--romantic--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-urban--romantic--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-xianxia--epic--2d-guoman--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-xianxia--epic--2d-guoman--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-xianxia--epic--2d-guoman--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-xianxia--healing--ink--semi-real": {
+    "imageUrl": "/short-drama-styles/covers/v2-xianxia--healing--ink--semi-real.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-xianxia--healing--ink--semi-real.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-urban--light-comedy--3d-cartoon--stylized": {
+    "imageUrl": "/short-drama-styles/covers/v2-urban--light-comedy--3d-cartoon--stylized.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-urban--light-comedy--3d-cartoon--stylized.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-science-fiction--dark--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-science-fiction--dark--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-science-fiction--dark--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  },
+  "v2-urban--healing--live-action--realistic": {
+    "imageUrl": "/short-drama-styles/covers/v2-urban--healing--live-action--realistic.webp",
+    "thumbnailUrl": "/short-drama-styles/covers/v2-urban--healing--live-action--realistic.thumb.webp",
+    "width": 3840,
+    "height": 2160
+  }
+}

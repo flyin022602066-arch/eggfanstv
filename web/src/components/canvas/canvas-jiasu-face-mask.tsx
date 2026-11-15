@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/base/switch";
 import { clampJiasuFaceRegion, faceMaskGridOptions, normalizeJiasuFaceMaskMode, renderJiasuFaceMask, type JiasuFaceMaskMode, type JiasuFaceMaskOverrides, type JiasuFaceRegion } from "@/lib/jiasu-face-mask";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { inspectJiasuFaceMask, type JiasuFaceMaskInspection } from "@/services/jiasu-face-mask";
+import { normalizeDoubaoBrowserFaceMaskMode } from "@/lib/doubao-browser";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { ReferenceImage } from "@/types/image";
 
@@ -17,6 +18,7 @@ type Props = {
     theme: CanvasTheme;
     disabled?: boolean;
     channelLabel?: string;
+    privacyModes?: boolean;
     onModeChange(mode: JiasuFaceMaskMode): void;
     onSave(overrides: JiasuFaceMaskOverrides): void;
 };
@@ -29,18 +31,18 @@ function referenceIdentity(reference: CanvasResourceReference) {
     return reference.nodeId || reference.assetId || reference.id;
 }
 
-export function CanvasJiasuFaceMask({ references, mode, overrides, theme, disabled, channelLabel = "佳速 SD", onModeChange, onSave }: Props) {
+export function CanvasJiasuFaceMask({ references, mode, overrides, theme, disabled, channelLabel = "佳速 SD", privacyModes = false, onModeChange, onSave }: Props) {
     const [open, setOpen] = useState(false);
     const images = references.filter((reference) => reference.active && (reference.kind === "image" || reference.kind === "character") && (reference.previewUrl || reference.storageKey));
     return <>
         <button type="button" className="canvas-node-composer-settings-trigger inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[var(--fs-tiny)]" aria-label={`${channelLabel} 人脸遮罩`} disabled={disabled || !images.length} onClick={() => setOpen(true)} title="自动识别人脸，调整遮罩后再上传参考图">
             <ScanFace className="size-3" />人脸遮罩
         </button>
-        {open ? <JiasuFaceMaskEditor references={images} mode={normalizeJiasuFaceMaskMode(mode)} overrides={overrides || {}} theme={theme} channelLabel={channelLabel} onModeChange={onModeChange} onSave={onSave} onClose={() => setOpen(false)} /> : null}
+        {open ? <JiasuFaceMaskEditor references={images} mode={privacyModes ? normalizeDoubaoBrowserFaceMaskMode(mode) : normalizeJiasuFaceMaskMode(mode)} overrides={overrides || {}} theme={theme} channelLabel={channelLabel} privacyModes={privacyModes} onModeChange={onModeChange} onSave={onSave} onClose={() => setOpen(false)} /> : null}
     </>;
 }
 
-function JiasuFaceMaskEditor({ references, mode, overrides, theme, channelLabel, onModeChange, onSave, onClose }: Omit<Props, "mode" | "overrides" | "disabled"> & { mode: JiasuFaceMaskMode; overrides: JiasuFaceMaskOverrides; onClose(): void }) {
+function JiasuFaceMaskEditor({ references, mode, overrides, theme, channelLabel, privacyModes, onModeChange, onSave, onClose }: Omit<Props, "mode" | "overrides" | "disabled"> & { mode: JiasuFaceMaskMode; overrides: JiasuFaceMaskOverrides; onClose(): void }) {
     const [selectedId, setSelectedId] = useState(references[0] ? referenceIdentity(references[0]) : "");
     const [drafts, setDrafts] = useState<JiasuFaceMaskOverrides>(() => ({ ...overrides }));
     const [inspection, setInspection] = useState<JiasuFaceMaskInspection | null>(null);
@@ -113,7 +115,7 @@ function JiasuFaceMaskEditor({ references, mode, overrides, theme, channelLabel,
         <div className="space-y-3" data-canvas-no-zoom data-canvas-wheel-scroll style={{ color: theme.node.text }}>
             <div className="flex flex-wrap items-center gap-3">
                 <span>自动人脸遮罩</span><Switch aria-label="自动人脸遮罩" checked={mode !== "off"} onChange={(enabled) => onModeChange(enabled ? "grid" : "off")} />
-                <Select aria-label="人脸遮罩样式" value={mode} onChange={onModeChange} style={{ minWidth: 180 }} options={[...faceMaskGridOptions.map((option) => ({ value: option.value, label: `半透明网格 ${option.label}` })), { value: "mosaic", label: "马赛克" }, { value: "off", label: "不遮罩" }]} />
+                <Select aria-label="人脸遮罩样式" value={mode} onChange={onModeChange} style={{ minWidth: 180 }} options={[...faceMaskGridOptions.map((option) => ({ value: option.value, label: `半透明网格 ${option.label}` })), { value: "mosaic", label: "马赛克" }, ...(privacyModes ? [{ value: "blur", label: "强模糊" }, { value: "solid", label: "实色遮挡" }] : []), { value: "off", label: "不遮罩" }]} />
                 <span className="text-[var(--fs-label)]" style={{ color: theme.node.muted }}>预览不会上传图床；开始生成时处理后上传，原图保留。</span>
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1" aria-label="选择遮罩参考图">

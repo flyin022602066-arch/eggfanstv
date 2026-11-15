@@ -83,7 +83,7 @@ func TestChapterAssetReextractReplacesDraftsAndKeepsConfirmedAndOtherChapters(t 
 	}
 }
 
-func TestChapterAssetReextractEmptyResultClearsDrafts(t *testing.T) {
+func TestChapterAssetReextractEmptyResultKeepsDrafts(t *testing.T) {
 	svc, db := newTestService(t, nil)
 	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
 	unit := seedChapter(t, svc, project.ID)
@@ -93,15 +93,15 @@ func TestChapterAssetReextractEmptyResultClearsDrafts(t *testing.T) {
 	}
 	seedSucceededChapterTask(t, db, chapterTaskSeed{ID: "empty-extract", UserID: project.UserID, ProjectID: project.ID, ChapterID: unit.ID, Kind: chapterApplyCharacters})
 	_, err := svc.CreateProjectAssetCandidates(project.UserID, project.ID, CreateAssetCandidatesRequest{Source: AssetCandidateSourceChapterCharacter, SourceTaskID: "empty-extract"})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("empty extraction must not replace existing drafts")
 	}
 	var count int64
 	db.Model(&model.ProjectAssetCandidate{}).Where("unit_id = ? AND status = ?", unit.ID, "pending_confirmation").Count(&count)
-	if count != 0 {
-		t.Fatalf("empty latest result left %d stale drafts", count)
+	if count != 1 {
+		t.Fatalf("empty extraction removed existing drafts: %d", count)
 	}
-	assertSingleChapterApplyReceipt(t, db, project.UserID, "empty-extract")
+	assertNoChapterApplyReceipt(t, db, project.UserID, "empty-extract")
 }
 
 func TestChapterAssetReextractInvalidResultKeepsDrafts(t *testing.T) {

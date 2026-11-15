@@ -29,6 +29,9 @@ RUNTIME_FILES = (
     'cli/beeftv.exe',
     'tools/hanbao/doubao.exe',
     'tools/hanbao/capabilities.json',
+    'tools/doubao-browser/server.mjs',
+    'tools/doubao-browser/pool.mjs',
+    'tools/doubao-browser/engine.mjs',
 )
 SKILL_PACKAGES = json.loads(Path(__file__).with_name('bundled-skill-packages.json').read_text(encoding='utf-8'))
 SKILL_FILES = tuple('skill-packages/' + name + '.zip' for name in SKILL_PACKAGES)
@@ -56,6 +59,9 @@ class EggfansWindowsPackagingTests(unittest.TestCase):
             'cli/support/runtime.dll': b'fixture cli dependency',
         }
         hanbao = Path(__file__).resolve().parents[1] / 'tools' / 'hanbao'
+        browser = Path(__file__).resolve().parents[1] / 'tools' / 'doubao-browser'
+        for name in ('server.mjs', 'pool.mjs', 'engine.mjs'):
+            self.runtime_files['tools/doubao-browser/' + name] = (browser / name).read_bytes()
         for name in ('doubao.exe', 'capabilities.json', '参数清单.json', '网页协议参数.json', '文件校验清单.json', 'README.md'):
             self.runtime_files['tools/hanbao/' + name] = (hanbao / name).read_bytes()
         for name, reference in SKILL_PACKAGES.items():
@@ -91,6 +97,8 @@ class EggfansWindowsPackagingTests(unittest.TestCase):
 
     def write(self, target, content):
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_file() and target.read_bytes() == content:
+            return
         target.write_bytes(content)
 
     def portable_arguments(self):

@@ -41,6 +41,29 @@ test("structured first-response shots reach the saved revision and final video p
     expect(shot.revision.videoPrompt).toContain(row.videoMotionPrompt);
 });
 
+test("missing camera metadata is recovered from the actual director shots without flattening their different designs", () => {
+    const script = { ...directorScript, shots: [
+        { ...directorScript.shots[0]!, camera: "平视双人中景，35mm，缓慢推进至双手之间。" },
+        { ...directorScript.shots[1]!, camera: "俯拍手部特写，固定机位保留双方袖口。" },
+    ] };
+    const row = storyboardRowsFromTask(taskFor({ directorScript: script })).rows[0]!;
+    const shot = storyboardRowsToProjectShots([row])[0]!;
+    expect(shot.revision.shotSize).toBe("中景 → 特写");
+    expect(shot.revision.cameraAngle).toBe("平视 → 俯拍");
+    expect(shot.revision.cameraMovement).toBe("推镜 → 固定");
+    const final = buildWorkflowVideoPrompt(shot.revision, { assetReferences: [], mentionReferences: [], referenceImages: [], referenceAudios: [], resolvedCharacterVersions: [], missingImageTitles: [] }).prompt;
+    expect(final).toContain(script.shots[0]!.camera);
+    expect(final).toContain(script.shots[1]!.camera);
+    expect(final).not.toContain("景别：中景 → 特写");
+    expect(final).not.toContain("运镜：推镜 → 固定");
+});
+
+test("authored camera metadata retains precedence over inferred camera summaries", () => {
+    const row = storyboardRowsFromTask(taskFor({ directorScript, shotSize: "大特写", camera: "过肩", motion: "拉镜" })).rows[0]!;
+    const shot = storyboardRowsToProjectShots([row])[0]!;
+    expect(shot.revision).toMatchObject({ shotSize: "大特写", cameraAngle: "过肩", cameraMovement: "拉镜" });
+});
+
 test("review reads actual per-shot durations and reports overlong shots and incorrect totals even with enough shot labels", () => {
     const shots = Array.from({ length: 10 }, (_, index) => ({ ...directorScript.shots[index % 2]!, durationSeconds: index === 0 ? 5 : 3 }));
     const row = storyboardRowsFromTask(taskFor({ directorScript: { ...directorScript, shots } })).rows[0]!;

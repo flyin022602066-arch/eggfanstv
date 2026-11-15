@@ -9,8 +9,10 @@ import { build } from "vite";
 const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const rootDir = resolve(webDir, "..");
 const jiasuJ2 = process.argv.includes("--jiasu-j2");
-const fixtureDir = join(rootDir, ".local/cache/jiasu-face-mask-ui");
-const outputDir = join(rootDir, jiasuJ2 ? "output/playwright/jiasu-j2-face-mask" : "output/playwright/jiasu-face-mask");
+const hanbao = process.argv.includes("--hanbao");
+const doubao = process.argv.includes("--doubao");
+const fixtureDir = join(rootDir, doubao ? ".local/cache/doubao-face-mask-ui" : hanbao ? ".local/cache/hanbao-face-mask-ui" : ".local/cache/jiasu-face-mask-ui");
+const outputDir = join(rootDir, doubao ? "output/playwright/doubao-face-mask" : hanbao ? "output/playwright/hanbao-face-mask" : jiasuJ2 ? "output/playwright/jiasu-j2-face-mask" : "output/playwright/jiasu-face-mask");
 await mkdir(outputDir, { recursive: true });
 await build({ configFile: join(webDir, "vite.config.ts"), root: webDir, logLevel: "error", build: { outDir: fixtureDir, emptyOutDir: true, rolldownOptions: { input: join(webDir, "test/fixtures/jiasu-face-mask.html") } } });
 const originals = new Map([
@@ -59,9 +61,11 @@ const server = createServer(async (request, response) => {
             const bytes = Buffer.from(await form.get("file").arrayBuffer());
             const id = `masked-${++resourceSequence}`;
             resources.set(id, bytes);
-            uploaded.push({ id, bytes, idempotencyKey: request.headers["x-idempotency-key"] });
+            const sourceResourceId = String(form.get("sourceResourceId") || "");
+            uploaded.push({ id, bytes, idempotencyKey: request.headers["x-idempotency-key"], sourceResourceId });
             events.push(`save:${id}`);
-            return sendJSON({ resource: { id, mimeType: "image/png", size: bytes.length, width: Number(form.get("width")), height: Number(form.get("height")), status: "ready" } });
+            resources.set(`${id}:source`, Buffer.from(sourceResourceId));
+            return sendJSON({ resource: { id, mimeType: "image/png", size: bytes.length, width: Number(form.get("width")), height: Number(form.get("height")), status: "ready", sourceResourceId } });
         }
         if (resourcePath) {
             const [, id, operation] = resourcePath;
@@ -74,7 +78,7 @@ const server = createServer(async (request, response) => {
                 hosted.push({ id, url });
                 return sendJSON({ url });
             }
-            return sendJSON({ resource: { id, mimeType: "image/png", size: resources.get(id).length, status: "ready" } });
+            return sendJSON({ resource: { id, mimeType: "image/png", size: resources.get(id).length, status: "ready", sourceResourceId: resources.get(`${id}:source`)?.toString() || "" } });
         }
         if (request.method === "POST" && pathname === "/api/tasks") {
             const chunks = [];
@@ -108,9 +112,24 @@ try {
     page = await context.newPage();
     page.setDefaultTimeout(20_000);
     page.on("pageerror", (error) => browserErrors.push(error.message));
-    await page.goto(baseURL + (jiasuJ2 ? "/?jiasu-j2=1" : ""));
+    await page.goto(baseURL + (doubao ? "/?doubao=1" : hanbao ? "/?hanbao=1" : jiasuJ2 ? "/?jiasu-j2=1" : ""));
     assert.equal(await page.title(), "佳速人脸遮罩测试");
     await page.waitForFunction(() => Boolean(window.faceMaskHarness));
+    if (doubao) {
+        const { verifyDoubaoBrowserFaceMasks } = await import("./doubao-browser-face-mask-e2e.mjs");
+        await verifyDoubaoBrowserFaceMasks({ page, outputDir, originals, resources, tasks, uploaded, hosted, waitForPreview });
+        assert.deepEqual(browserErrors, []);
+        assert.deepEqual(remoteRequests, []);
+        const report = { passed: true, channel: "doubao-browser", modesVerified: ["grid", "grid-60", "grid-75", "mosaic", "blur", "solid"], multiFacePixelsVerified: true, outsideFacePixelsUnchanged: true, localMaskBytesSubmitted: true, offPreservesOriginal: true, preferencesSurviveReload: true, otherChannelsIsolated: true, realGenerationRequests: 0, remoteRequests: 0 };
+        await writeFile(join(outputDir, "report.json"), JSON.stringify(report, null, 2));
+        console.log(JSON.stringify(report));
+    } else if (hanbao) {
+        const { verifyHanbaoFaceMasks } = await import("./hanbao-face-mask-e2e.mjs");
+        await verifyHanbaoFaceMasks({ page, outputDir, originals, resources, tasks, uploaded, hosted, waitForPreview });
+        assert.deepEqual(browserErrors, []);
+        assert.deepEqual(remoteRequests, []);
+        console.log(JSON.stringify({ passed: true, channel: "hanbao", automaticAudio: true, localMaskBytesSubmitted: true, offPreservesOriginal: true, preferencesSurviveReload: true, otherChannelsIsolated: true, realGenerationRequests: 0, remoteRequests: 0 }));
+    } else {
     await page.getByRole("button", { name: "佳速 SD 人脸遮罩", exact: true }).click();
     await waitForPreview(page, "source-portrait");
     assert.ok(await page.getByRole("button", { name: /^移动人脸/ }).count() >= 1, "Real detector must find at least one portrait face");
@@ -398,6 +417,7 @@ try {
     assert.deepEqual(browserErrors, []);
     assert.deepEqual(remoteRequests, []);
     console.log(JSON.stringify({ passed: true, gridLineCounts, allGridDensitiesSubmitted: true, densityCachesSeparated: true, densitySavedAfterReload: true, realDetection: true, previewNoUploads: true, moveResizeManual: true, mosaicKeepsOutsidePixels: true, saveFailureBlocksTask: true, abortNoUpload: true, savedAfterReload: true, processedBeforeTask: true, derivativeReuseAfterReload: true, sd2DGridBytesSubmitted: true, sd2DSettingsPersisted: true, nativeFaceModesSeparated: true, otherChannelsIsolated: true, remoteRequests: 0 }));
+    }
 } catch (error) {
     console.error(JSON.stringify({ browserErrors, remoteRequests, snapshot: await page?.locator("body").ariaSnapshot() }));
     throw error;

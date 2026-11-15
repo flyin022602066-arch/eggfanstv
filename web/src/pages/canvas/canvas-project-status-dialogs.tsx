@@ -13,6 +13,8 @@ import { modelDisplayName, useEffectiveConfig } from "@/stores/use-config-store"
 import { resolveImageUrl } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { buildLibTVVideoSourceUrl } from "@/lib/canvas/libtv-import";
+import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
+import { explainGenerationError } from "@/lib/generation-error";
 
 type CanvasProjectStatusDialogsProps = {
     theme: { node: { stroke: string; panel: string; muted: string; fill: string } };
@@ -62,7 +64,10 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
                             </div>
                         </div>
                         <TaskGenerationParameters inputJson={task.inputJson} theme={theme} />
-                        {task.error ? <p role="status" className="whitespace-pre-wrap break-words">{task.error}</p> : null}
+                        {task.error ? <GenerationFailureNotice
+                            explanation={explainGenerationError({ code: task.errorCode, message: task.error }, { model: task.model, stage: task.stage, providerRequestId: task.providerRequestId })}
+                            context={{ taskId: task.id, providerRequestId: task.providerRequestId, model: task.model, stage: task.stage, failureDiagnostics: task.failureDiagnostics, createdAt: task.createdAt, completedAt: task.completedAt, updatedAt: task.updatedAt }}
+                        /> : null}
                         {onRetrieveTask && canRetrieveVideoResult(task) ? (
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <p>查询原任务并取回视频，不会重新生成。</p>

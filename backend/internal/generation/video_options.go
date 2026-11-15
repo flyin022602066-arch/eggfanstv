@@ -25,7 +25,12 @@ func IsPublicMediaURL(value string) bool {
 }
 
 func IsSeedanceVideoConfig(config Config) bool {
-	if config.InterfaceType == "hanbao-video" { return false }
+	if config.InterfaceType == "kanhai-video" || config.InterfaceType == "nono-video" {
+		return false
+	}
+	if config.InterfaceType == "hanbao-video" || config.InterfaceType == "doubao-browser-video" {
+		return false
+	}
 	modelName := strings.ToLower(config.Model)
 	return strings.Contains(modelName, "seedance") || strings.Contains(modelName, "doubao-seedance") || IsArkPlanVideoConfig(config)
 }

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 func HydrateMedia(ctx context.Context, userID string, input *Input, policy MediaHydrationPolicy) error {
@@ -16,6 +18,26 @@ func HydrateMedia(ctx context.Context, userID string, input *Input, policy Media
 		return nil
 	}
 	groups := [][]Media{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios}
+	if input.Mode == "video" && input.Config.InterfaceType == "nono-video" && policy.PublicOnly {
+		runtime, _ := RuntimeFromContext(ctx)
+		if err := setExecutionStage(ctx, runtime, "正在并发准备 nono 参考素材（Uguu 上传/链接检查，尚未提交视频）"); err != nil {
+			return err
+		}
+		uploads, uploadCtx := errgroup.WithContext(ctx)
+		for _, group := range groups {
+			for index := range group {
+				media := &group[index]
+				uploads.Go(func() error { return HydrateOne(uploadCtx, userID, media, policy) })
+			}
+		}
+		if input.Mask != nil {
+			uploads.Go(func() error { return HydrateOne(uploadCtx, userID, input.Mask, policy) })
+		}
+		if err := uploads.Wait(); err != nil {
+			return err
+		}
+		return setExecutionStage(ctx, runtime, "nono 参考素材已准备完成，正在提交视频")
+	}
 	for _, group := range groups {
 		for index := range group {
 			if err := HydrateOne(ctx, userID, &group[index], policy); err != nil {

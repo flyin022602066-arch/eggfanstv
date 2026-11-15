@@ -4,6 +4,7 @@ import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capab
 import type { GenerationTask } from "@/services/api/task-center";
 import type { ProjectAssetImageCategory, ProjectAssetImagePreset } from "@/lib/project-asset-image-preferences";
 import { systemInterfaceIdentity, systemInterfaceTemplatePrompt } from "@/lib/chapter-system-interface";
+import { PROP_REFERENCE_DESIGN_RULE, SCENE_REFERENCE_DESIGN_RULE } from "@/lib/asset-visual-design";
 
 export function projectAssetImageModel(config: AiConfig, projectDefault?: string) {
     return [projectDefault, config.imageModel, ...selectableModelsByCapability(config, "image")].find((model) => model && configuredModelMatchesCapability(config, model, "image")) || "";
@@ -17,7 +18,7 @@ export function projectAssetImagePrompt(asset: ProjectAsset) {
         catch { description = asset.definitionJson; }
     }
     if (asset.category === "prop" && systemInterfaceIdentity(asset.title)) return systemInterfaceTemplatePrompt(asset.title, description.replace(/\\n/gu, "\n"));
-    const purpose = asset.category === "environment" ? "生成供后续分镜复用的场景设定图，清晰呈现空间布局、建筑、材质、光线和环境细节，不添加人物。" : "生成供后续分镜复用的道具设定图，主体完整清晰，突出形状、材质、颜色与结构，背景简洁。";
+    const purpose = asset.category === "environment" ? SCENE_REFERENCE_DESIGN_RULE : PROP_REFERENCE_DESIGN_RULE;
     return `${purpose}\n资产名称：${asset.title}\n原始设定：\n${description || asset.title}`;
 }
 
@@ -40,7 +41,7 @@ export function resolveProjectAssetImagePreset(config: AiConfig, project: Projec
     const selection = { size: saved?.size || (category === "character" ? "3:2" : project.aspectRatio || config.size), quality: saved?.quality || config.quality, count: "1" };
     const profile = configuredModelMatchesCapability(config, model, "image") ? modelCapabilityConfigFor(config, model).image : undefined;
     const normalized = profile ? normalizeImageValue(profile, selection) : selection;
-    return { model, size: normalized.size, quality: normalized.quality, extraPrompt: saved?.extraPrompt || "" };
+    return { model, size: normalized.size, quality: normalized.quality, extraPrompt: saved?.extraPromptScope === "category" ? saved.extraPrompt : "", ...(saved?.extraPromptScope === "category" ? { extraPromptScope: "category" as const } : {}) };
 }
 
 export function projectAssetImageConfig(config: AiConfig, preset: ProjectAssetImagePreset): AiConfig {

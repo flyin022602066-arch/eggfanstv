@@ -468,11 +468,12 @@ try {
         "-platform", "windows/amd64",
         "-webview2", "download",
         "-nosyncgomod",
-        "-m"
+        "-m",
+        "-ldflags", $ldflags
     )
     if ($wailsBinary -and (Test-Path -LiteralPath $wailsBinary -PathType Leaf)) {
         Write-Step "Using installed Wails CLI $wailsBinary"
-        Invoke-NativeExecutable -FilePath $wailsBinary -ArgumentList $wailsArgs -FailureMessage "wails build failed" | Out-Null
+        Invoke-NativeExecutable -FilePath $wailsBinary -ArgumentList $wailsArgs -FailureMessage "wails build failed"
     }
     else {
         [void](Invoke-NativeExecutable -FilePath "go" -ArgumentList (@("run", $wailsModule) + $wailsArgs) -FailureMessage "wails build failed")
@@ -523,6 +524,11 @@ if (!(Test-Path -LiteralPath $hanbaoRuntime) -or (Get-FileHash -LiteralPath $han
     throw "Hanbao runtime is missing or its SHA-256 differs from the supplied integration package"
 }
 $hanbaoTarget = Join-Path $binDir "tools\hanbao"
+$doubaoBrowserTarget = Join-Path $binDir "tools\doubao-browser"
+New-Item -ItemType Directory -Force -Path $doubaoBrowserTarget | Out-Null
+foreach ($name in @("server.mjs", "pool.mjs", "engine.mjs")) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "tools\doubao-browser\$name") -Destination (Join-Path $doubaoBrowserTarget $name) -Force
+}
 New-Item -ItemType Directory -Force -Path $hanbaoTarget | Out-Null
 foreach ($name in @("doubao.exe", "capabilities.json", "参数清单.json", "网页协议参数.json", "文件校验清单.json", "README.md")) {
     Copy-Item -LiteralPath (Join-Path $hanbaoSource $name) -Destination (Join-Path $hanbaoTarget $name) -Force

@@ -13,7 +13,7 @@ import { createGenerationTask, waitForGenerationTask, type GenerationTask } from
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime, type SkillLoadReport } from "@/services/skill-runtime";
 import { logicalModelIDForConfig, type AiConfig } from "@/stores/use-config-store";
-import { chapterStoryboardCinematographyRequirements, chapterStoryboardRequirements, chapterStoryboardSourcePrompt, chapterStoryboardReviewPolicy, extractSystemElementBlocks, reviewChapterStoryboardPrompt, reviewChapterDialogueCoverage, type ChapterDialogueConstraintMode, type ChapterStoryboardMode, type ChapterStoryboardReviewPolicy } from "@/lib/chapter-storyboard-mode";
+import { chapterStoryboardCinematographyRequirements, chapterStoryboardDurationPolicy, chapterStoryboardDurationRequirements, chapterStoryboardRequirements, chapterStoryboardSourcePrompt, chapterStoryboardReviewPolicy, extractSystemElementBlocks, reviewChapterStoryboardPrompt, reviewChapterDialogueCoverage, type ChapterDialogueConstraintMode, type ChapterStoryboardMode, type ChapterStoryboardReviewPolicy } from "@/lib/chapter-storyboard-mode";
 
 import type { ChapterStoryboardAsset, ChapterStoryboardCharacter } from "./chapter-storyboard-production";
 import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
@@ -62,20 +62,32 @@ export function chapterTaskIdentity(task: GenerationTask): { chapterId: string; 
     return null;
 }
 
+export class EmptyChapterAssetExtractionError extends Error {
+    constructor() {
+        super("模型本次未识别到任何角色、场景或道具，尚未写入资产；已有资产和草稿保持不变。请核对章节正文与提取设置后重新提取。");
+        this.name = "EmptyChapterAssetExtractionError";
+    }
+}
+
+export function requireChapterAssetExtraction(assets: ChapterAssetBreakdown): ChapterAssetBreakdown {
+    if (!assets.characters.length && !assets.scenes.length && !assets.props.length) throw new EmptyChapterAssetExtractionError();
+    return assets;
+}
+
 export function chapterAssetsFromGenerationTask(task: GenerationTask) {
     const result = parseBackendGenerationResult(task);
     if (!result.text?.trim()) throw new Error("模型没有返回可用的章节资产提取结果");
     // 历史角色任务的输出契约只有角色；仅按明确的模板操作恢复，不能给新任务缺字段兜底。
     if (generationTaskMetadata(task.inputJson).promptTemplateOperation === PromptTemplateOperation.CharacterExtract) {
-        return { characters: parseCharacterBreakdown(result.text), scenes: [], props: [] };
+        return requireChapterAssetExtraction({ characters: parseCharacterBreakdown(result.text), scenes: [], props: [] });
     }
     const variables = generationTaskMetadata(task.inputJson).promptTemplateVariables as Record<string, unknown> | undefined;
-    return parseChapterAssetBreakdown(result.text, typeof variables?.章节正文 === "string" ? variables.章节正文 : "", normalizeSystemPresentationSettings({
+    return requireChapterAssetExtraction(parseChapterAssetBreakdown(result.text, typeof variables?.章节正文 === "string" ? variables.章节正文 : "", normalizeSystemPresentationSettings({
         mode: variables?.系统表现模式,
         characterName: variables?.系统角色名称,
         characterAppearance: variables?.系统角色形象,
         characterVoice: variables?.系统角色声音,
-    }));
+    })));
 }
 
 export function chapterStoryboardFromGenerationTask(task: GenerationTask) {
@@ -86,19 +98,25 @@ export function chapterStoryboardFromGenerationTask(task: GenerationTask) {
     try { context = JSON.parse(task.inputJson || "{}"); } catch { context = {}; }
     const scoped = scopeChapterStoryboardRows(result.rows, typeof metadata.chapterSourceText === "string" ? metadata.chapterSourceText : "", Array.isArray(context?.characters) ? context.characters : Array.isArray(metadata.storyboardCharacters) ? metadata.storyboardCharacters as ChapterStoryboardCharacter[] : [], Array.isArray(context?.canvasAssets) ? context.canvasAssets : Array.isArray(metadata.storyboardAssets) ? metadata.storyboardAssets as ChapterStoryboardAsset[] : [], systemPresentation);
     const rows = ensureProtectedSystemElements(scoped, Array.isArray(metadata.protectedSystemElements) ? metadata.protectedSystemElements : [], systemPresentation);
-    return { ...result, rows, promptReview: metadata.storyboardMode === "continuous_30s" ? [...reviewChapterStoryboardPrompt(rows, chapterStoryboardTaskReviewPolicy(task)), ...reviewChapterDialogueCoverage(typeof metadata.chapterSourceText === "string" ? metadata.chapterSourceText : "", rows)] : [] };
+    const policy = chapterStoryboardTaskReviewPolicy(task);
+    return { ...result, rows, promptReview: [...(metadata.storyboardMode === "continuous_30s" || policy.maxDurationSeconds ? reviewChapterStoryboardPrompt(rows, policy) : []), ...(metadata.storyboardMode === "continuous_30s" ? reviewChapterDialogueCoverage(typeof metadata.chapterSourceText === "string" ? metadata.chapterSourceText : "", rows) : [])] };
 }
 
 function chapterStoryboardTaskReviewPolicy(task: GenerationTask): ChapterStoryboardReviewPolicy {
     const saved = generationTaskMetadata(task.inputJson).storyboardPromptReview as ChapterStoryboardReviewPolicy | undefined;
+    const boundary = task.prompt.indexOf("【用户任务】");
+    const skillContext = boundary >= 0 ? task.prompt.slice(0, boundary) : "";
+    const durationPolicy = chapterStoryboardDurationPolicy(skillContext);
     if (saved && typeof saved === "object") return {
+        ...durationPolicy,
+        ...(Number.isInteger(saved.minDurationSeconds) && saved.minDurationSeconds! > 0 ? { minDurationSeconds: saved.minDurationSeconds } : {}),
+        ...(Number.isInteger(saved.maxDurationSeconds) && saved.maxDurationSeconds! > 0 ? { maxDurationSeconds: saved.maxDurationSeconds } : {}),
         ...(saved.maxInternalShotSeconds === 4 ? { maxInternalShotSeconds: 4 } : {}),
         ...(saved.minDirectorScriptChars === 1000 ? { minDirectorScriptChars: 1000 } : {}),
         ...(saved.directorFormat === "shots-v1" ? { directorFormat: "shots-v1" } : {}),
     };
     // 历史任务用当时发送的技能部分核对，不能套用今天的技能选择或正文中的数字。
-    const boundary = task.prompt.indexOf("【用户任务】");
-    return boundary >= 0 ? chapterStoryboardReviewPolicy(task.prompt.slice(0, boundary)) : {};
+    return { ...durationPolicy, ...chapterStoryboardReviewPolicy(skillContext) };
 }
 
 export function chapterStoryboardAssetPromptContext(assets: ChapterStoryboardAsset[], sourceText: string) {
@@ -156,7 +174,7 @@ export async function extractChapterAssets(input: ChapterAnalysisInput, options?
         系统角色形象: systemPresentation.characterAppearance,
         系统角色声音: systemPresentation.characterVoice,
     }, options);
-    return { ...parseChapterAssetBreakdown(result.text, input.sourceText, systemPresentation), taskId: result.taskId };
+    return { ...requireChapterAssetExtraction(parseChapterAssetBreakdown(result.text, input.sourceText, systemPresentation)), taskId: result.taskId };
 }
 
 type ChapterStoryboardGenerationInput = {
@@ -186,7 +204,7 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
     }
     const model = input.config.textModel || input.config.model;
     const config = { ...input.config, model };
-    const mode = input.storyboardMode || "standard";
+    const requestedMode = input.storyboardMode || "standard";
     const dialogueConstraintMode = input.dialogueConstraintMode || "paced";
     const systemPresentation = normalizeSystemPresentationSettings(input.systemPresentation);
     const identities = chapterCharacterIdentities(input.characters, input.assets);
@@ -210,15 +228,21 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
     });
     options?.onSkillLoadReport?.(skillExecution.metadata.skillLoadReport || []);
     const skillBoundary = skillExecution.prompt.indexOf("【用户任务】");
-    const loadedPolicy = chapterStoryboardReviewPolicy(skillBoundary >= 0 ? skillExecution.prompt.slice(0, skillBoundary) : "");
-    const reviewPolicy: ChapterStoryboardReviewPolicy = mode === "continuous_30s" ? {
-        minDirectorScriptChars: 1000,
+    const skillContext = skillBoundary >= 0 ? skillExecution.prompt.slice(0, skillBoundary) : "";
+    const durationPolicy = chapterStoryboardDurationPolicy(skillContext);
+    const mode = durationPolicy.maxDurationSeconds && durationPolicy.maxDurationSeconds < 30 ? "standard" : requestedMode;
+    const loadedPolicy = chapterStoryboardReviewPolicy(skillContext);
+    const shortDirector = durationPolicy.minDurationSeconds === 15 && durationPolicy.maxDurationSeconds === 15 && loadedPolicy.maxInternalShotSeconds === 4;
+    const reviewPolicy: ChapterStoryboardReviewPolicy = mode === "continuous_30s" || shortDirector ? {
+        ...(shortDirector ? {} : { minDirectorScriptChars: 1000 }),
+        ...durationPolicy,
         ...loadedPolicy,
         ...(loadedPolicy.maxInternalShotSeconds === 4 ? { directorFormat: "shots-v1" } : {}),
-    } : {};
+    } : durationPolicy;
     const requirements = [
-        chapterStoryboardRequirements(mode, dialogueConstraintMode, systemPresentation, reviewPolicy.directorFormat),
+        chapterStoryboardRequirements(mode, dialogueConstraintMode, systemPresentation, reviewPolicy.directorFormat, shortDirector ? 15 : 30),
         reviewPolicy.directorFormat ? "" : chapterStoryboardCinematographyRequirements(input.skills, input.selectedSkillIds),
+        chapterStoryboardDurationRequirements(durationPolicy),
     ].filter(Boolean).join("\n\n");
     const prompt = [
         skillBoundary >= 0 ? skillExecution.prompt.slice(0, skillBoundary) : skillExecution.prompt,
@@ -244,7 +268,7 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
             requirements,
             projectStyle: input.projectStyle,
             characters,
-            shotDurationSeconds: mode === "continuous_30s" ? 30 : 0,
+            shotDurationSeconds: durationPolicy.maxDurationSeconds || (mode === "continuous_30s" ? 30 : 0),
             shotCount: 0,
             config: backendProviderConfig(config, "text"),
             metadata: {
@@ -256,7 +280,7 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
                 source: "short-drama-chapter-storyboard",
                 storyboardMode: mode,
                 storyboardPromptReview: reviewPolicy,
-                ...(reviewPolicy.directorFormat === "shots-v1" ? { storyboardExecution: "planned-director-v1" } : {}),
+                ...(mode === "continuous_30s" && reviewPolicy.directorFormat === "shots-v1" ? { storyboardExecution: "planned-director-v1" } : {}),
                 dialogueConstraintMode,
                 systemPresentation,
                 protectedSystemElements,
@@ -270,7 +294,7 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
     const completed = await waitForGenerationTask(task.id, { initialTask: task, useTextEvents: true, onTaskUpdate: options?.onTaskUpdate, expectedScope: options?.expectedScope });
     const result = storyboardRowsFromTask(completed);
     const rows = ensureProtectedSystemElements(scopeChapterStoryboardRows(result.rows, input.sourceText, input.characters, input.assets, systemPresentation), protectedSystemElements, systemPresentation);
-    return { ...result, rows, promptReview: mode === "continuous_30s" ? [...reviewChapterStoryboardPrompt(rows, reviewPolicy), ...reviewChapterDialogueCoverage(input.sourceText, rows)] : [], skillCount: skillExecution.selectedSkills.length, skillLoadReport: skillExecution.metadata.skillLoadReport || [], taskId: completed.id };
+    return { ...result, rows, promptReview: [...(mode === "continuous_30s" || reviewPolicy.maxDurationSeconds ? reviewChapterStoryboardPrompt(rows, reviewPolicy) : []), ...(mode === "continuous_30s" ? reviewChapterDialogueCoverage(input.sourceText, rows) : [])], skillCount: skillExecution.selectedSkills.length, skillLoadReport: skillExecution.metadata.skillLoadReport || [], taskId: completed.id };
 }
 
 function chapterCharacterIdentities(characters: ChapterStoryboardCharacter[], assets: ChapterStoryboardAsset[]) {

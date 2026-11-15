@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { buildWorkflowVideoPrompt, prepareWorkflowVideoPrompt } from "@/pages/projects/detail/workflow-video-prompt";
+import { buildWorkflowVideoPrompt, prepareWorkflowVideoPrompt, workflowVideoPromptExceedsLimit } from "@/pages/projects/detail/workflow-video-prompt";
+
+test("prompt limits allow 15000 unicode characters and treat zero as unlimited", () => {
+    const prompt = "文".repeat(14999) + "😀";
+    expect(workflowVideoPromptExceedsLimit(prompt, 15000)).toBe(false);
+    expect(workflowVideoPromptExceedsLimit(prompt + "字", 15000)).toBe(true);
+    expect(workflowVideoPromptExceedsLimit(prompt, 0)).toBe(false);
+    expect(workflowVideoPromptExceedsLimit(prompt, undefined)).toBe(false);
+});
 import type { ShotAssetReferenceContext } from "@/pages/projects/detail/workflow-shot-references";
 import { storyboardSequencePrompt } from "./fixtures/storyboard-sequence";
 
@@ -20,6 +28,15 @@ test("reused panel references use this shot's state rather than numbers in the r
     expect(result.prompt).toContain("不得照抄参考图中的文字或数值");
     expect(result.prompt).toContain("未给出的数值留空");
     expect(result.prompt).toContain("@图片1");
+    expect(result.sections.reduce((total, section) => total + section.chars, 0)).toBe(result.chars);
+});
+
+test("asset design sheets provide visual identity without becoming split-screen footage", () => {
+    const result = buildWorkflowVideoPrompt({ videoPrompt: "镜头1：缓慢推向殿门。" }, context);
+    expect(result.prompt).toContain("设定图");
+    expect(result.prompt).toContain("不复刻拼格");
+    expect(result.prompt).toContain("不新增人物或道具");
+    expect(result.prompt).toContain("镜头1：缓慢推向殿门。");
     expect(result.sections.reduce((total, section) => total + section.chars, 0)).toBe(result.chars);
 });
 
@@ -147,4 +164,20 @@ test("keeps the supporting shot sequence when the main prompt does not contain o
     const result = buildWorkflowVideoPrompt({ videoPrompt: "雨夜，林默发现来人。", action, dialogue: "林默：等一下。" }, context);
     expect(result.prompt).toContain(action);
     expect(result.prompt.match(/等一下。/gu)).toHaveLength(1);
+});
+
+test("recovered camera summaries do not repeat or override the detailed internal shot designs", () => {
+    const videoPrompt = "镜头1：平视中景，缓慢推进。\n起幅：林默递信。\n镜头2：俯拍特写，固定机位。\n过程：守卫接信。";
+    const result = buildWorkflowVideoPrompt({ videoPrompt, shotSize: "中景 → 特写", cameraAngle: "平视 → 俯拍", cameraMovement: "推镜 → 固定" }, context);
+    expect(result.prompt).toContain(videoPrompt);
+    expect(result.prompt).not.toContain("景别：中景 → 特写");
+    expect(result.prompt).not.toContain("机位：平视 → 俯拍");
+    expect(result.prompt).not.toContain("运镜：推镜 → 固定");
+});
+
+test("a manually selected camera setting still reaches the final submission prompt", () => {
+    const videoPrompt = "镜头1：平视中景，缓慢推进。\n起幅：林默递信。";
+    const result = buildWorkflowVideoPrompt({ videoPrompt, cameraMovement: "拉镜" }, context);
+    expect(result.prompt).toContain(videoPrompt);
+    expect(result.prompt).toContain("运镜：拉镜");
 });

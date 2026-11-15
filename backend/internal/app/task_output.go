@@ -26,6 +26,7 @@ func taskSummariesForOutput(tasks []model.Task) []TaskSummary {
 }
 
 func taskSummaryForOutput(task model.Task) TaskSummary {
+	task = generation.NormalizeHanbaoTaskFailure(task)
 	errorCode := persistedFailureErrorCode(task.Error, task.Stage)
 	if errorCode == string(generation.CategoryUnknown) && !isContentModerationFailure(task.Error) {
 		errorCode = ""
@@ -230,6 +231,7 @@ func truncateRunes(value string, limit int) string {
 }
 
 func taskForOutput(task model.Task) *model.Task {
+	task = generation.NormalizeHanbaoTaskFailure(task)
 	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(task.FailureDiagnostics)
 	task.InputJSON = publicTaskInputJSON(task.InputJSON)
 	// 普通任务接口只暴露前台模型身份；渠道模型和供应线路属于管理员内部信息。

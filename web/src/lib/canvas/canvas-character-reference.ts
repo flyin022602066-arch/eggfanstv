@@ -1,9 +1,11 @@
 import { resourceFileUrl } from "@/services/api/resources";
 import type { ProjectAsset } from "@/services/api/projects";
 import type { CanvasNodeData } from "@/types/canvas";
+import { characterAssetType, groupCharacterVideoRule } from "@/lib/character-asset-type";
 
-export type CharacterLookDefinition = { name: string; clothing: string; appearance?: string; ageStage?: string; hairstyle?: string; state?: string; matchHints?: string; excludeHints?: string; changeReason?: string; sourceEvidence?: string };
+export type CharacterLookDefinition = { name: string; clothing: string; appearance?: string; physique?: string; props?: string; ageStage?: string; hairstyle?: string; state?: string; matchHints?: string; excludeHints?: string; changeReason?: string; sourceEvidence?: string };
 export type CharacterBreakdown = {
+    characterType?: "individual" | "group";
     name: string;
     aliases: string[];
     role: string;
@@ -70,6 +72,7 @@ export function compileCharacterReferencePrompt(name: string, definition: Record
     const parts = [definition.role, definition.appearance, definition.physique, definition.clothing, definition.personality, definition.props, definition.consistencyPrompt]
         .map((value) => typeof value === "string" ? value.trim() : "")
         .filter(Boolean);
+    if (characterAssetType(name, definition) === "group") parts.push(groupCharacterVideoRule(name));
     return [`【角色卡：${name}】`, ...parts].join("\n");
 }
 
@@ -251,11 +254,12 @@ export function parseCharacterBreakdown(raw: string): CharacterBreakdown[] {
                 const source = item as Record<string, unknown>;
                 if (typeof source.name !== "string" || !source.name.trim() || typeof source.clothing !== "string" || !source.clothing.trim() || names.has(source.name.trim())) throw new Error("角色造型缺少名称、服装或名称重复：" + name);
                 names.add(source.name.trim());
-                return Object.fromEntries(Object.entries(source).filter(([key, field]) => ["name", "clothing", "appearance", "ageStage", "hairstyle", "state", "matchHints", "excludeHints", "changeReason", "sourceEvidence"].includes(key) && typeof field === "string").map(([key, field]) => [key, (field as string).trim()])) as CharacterLookDefinition;
+                return Object.fromEntries(Object.entries(source).filter(([key, field]) => ["name", "clothing", "appearance", "physique", "props", "ageStage", "hairstyle", "state", "matchHints", "excludeHints", "changeReason", "sourceEvidence"].includes(key) && typeof field === "string").map(([key, field]) => [key, (field as string).trim()])) as CharacterLookDefinition;
             });
         }
         characters.push({
             name,
+            ...(value.characterType === "group" || value.characterType === "individual" ? { characterType: value.characterType } : {}),
             aliases: Array.from(new Set(aliases.filter((alias) => normalizeCharacterName(alias) !== key))),
             role,
             appearance: String(value.appearance || "").trim(),

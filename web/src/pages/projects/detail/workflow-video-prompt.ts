@@ -2,6 +2,8 @@ import { skillRuntime, type SkillRuntimeMetadata } from "@/services/skill-runtim
 import type { Skill } from "@/services/api/skills";
 import { resolveShotAssetMentionPrompt, type ShotAssetReferenceContext } from "./workflow-shot-references";
 import { systemInterfaceIdentity, systemInterfaceReferenceRule } from "@/lib/chapter-system-interface";
+import { resolveShotCameraLanguage, type ShotCameraLanguage } from "@/lib/shot-camera-language";
+import { omitChineseDialogueTranslations } from "@/lib/storyboard-dialogue-language";
 
 type VideoPromptValues = {
     videoPrompt?: string;
@@ -22,10 +24,14 @@ export function resolveWorkflowVideoSubmissionPrompt(autoPrompt: string, editedP
     return editedPrompt === undefined ? autoPrompt : editedPrompt;
 }
 
+export function workflowVideoPromptExceedsLimit(prompt: string, maxChars?: number) {
+    return Boolean(maxChars && maxChars > 0 && Array.from(prompt).length > maxChars);
+}
+
 export function buildWorkflowVideoPrompt(values: VideoPromptValues, context: ShotAssetReferenceContext, interfaceType?: string) {
-    let script = (values.videoPrompt || values.plotDescription || "").trim();
+    let script = omitChineseDialogueTranslations((values.videoPrompt || values.plotDescription || "").trim());
     const append = (label: string, value?: string) => {
-        const text = value?.trim();
+        const text = value ? omitChineseDialogueTranslations(value.trim()) : "";
         if (text && !script.includes(text)) script = [script, `${label}：${text}`].filter(Boolean).join("\n");
     };
     const hasShotSequence = /(?:^|\n)\s*镜头\s*\d+\s*[:：]/u.test(script);
@@ -36,13 +42,14 @@ export function buildWorkflowVideoPrompt(values: VideoPromptValues, context: Sho
     }).join("\n");
     append("表演与动作", action);
     append("接戏", values.continuityNotes);
-    append("景别", values.shotSize);
-    append("机位", values.cameraAngle);
-    append("运镜", values.cameraMovement);
+    const cameraLanguage = resolveShotCameraLanguage({ videoPrompt: script });
+    for (const [field, label] of [["shotSize", "景别"], ["cameraAngle", "机位"], ["cameraMovement", "运镜"]] as const satisfies readonly (readonly [keyof ShotCameraLanguage, string])[]) {
+        if (values[field]?.trim() !== cameraLanguage[field]) append(label, values[field]);
+    }
     append("排除内容", values.negativePrompt);
     if (context.assetReferences.some((asset) => asset.category === "prop" && systemInterfaceIdentity(asset.title))) append("系统界面动态内容", systemInterfaceReferenceRule);
     const resolvedScript = resolveShotAssetMentionPrompt(script, { ...context, assetReferences: [] }, { interfaceType });
-    const prompt = resolveShotAssetMentionPrompt(script, context, { interfaceType, dialogue: missingScriptDialogue(script, values.dialogue) });
+    const prompt = resolveShotAssetMentionPrompt(script, context, { interfaceType, dialogue: missingScriptDialogue(script, values.dialogue ? omitChineseDialogueTranslations(values.dialogue, { unquoted: true }) : undefined) });
     const chars = Array.from(prompt).length;
     const scriptChars = Array.from(resolvedScript).length;
     return { prompt, chars, sections: [{ label: "镜头与表演", chars: scriptChars }, { label: "资产与声音", chars: chars - scriptChars }] };

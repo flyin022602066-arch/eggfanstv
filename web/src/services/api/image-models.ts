@@ -91,6 +91,7 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
     if (isNativeDesktopRuntime()) {
         viaBackend = true;
     }
+    if (channel.interfaceType === "kanhai-video" || channel.id === "kanhai-video" || channel.interfaceType === "nono-video" || channel.id === "nono-video") viaBackend = true;
     if (!viaBackend) {
         if (channel.apiFormat !== "gemini") {
             const catalog = filterChannelCatalog(channel, await fetchOpenAIModelCatalog(channel, channel.catalogUrl)).sort((a, b) => a.id.localeCompare(b.id));
@@ -142,6 +143,8 @@ function isJiasuVideoCatalogItem(item: ChannelModelCatalogItem) {
 function filterChannelCatalog(channel: ModelChannel, items: ChannelModelCatalogItem[]) {
     const catalog = new Map<string, ChannelModelCatalogItem>();
     for (const item of items) {
+        if ((channel.interfaceType === "kanhai-video" || channel.id === "kanhai-video") && item.modelType !== "video") continue;
+        if ((channel.interfaceType === "nono-video" || channel.id === "nono-video") && item.modelType !== "video") continue;
         if (isJiasuVideoChannel(channel) && !isJiasuVideoCatalogItem(item)) continue;
         if (!catalog.has(item.id)) catalog.set(item.id, isJiasuVideoChannel(channel) ? { ...item, modelType: "video" } : item);
     }

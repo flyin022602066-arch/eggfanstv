@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { nanoid } from 'nanoid';
 import { App } from 'antd';
-import { applyCanvasReferenceTemplate, removeCanvasReferenceTemplate, type CanvasReferenceTemplate } from '@/lib/canvas/canvas-reference-templates';
+import { applyCanvasReferenceTemplate, prepareCanvasReferenceTarget, removeCanvasReferenceTemplate, type CanvasReferenceTemplate } from '@/lib/canvas/canvas-reference-templates';
 import { captureUserScope, assertUserScope } from '@/lib/user-scope-guard';
 import { referenceTemplateRepository } from '@/services/canvas-reference-templates';
 import { buildNodeGenerationContext } from '@/components/canvas/canvas-node-generation';
@@ -12,8 +12,8 @@ import { applyCanvasConnectionPromptSync } from '@/lib/canvas/canvas-resource-re
 import type { CanvasConnection, CanvasNodeData } from '@/types/canvas';
 import type { Asset } from '@/stores/use-asset-store';
 
-type Options = { projectId: string; assets?: Asset[]; nodesRef: MutableRefObject<CanvasNodeData[]>; connectionsRef: MutableRefObject<CanvasConnection[]>; setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>; setConnections: Dispatch<SetStateAction<CanvasConnection[]>>; enabled: boolean };
-export function useCanvasReferenceTemplates({ projectId, assets = [], nodesRef, connectionsRef, setNodes, setConnections, enabled }: Options) {
+type Options = { projectId: string; assets?: Asset[]; nodesRef: MutableRefObject<CanvasNodeData[]>; connectionsRef: MutableRefObject<CanvasConnection[]>; setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>; setConnections: Dispatch<SetStateAction<CanvasConnection[]>>; enabled: boolean; onApplied?: (nodeId: string) => void };
+export function useCanvasReferenceTemplates({ projectId, assets = [], nodesRef, connectionsRef, setNodes, setConnections, enabled, onApplied }: Options) {
     const config = useEffectiveConfig();
     const configRef = useRef(config); configRef.current = config;
     const assetsRef = useRef(assets); assetsRef.current = assets;
@@ -36,9 +36,20 @@ export function useCanvasReferenceTemplates({ projectId, assets = [], nodesRef, 
             if (isCanvasNodeGenerating(node, null)) throw new Error('生成中的节点不能替换参考模板');
             return node;
         };
+        check();
+        const editorId = nanoid();
+        const edgeId = nanoid();
+        const initialTarget = prepareCanvasReferenceTarget(nodesRef.current, connectionsRef.current, nodeId, (() => { const ids = [editorId, edgeId]; return () => ids.shift()!; })());
+        const targetNodeId = initialTarget.targetNodeId;
+        const prepare = () => {
+            const ids = [editorId, edgeId];
+            const graph = prepareCanvasReferenceTarget(nodesRef.current, connectionsRef.current, nodeId, () => ids.shift()!);
+            if (graph.targetNodeId !== targetNodeId) throw new Error('目标图片类型已变化，请重新选择后应用');
+            return graph;
+        };
         const verifyLimit = (graph: { nodes: CanvasNodeData[]; connections: CanvasConnection[] }) => {
-            const node = graph.nodes.find(node => node.id === nodeId)!;
-            const context = buildNodeGenerationContext(nodeId, graph.nodes, graph.connections, node.metadata?.composerContent ?? node.metadata?.prompt ?? '', assetsRef.current);
+            const node = graph.nodes.find(node => node.id === targetNodeId)!;
+            const context = buildNodeGenerationContext(targetNodeId, graph.nodes, graph.connections, node.metadata?.composerContent ?? node.metadata?.prompt ?? '', assetsRef.current);
             const generationConfig = buildGenerationConfig(configRef.current, node, 'image');
             const selectedModel = node.metadata?.model || configRef.current.imageModel || generationConfig.model;
             assertCanvasImageReferenceLimit({ ...generationConfig, model: selectedModel, imageModel: selectedModel }, context.referenceImages);
@@ -48,17 +59,18 @@ export function useCanvasReferenceTemplates({ projectId, assets = [], nodesRef, 
             const existing = nodesRef.current.find(node => node.id !== nodeId && node.metadata?.referenceTemplateMediaId === item.mediaId && node.metadata.storageKey && node.metadata.content);
             return { mediaId: item.mediaId, storageKey: existing?.metadata?.storageKey || 'preview:' + item.mediaId, url: existing?.metadata?.content || 'data:image/png;base64,', width: 1, height: 1, mimeType: 'image/png', bytes: 1 };
         });
-        verifyLimit(applyCanvasReferenceTemplate({ nodes: nodesRef.current, connections: connectionsRef.current, targetNodeId: nodeId, template, images: previews, createId: nanoid }));
+        verifyLimit(applyCanvasReferenceTemplate({ ...prepare(), template, images: previews, createId: nanoid }));
         const images = await referenceTemplateRepository.materialize(template, scope, signal);
         check();
-        const graph = applyCanvasReferenceTemplate({ nodes: nodesRef.current, connections: connectionsRef.current, targetNodeId: nodeId, template, images, createId: nanoid });
+        const graph = applyCanvasReferenceTemplate({ ...prepare(), template, images, createId: nanoid });
         verifyLimit(graph);
         check();
         setNodes(graph.nodes); setConnections(graph.connections);
+        onApplied?.(targetNodeId);
         message.success(images.some(image => image.pendingRemoteUpload) ? '模板已应用；图片暂存本机，尚未写入资源服务' : '参考模板已应用到当前节点');
         try { await referenceTemplateRepository.markUsed(template.id, scope); }
         catch { if (!signal.aborted) message.warning('模板已应用，但最近使用记录保存失败'); }
-    }, [config, projectId, nodesRef, connectionsRef, setNodes, setConnections, message]);
+    }, [config, projectId, nodesRef, connectionsRef, setNodes, setConnections, message, onApplied]);
     const remove = useCallback((nodeId: string, kind: CanvasReferenceTemplate['kind']) => {
         if (!live.current.enabled || live.current.projectId !== projectId) return;
         const target = nodesRef.current.find(node => node.id === nodeId);

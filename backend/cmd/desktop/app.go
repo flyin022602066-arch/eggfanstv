@@ -80,18 +80,23 @@ func (a *DesktopApp) start(ctx context.Context) error {
 }
 
 func openDesktopRuntime(ctx context.Context, dataDir string) (*bootstrap.Runtime, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
 	listenAddr := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_BACKEND_ADDR"))
 	if listenAddr == "" {
 		listenAddr = "127.0.0.1:0"
 	}
 	runtime, err := bootstrap.Open(ctx, bootstrap.Config{
-		Profile:         bootstrap.ProfileDesktop,
-		DataDir:         dataDir,
-		DatabaseDriver:  "sqlite",
-		ListenAddr:      listenAddr,
-		LaunchToken:     strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_LAUNCH_TOKEN")),
-		AutoMigrate:     true,
-		ShutdownTimeout: 10 * time.Minute,
+		Profile:                bootstrap.ProfileDesktop,
+		DataDir:                dataDir,
+		DoubaoBrowserOutputDir: desktopDoubaoOutputDir(executable),
+		DatabaseDriver:         "sqlite",
+		ListenAddr:             listenAddr,
+		LaunchToken:            strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_LAUNCH_TOKEN")),
+		AutoMigrate:            true,
+		ShutdownTimeout:        10 * time.Minute,
 	})
 	if err != nil {
 		return nil, err

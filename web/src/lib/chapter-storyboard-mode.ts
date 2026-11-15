@@ -1,5 +1,6 @@
 import { normalizeSystemPresentationSettings, systemPresentationRule, type SystemPresentationSettings } from "./chapter-system-presentation";
 import { chapterDirectorScriptContent, reviewChapterDirectorTiming, type ChapterDirectorScript } from "./chapter-director-script";
+import { storyboardDialogueLanguageRule, storyboardSourceDialogue } from "./storyboard-dialogue-language";
 
 export type ChapterStoryboardMode = "standard" | "continuous_30s";
 export type ChapterStoryboardModes = Record<string, ChapterStoryboardMode>;
@@ -86,12 +87,17 @@ export function chapterStoryboardCinematographyRequirements(skills: Array<{ skil
     ].join("\n");
 }
 
-export function chapterStoryboardRequirements(mode: ChapterStoryboardMode, dialogueMode: ChapterDialogueConstraintMode = "paced", systemPresentation?: SystemPresentationSettings, directorFormat?: "shots-v1"): string {
+export function chapterStoryboardRequirements(mode: ChapterStoryboardMode, dialogueMode: ChapterDialogueConstraintMode = "paced", systemPresentation?: SystemPresentationSettings, directorFormat?: "shots-v1", durationSeconds: 15 | 30 = 30): string {
     const presentation = normalizeSystemPresentationSettings(systemPresentation);
-    if (mode === "continuous_30s" && directorFormat === "shots-v1") return [
-        "【结构化逐镜交付】仅使用本次选定技能的导演规则及下方 directorScript 合同，不另写 videoMotionPrompt、timeBeats 或另一套剧本。首次回复一次完成整章，按原文因果与真实表演组织通常3–6个30秒单元、总计90–180秒；不要只写结尾，不按原文字数机械分段。所有单元的逐镜详稿同等完整，不能前详后略。",
+    if ((mode === "continuous_30s" || durationSeconds === 15) && directorFormat === "shots-v1") return [
+        storyboardDialogueLanguageRule,
+        durationSeconds === 15
+            ? "【结构化逐镜交付：15秒起落版】仅使用本次选定技能及directorScript合同，不另写videoMotionPrompt、timeBeats或第二套剧本。首次回复完整交付全章，每个生成单元固定15秒，整集通常90–180秒、可参考6–12段；数量由原文因果与自然表演决定，短章不补戏凑数、长章不删关键剧情。按整体设定、逐镜起幅→过程→落幅、声音及结尾约束组织，不使用固定时间轴。不要只写结尾，不按字数机械分段，不前详后略。"
+            : "【结构化逐镜交付】仅使用本次选定技能的导演规则及下方 directorScript 合同，不另写 videoMotionPrompt、timeBeats 或另一套剧本。首次回复一次完成整章，按原文因果与真实表演组织通常3–6个30秒单元、总计90–180秒；不要只写结尾，不按原文字数机械分段。所有单元的逐镜详稿同等完整，不能前详后略。",
                 "通读全章后先确定事件链及完整话轮归属，再展开各单元；普通叙述优先转为画面，已经可见的信息不再转成OS朗读，未标为内心原话的第三人称叙述只写表演或叙事意图，不新增朗读声轨；明确OS原话及已确认旁白照常保留。原话、说话人、标点及顺序保留，完整句或话轮在单元边界衔接；同一句可跨内部切角持续发声，不重播、不删字、不加速。",
-        dialogueMode === "paced"
+        durationSeconds === 15
+            ? "【15秒对白与动作容量】保留完整原话、说话人和自然语速，声音、表演与摄影并行；按本段真实发声和接戏安排，不套用30秒的字数、停顿或固定时间轨。放不下时在完整句、话轮和动作承接点重新分配相邻单元，不删词、不加速、不空等。"
+            : dialogueMode === "paced"
             ? "【对白字数限制：开启】30秒参考单人独白25–45字、两人对话合计40–60字、快速问答60–70字；超过80字检查实际表演容量。自然中文约每分钟150–170字，话轮留0.5–1.5秒反应；这是编排参考，不截断或删除原话，必要时将完整话轮移到下一单元。"
             : "【对白字数限制：关闭】不添加对白字数、每秒字数或固定停顿阈值，按原文完整话轮与自然表演分配30秒单元。",
         "【资产与事实】原文是本章事实唯一依据。资产说明、旧章节和技能示例不能增加本章人物、道具、地点、台词或异能效果。characters及人物绑定仅列本段实际可见角色，画外声音保留身份但不强造形象；人物造型使用给定真实版本。每段重复声明实际场景及独立参考道具，assetBindings仅用真实id；缺失场景sceneAssetId为空并写准确名称，不借其他地点冒充。普通临时物品直接描述，跨镜需保持一致或关键道具才独立引用。",
@@ -101,6 +107,7 @@ export function chapterStoryboardRequirements(mode: ChapterStoryboardMode, dialo
     ].join("\n");
     return [
         "【本次交付与技能应用】",
+        storyboardDialogueLanguageRule,
         "本次交付阶段已经确定为完整分镜制作：遵循所选 skill 的导演、摄影、表演与连续性规则，在第一次回复中一次完成可直接生成的分镜 JSON。技能中的默认先分析、分阶段交付、只输出文学剧本或默认不输出完整分镜不适用于本次明确任务；不返回待扩写提纲，不要求用户再调用一次润色才能得到完整镜头脚本。",
         ...(mode === "continuous_30s" ? [
             "【整集节奏优先：90～180 秒】一章改编为一集，目标总时长 90～180 秒，通常组织为 3～6 个 30 秒生成单元。由模型通读原文、按完整剧情与真实节奏决定具体段数，不沿用旧分镜数量，不按原文字数机械分段，不把每个动作、话轮或内部机位各自做成一个 30 秒任务。先规划整集，再展开各段导演稿；所选 skill 的快切、反打和反应镜头在段内执行。",
@@ -172,7 +179,7 @@ export function chapterStoryboardSourcePrompt(title: string, sourceText: string)
         sourceText,
         "【完整章节原文结束】",
         "【原文直接引语核对清单】",
-        [...sourceText.matchAll(/(?:^|\n|[：:])\s*“([^”\n]+)”/gu)].map((match, index) => String(index + 1) + ". “" + match[1] + "”").join("\n") || "无独立直接引语；仍按原文识别实际声音。",
+        storyboardSourceDialogue(sourceText).map((line, index) => `${index + 1}. ${line}`).join("\n") || "无独立直接引语；仍按原文识别实际声音。",
         "以上清单仅用于逐句覆盖核对，不替代上下文判断说话人、OS或画外音。每句归属一处实际声轨，保留原顺序；不把被引用的文字自动当作新增出镜角色。",
         "【系统/界面事实保护清单】",
         systemElements.length
@@ -182,11 +189,37 @@ export function chapterStoryboardSourcePrompt(title: string, sourceText: string)
     ].join("\n\n");
 }
 
-export type ChapterStoryboardReviewPolicy = { maxInternalShotSeconds?: number; minDirectorScriptChars?: number; directorFormat?: "shots-v1" };
+export type ChapterStoryboardReviewPolicy = { maxInternalShotSeconds?: number; minDirectorScriptChars?: number; directorFormat?: "shots-v1"; minDurationSeconds?: number; maxDurationSeconds?: number };
+
+export function chapterStoryboardDurationPolicy(skillContext: string): ChapterStoryboardReviewPolicy {
+    let minimum = 0;
+    let maximum = Number.POSITIVE_INFINITY;
+    for (const line of skillContext.replace(/[\\*`]/gu, "").split("\n")) {
+        const range = line.match(/(?:每个\s*(?:Clip|生成单元|视频|片段)|时长硬约束)[^。\n]{0,40}?(\d+)\s*[~～–—-]\s*(\d+)\s*(?:秒|s\b)/iu);
+        const fixed = line.match(/(?:严格控制(?:总)?时长(?:为|在)?|时长严格(?:控制|限制)(?:为|在)?|顶层固定)\s*(\d+)\s*(?:秒|s\b)/iu);
+        const upper = line.match(/(?:每个\s*(?:Clip|生成单元|视频|片段)|单段(?:视频)?时长)[^。\n]{0,20}?(?:不超过|不得超过|上限(?:为)?)\s*(\d+)\s*(?:秒|s\b)/iu);
+        if (range) { minimum = Math.max(minimum, Number(range[1])); maximum = Math.min(maximum, Number(range[2])); }
+        if (fixed) { minimum = Math.max(minimum, Number(fixed[1])); maximum = Math.min(maximum, Number(fixed[1])); }
+        if (upper) maximum = Math.min(maximum, Number(upper[1]));
+    }
+    return { ...(minimum > 0 ? { minDurationSeconds: minimum } : {}), ...(Number.isFinite(maximum) ? { maxDurationSeconds: maximum } : {}) };
+}
+
+export function chapterStoryboardDurationRequirements(policy: ChapterStoryboardReviewPolicy): string {
+    if (policy.minDurationSeconds && policy.maxDurationSeconds && policy.minDurationSeconds > policy.maxDurationSeconds) throw new Error("所选技能的生成单元时长规则冲突，请选择时长一致的拆解技能");
+    if (!policy.maxDurationSeconds) return "";
+    const range = policy.minDurationSeconds === policy.maxDurationSeconds ? `${policy.maxDurationSeconds}秒` : `${policy.minDurationSeconds || 1}～${policy.maxDurationSeconds}秒`;
+    return [
+        `【所选技能的生成单元时长：${range}】每个rows项对应一个实际可生成的视频片段，durationSeconds必须为${range}；这是顶层片段时长，不是内部切角时长，也不是整章总时长。该规则优先于通用模式的默认时长与节奏示例。`,
+        "先按该片段时长规划全章，再重新分配完整话轮与动作；同一段的摄影、表演与声音在真实时间内并行完成。内容装不下时在完整句或完整话轮及动作承接点拆为相邻片段，保留原话、因果和接戏，不靠改时长数字、加速台词、删剧情或空等凑数。",
+        "首次回复前逐段核对durationSeconds与该段实际发声、动作和镜头节奏均符合所选时长；正文中的倒计时、示例秒数与内部切角不改变生成单元时长。",
+        ...(policy.maxDurationSeconds <= 15 ? ["【短片段起落表达】videoMotionPrompt与timeBeats按镜头顺序、起幅、过程、→落幅和声音组织，不写固定时间轴、逐镜起止秒数或时间码，不套固定三拍；对白里的倒计时原话照常保留。数值时长仅放durationSeconds核算字段，不渲染进导演正文。"] : []),
+    ].join("\n");
+}
 
 export function reviewChapterDialogueCoverage(sourceText: string, rows: Array<{ dialogue: string }>): string[] {
     const spoken = rows.map((row) => row.dialogue).join("\n").replace(/\s/gu, "");
-    const original = [...sourceText.matchAll(/(?:^|\n|[：:])\s*“([^”\n]+)”/gu)].map((match) => match[1]!.replace(/\s/gu, ""));
+    const original = storyboardSourceDialogue(sourceText).map((line) => line.replace(/\s/gu, ""));
     let offset = 0;
     const missing = original.filter((line) => {
         const index = spoken.indexOf(line, offset);
@@ -200,12 +233,19 @@ export function reviewChapterDialogueCoverage(sourceText: string, rows: Array<{ 
 // 只识别实际加载的技能文本，避免按可改名的技能名或项目正文猜测切镜要求。
 export function chapterStoryboardReviewPolicy(skillContext: string): ChapterStoryboardReviewPolicy {
     return /1\s*[–—~～-]\s*3\s*秒/u.test(skillContext) && /(?:最长|不超过|上限)\s*4\s*秒/u.test(skillContext)
-        ? { maxInternalShotSeconds: 4, minDirectorScriptChars: 1000 } : {};
+        ? { maxInternalShotSeconds: 4, ...(chapterStoryboardDurationPolicy(skillContext).maxDurationSeconds === 15 ? {} : { minDirectorScriptChars: 1000 }) } : {};
 }
 
 export function reviewChapterStoryboardPrompt(rows: Array<{ durationSeconds: number; videoMotionPrompt: string; timeBeats?: string; directorScript?: ChapterDirectorScript }>, policy: ChapterStoryboardReviewPolicy = {}): string[] {
+    if (policy.minDurationSeconds && policy.maxDurationSeconds && policy.minDurationSeconds > policy.maxDurationSeconds) return ["所选技能的生成单元时长规则冲突，请核对技能组合；已保留原稿，未修改时长或内容"];
     return rows.flatMap((row, index) => {
-        if (row.durationSeconds !== 30) return [];
+        const durationIssues: string[] = [];
+        if (policy.maxDurationSeconds && (!Number.isFinite(row.durationSeconds) || row.durationSeconds < (policy.minDurationSeconds || 1) || row.durationSeconds > policy.maxDurationSeconds || !Number.isInteger(row.durationSeconds))) {
+            const range = policy.minDurationSeconds === policy.maxDurationSeconds ? `${policy.maxDurationSeconds}秒` : `${policy.minDurationSeconds || 1}～${policy.maxDurationSeconds}秒`;
+            durationIssues.push(`第 ${index + 1} 段：时长${row.durationSeconds}秒不符合所选技能的${range}，请重新编排完整话轮与动作；已保留原稿，未裁切或压缩内容`);
+        }
+        const shortDirector = policy.directorFormat === "shots-v1" && policy.maxDurationSeconds === 15;
+        if (!shortDirector && (row.durationSeconds !== 30 || policy.maxDurationSeconds && policy.maxDurationSeconds !== 30)) return durationIssues;
         const script = row.videoMotionPrompt;
         const shots = [...script.matchAll(/镜头\s*(\d+)\s*[:：]/gu)];
         const issues: string[] = [];
@@ -231,6 +271,6 @@ export function reviewChapterStoryboardPrompt(rows: Array<{ durationSeconds: num
             return !/起幅\s*[:：][^]*?→\s*落幅\s*[:：]/u.test(content);
         })) issues.push("每镜需包含起幅、→ 和落幅");
         if (!/整体设定\s*[:：]/u.test(script) || !/结尾约束\s*[:：]/u.test(script)) issues.push("请补充整体设定与结尾约束");
-        return issues.length ? [`第 ${index + 1} 段：${issues.join("；")}`] : [];
+        return [...durationIssues, ...(issues.length ? [`第 ${index + 1} 段：${issues.join("；")}`] : [])];
     });
 }

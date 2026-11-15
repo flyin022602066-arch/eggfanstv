@@ -2,11 +2,49 @@ package project
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 )
+
+func TestCharacterFacePresetIdentityRequiresSavedBindingAndOwnedImage(t *testing.T) {
+	service, db := newTestService(t, nil)
+	project, asset := seedProjectCharacterRepresentation(t, db)
+	faceID := seedReadyCharacterReference(t, db, project.UserID, asset.PrimaryVersionID)
+	raw := `{"female":{"resourceId":"` + faceID + `","assetIds":["` + asset.ID + `"],"useAsIdentity":true}}`
+	updated, err := service.UpdateProject(project.UserID, project.ID, UpdateProjectRequest{CharacterFacePresetsJSON: &raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated.CharacterFacePresetsJSON, `"useAsIdentity":true`) {
+		t.Fatal("explicit identity preference was discarded")
+	}
+	if err := service.ValidateCharacterFacePresetReference(project.UserID, project.ID, asset.ID, asset.PrimaryVersionID, faceID, []string{faceID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		userID, projectID, assetID, resourceID string
+		images                                 []string
+	}{
+		{"foreign", project.ID, asset.ID, faceID, []string{faceID}},
+		{project.UserID, "other-project", asset.ID, faceID, []string{faceID}},
+		{project.UserID, project.ID, "other-character", faceID, []string{faceID}},
+		{project.UserID, project.ID, asset.ID, "other-face", []string{"other-face"}},
+		{project.UserID, project.ID, asset.ID, faceID, []string{faceID, "extra-face"}},
+	} {
+		if err := service.ValidateCharacterFacePresetReference(check.userID, check.projectID, check.assetID, asset.PrimaryVersionID, check.resourceID, check.images); err == nil {
+			t.Fatal("invalid face identity accepted", check)
+		}
+	}
+	if err := db.Model(&model.Resource{}).Where("id = ?", faceID).Update("status", model.ResourceStatusPending).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ValidateCharacterFacePresetReference(project.UserID, project.ID, asset.ID, asset.PrimaryVersionID, faceID, []string{faceID}); err == nil {
+		t.Fatal("pending face accepted")
+	}
+}
 
 func TestCharacterFacePresetsPersistValidateAndClear(t *testing.T) {
 	svc, db := newTestService(t, nil)

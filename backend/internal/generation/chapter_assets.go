@@ -28,44 +28,73 @@ func runChapterAssetsTextTask(ctx context.Context, runtime Runtime, input Input)
 		}
 		return result, ResponseDecodeError{Err: validationErr}
 	}
-	if err := setExecutionStage(ctx, runtime, "章节资产输出截断，正在自动续接（1/1）"); err != nil {
-		return result, err
-	}
 	partial := chapterAssetsUnfenced(text)
-	continuation := input
-	continuation.TextHistory = append(append([]TextMessage(nil), input.TextHistory...), TextMessage{Role: "user", Content: input.Prompt}, TextMessage{Role: "assistant", Content: partial})
-	continuation.Prompt = "上一条章节资产 JSON 在传输中被截断。请续写原 JSON，直到补全所有角色、场景、道具及最外层结束括号。为精确校验拼接断点，回复必须先原样输出下方<断点原文>中的文本，再紧接着续写该文本后尚未完成的内容。标记本身不输出。字段值或字符串未写完时先接着该字符串续写。已生成内容不得重写、删除、替换或省略，除指定断点原文外不得重复已有内容。不要从头重新输出 JSON，不要解释，不要 Markdown 围栏。沿用原章节事实、项目画风、系统表现设定与完整输出契约。\n<断点原文>" + chapterAssetsContinuationAnchor(partial) + "</断点原文>"
-	_, suffix, continuationErr := requestChapterAssetsText(ctx, continuation)
-	if err := ctx.Err(); err != nil {
-		return map[string]any{"mode": "text", "text": partial + suffix}, chapterAssetsContinuationError{Err: err}
-	}
-	if !chapterAssetsAcceptsReadResult(continuationErr) {
-		return map[string]any{"mode": "text", "text": partial + suffix}, chapterAssetsContinuationError{Err: continuationErr}
-	}
-	joined, joinErr := joinChapterAssetsContinuation(partial, suffix)
-	if joinErr != nil {
-		return map[string]any{"mode": "text", "text": partial + suffix}, chapterAssetsContinuationError{Err: joinErr, Invalid: true}
-	}
-	combined := map[string]any{"mode": "text", "text": joined}
-	if err := runtime.Prompt.ValidateResult("chapter_assets_extract", combined); err != nil {
-		if continuationErr != nil {
-			return combined, chapterAssetsContinuationError{Err: continuationErr}
+	received := []string{text}
+	for attempt := 1; attempt <= 2; attempt++ {
+		stage := "章节资产输出截断，正在自动续接（1/2）"
+		if attempt == 2 {
+			stage = "章节资产首轮续接未补全，正在二轮补充（2/2）"
 		}
-		return combined, chapterAssetsContinuationError{Err: err, Invalid: true}
+		if err := setExecutionStage(ctx, runtime, stage); err != nil {
+			return result, err
+		}
+		continuation := input
+		continuation.TextHistory = append(append([]TextMessage(nil), input.TextHistory...), TextMessage{Role: "user", Content: input.Prompt}, TextMessage{Role: "assistant", Content: partial})
+		continuation.Prompt = "上一条章节资产 JSON 在传输中被截断。请续写原 JSON，直到补全所有角色、场景、道具及最外层结束括号。为精确校验拼接断点，回复必须先原样输出下方<断点原文>中的文本，再紧接着续写该文本后尚未完成的内容。标记本身不输出。字段值或字符串未写完时先接着该字符串续写。已生成内容不得重写、删除、替换或省略，除指定断点原文外不得重复已有内容。不要从头重新输出 JSON，不要解释，不要 Markdown 围栏。沿用原章节事实、项目画风、系统表现设定与完整输出契约。\n<断点原文>" + chapterAssetsContinuationAnchor(partial) + "</断点原文>"
+		if attempt == 2 {
+			continuation.Prompt = "这是二轮定向补充。首轮续接仍有截断或断点错误；上文 assistant 是最后确认可拼接的原文，不包含错误续接。只补齐它后面缺少的内容，禁止重做整章提取或更换任何已有角色、场景、道具。\n" + continuation.Prompt
+		}
+		_, suffix, continuationErr := requestChapterAssetsText(ctx, continuation)
+		received = append(received, suffix)
+		result = map[string]any{
+			"mode": "text", "text": partial,
+			"chapterAssetsRecovery": map[string]any{"attempts": attempt, "receivedTexts": received},
+		}
+		if err := ctx.Err(); err != nil {
+			return result, chapterAssetsContinuationError{Err: err, Attempts: attempt}
+		}
+		if !chapterAssetsMayContinue(continuationErr) {
+			return result, chapterAssetsContinuationError{Err: continuationErr, Attempts: attempt}
+		}
+		joined, joinErr := joinChapterAssetsContinuation(partial, suffix)
+		if joinErr == nil {
+			partial = joined
+			result["text"] = partial
+			validationErr = runtime.Prompt.ValidateResult("chapter_assets_extract", result)
+			if validationErr == nil && chapterAssetsAcceptsReadResult(continuationErr) {
+				return result, nil
+			}
+		} else {
+			validationErr = joinErr
+		}
+		if attempt == 2 {
+			if continuationErr != nil {
+				return result, chapterAssetsContinuationError{Err: continuationErr, Attempts: attempt}
+			}
+			return result, chapterAssetsContinuationError{Err: validationErr, Invalid: true, Attempts: attempt}
+		}
 	}
-	return combined, nil
+	return result, ResponseDecodeError{Err: validationErr}
 }
 
 type chapterAssetsContinuationError struct {
-	Err     error
-	Invalid bool
+	Err      error
+	Invalid  bool
+	Attempts int
 }
 
 func (err chapterAssetsContinuationError) Error() string {
-	return fmt.Sprintf("章节资产已自动续接一次，但未获得完整结果，未回填半成品：%v", err.Err)
+	return fmt.Sprintf("%s，但未获得完整结果，未回填半成品：%v", err.attemptSummary(), err.Err)
 }
 
 func (err chapterAssetsContinuationError) Unwrap() error { return err.Err }
+
+func (err chapterAssetsContinuationError) attemptSummary() string {
+	if err.Attempts >= 2 {
+		return "章节资产已自动续接一次并尝试二轮补充"
+	}
+	return "章节资产已自动续接一次"
+}
 
 func requestChapterAssetsText(ctx context.Context, input Input) (map[string]any, string, error) {
 	var received strings.Builder

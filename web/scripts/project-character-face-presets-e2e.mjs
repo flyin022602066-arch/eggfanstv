@@ -34,6 +34,7 @@ await context.route("**/*", async route => {
         return json({ config: savedConfig, revision: 1, health: "ready", source: "builtin+local" });
     }
     if (/\/projects\/[^/]+\/core$/.test(url.pathname)) return json({ project });
+    if (/\/character-versions$/.test(url.pathname)) return json({ versions: assets.filter(asset => asset.character).map(asset => ({ ...asset.character, assetId: asset.id, title: asset.title, updatedAt: asset.updatedAt, representations: asset.character.representations.map(rep => ({ ...rep, mediaType: "image" })) })), revision: 1 });
     if (/\/projects\/[^/]+$/.test(url.pathname) && request.method() === "PATCH") {
         if (rejectSave) return route.fulfill({ status: 503, json: { code: 503, msg: "离线模拟保存失败", reason: "fixture_write_failed" } });
         project = { ...project, ...request.postDataJSON() };
@@ -65,7 +66,7 @@ await context.route("**/*", async route => {
 });
 const page = await context.newPage();
 page.setDefaultTimeout(15000);
-page.on("pageerror", error => errors.push(error.message));
+page.on("pageerror", error => errors.push(error.stack || error.message));
 try {
     const address = `http://127.0.0.1:${server.address().port}/test/fixtures/project-asset-images.html`;
     await page.goto(address);
@@ -79,6 +80,8 @@ try {
     const imageFile = name => ({ name, mimeType: "image/png", buffer: Buffer.from(imageBase64, "base64") });
     await dialog.getByLabel("上传男主人脸参考图").setInputFiles(imageFile("男主.png"));
     await dialog.getByRole("button", { name: "替换男主参考图", exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "保存人脸预设", exact: true }).isDisabled(), true);
+    await dialog.getByText("人脸参考尚未完成绑定", { exact: true }).waitFor();
     const choose = async (role, name) => {
         await dialog.getByRole("combobox", { name: `${role}绑定角色` }).click();
         await page.locator(".ant-select-dropdown:visible").last().getByText(name, { exact: true }).click();
@@ -113,13 +116,15 @@ try {
     await page.screenshot({ path: resolve(output, "face-presets-light-narrow.png"), animations: "disabled" });
     await dialog.getByRole("button", { name: /^取\s*消$/ }).click();
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole("button", { name: "生成角色三视图", exact: true }).click();
+    await page.getByRole("button", { name: "生成图片", exact: true }).click();
     const generationDialog = page.getByRole("dialog");
-    await generationDialog.getByText(/已启用男主人脸参考/).waitFor();
+    await generationDialog.getByText(/已启用男主预设作为身份参考/).waitFor();
     await generationDialog.getByRole("button", { name: "开始生成", exact: true }).click();
     await generationDialog.waitFor({ state: "hidden" });
     assert.deepEqual(submissions[0].input.referenceImages.map(image => image.storageKey), ["resource:face-upload-1"]);
     assert.match(submissions[0].input.metadata.promptTemplateVariables.角色设定, /保留该图的脸型/);
+    assert.equal(submissions[0].input.metadata.characterFacePresetResourceId, "face-upload-1");
+    assert.equal(submissions[0].input.metadata.domainProjectId, "fixture-project");
     tasks = [];
     await page.reload();
     await page.getByRole("button", { name: "一键批量生成角色图", exact: true }).click();
@@ -129,11 +134,15 @@ try {
     await batchDialog.getByText("已提交 3 个，提交失败 0 个", { exact: true }).waitFor();
     const batch = submissions.slice(1);
     assert.equal(batch.length, 3);
-    assert.deepEqual(batch.map(task => task.input.referenceImages.map(image => image.storageKey)), [["resource:face-upload-1"], ["resource:face-upload-2"], []]);
+    assert.deepEqual(batch.map(task => task.input.referenceImages.map(image => image.storageKey)), [["resource:face-upload-1"], ["resource:face-upload-2"], ["resource:character-portrait"]]);
     assert.equal(uploads, 2, "saved references must not be reuploaded as new local resources");
     assert.equal(blockedExternalRequests, 0);
     assert.deepEqual(errors, []);
     const report = { passed: true, uploads, automaticSingleAndBatchReferences: true, reloadRestoredPresets: true, saveFailureVisible: true, realGatewayRequests: 0, submissions: submissions.length, errors };
     await writeFile(resolve(output, "report.json"), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
+} catch (error) {
+    await writeFile(resolve(output, "failure.json"), JSON.stringify({ errors, text: await page.locator("body").innerText() }, null, 2));
+    await page.screenshot({ path: resolve(output, "failure.png"), animations: "disabled" });
+    throw error;
 } finally { await browser.close(); await new Promise(done => server.close(done)); }

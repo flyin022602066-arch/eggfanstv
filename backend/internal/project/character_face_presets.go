@@ -8,9 +8,52 @@ import (
 )
 
 type characterFacePreset struct {
-	ResourceID string   `json:"resourceId"`
-	FileName   string   `json:"fileName,omitempty"`
-	AssetIDs   []string `json:"assetIds"`
+	ResourceID    string   `json:"resourceId"`
+	FileName      string   `json:"fileName,omitempty"`
+	AssetIDs      []string `json:"assetIds"`
+	UseAsIdentity bool     `json:"useAsIdentity,omitempty"`
+}
+
+func (s *Service) ValidateCharacterFacePresetReference(userID, projectID, assetID, versionID, resourceID string, submittedResourceIDs []string) error {
+	project, err := s.Active(userID, projectID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.ProjectCharacter(userID, projectID, assetID); err != nil {
+		return err
+	}
+	if err := s.ValidateCharacterTurnaroundSource(userID, assetID, versionID); err != nil {
+		return err
+	}
+	var presets map[string]characterFacePreset
+	if err := json.Unmarshal([]byte(project.CharacterFacePresetsJSON), &presets); err != nil {
+		return kernel.BadAuthRequest("主角人脸预设已变化，请重新设置")
+	}
+	for _, role := range []string{"male", "female"} {
+		preset := presets[role]
+		if !preset.UseAsIdentity || preset.ResourceID != resourceID {
+			continue
+		}
+		bound := false
+		for _, candidate := range preset.AssetIDs {
+			if candidate == assetID {
+				bound = true
+				break
+			}
+		}
+		if !bound {
+			continue
+		}
+		resource, err := s.repo.ResourceForUser(userID, resourceID)
+		if err != nil || !readyImageResource(resource) {
+			return kernel.BadAuthRequest("主角人脸参考图不可用，请重新上传")
+		}
+		if len(submittedResourceIDs) != 1 || submittedResourceIDs[0] != resourceID {
+			return kernel.BadAuthRequest("主角人脸参考必须单独按已保存的身份预设提交，不得混入其他面孔")
+		}
+		return nil
+	}
+	return kernel.BadAuthRequest("主角人脸预设或角色绑定已变化，请刷新后重新核对")
 }
 
 func (s *Service) normalizeCharacterFacePresets(userID, projectID, raw string) (string, error) {

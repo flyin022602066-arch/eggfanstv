@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/provider/hanbao"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -76,7 +78,13 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	s.hydrateTaskProviderRequestID(task)
 	providerRequestID := strings.TrimSpace(task.ProviderRequestID)
 	if providerRequestID == "" {
-		return nil, BadAuthRequest("该任务没有可恢复的上游任务 ID")
+		body, readErr := s.decryptTaskInputJSON(task.InputJSON)
+		var original canvasGenerationInput
+		if readErr == nil && json.Unmarshal([]byte(body), &original) == nil && original.Config.InterfaceType == "doubao-browser-video" && s.DoubaoBrowserDomain() != nil {
+			receipt, lookupErr := s.DoubaoBrowserDomain().Lookup(ctx, task.UserID, task.ID)
+			if lookupErr == nil { providerRequestID = generation.EncodeDoubaoBrowserTask(receipt) }
+		}
+		if providerRequestID == "" { return nil, BadAuthRequest("本地未记录上游任务 ID，历史提交记录中也没有可恢复的回执；无法查询原任务，不会重新提交生成。") }
 	}
 	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
 	if err != nil {
@@ -93,7 +101,18 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	ctx = ensureOfficialProtocolAdapter(ctx, config.InterfaceType)
 	adapter, declarative := declarativeProtocolAdapterForContext(ctx, config.InterfaceType)
 	beefVideo := isBeefAPIVideoConfig(ctx, config) && isSeedanceVideoConfig(config)
-	if !declarative && !beefVideo {
+	hanbaoVideo := config.InterfaceType == hanbao.Protocol && s.HanbaoDomain() != nil
+	doubaoBrowserVideo := config.InterfaceType == "doubao-browser-video" && s.DoubaoBrowserDomain() != nil
+	if doubaoBrowserVideo {
+		receipt, decodeErr := generation.DecodeDoubaoBrowserTask(providerRequestID)
+		if decodeErr != nil || receipt.TaskID != task.ID { return nil, BadAuthRequest("豆包浏览器原任务回执无效") }
+	}
+	if hanbaoVideo {
+		if _, err := generation.DecodeHanbaoTask(providerRequestID); err != nil {
+			return nil, BadAuthRequest(err.Error())
+		}
+	}
+	if !declarative && !beefVideo && !hanbaoVideo && !doubaoBrowserVideo {
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
 	input.Config = config
@@ -122,16 +141,35 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	// failed/refunded。保留请求值用于审计，但把执行生命周期交给恢复租约控制。
 	recoveryCtx, cancelRecovery := providerTaskRecoveryContext(ctx)
 	defer cancelRecovery()
+	recoveryCtx, recorder := withTaskRequestEvidence(recoveryCtx, task.FailureDiagnostics)
 	queryCtx := withProviderAnalytics(recoveryCtx, s, *task)
 	var result map[string]interface{}
 	var providerStatus string
-	if beefVideo {
+	if doubaoBrowserVideo {
+		result, providerStatus, err = generation.QueryDoubaoBrowserVideoResult(queryCtx, providerRequestID, defaultVideoPollPolicy())
+		var pending generation.StatePendingError
+		if errors.As(err, &pending) { err, providerStatus = nil, "pending" }
+	} else if hanbaoVideo {
+		result, providerStatus, err = generation.QueryHanbaoVideoResult(queryCtx, providerRequestID, defaultVideoPollPolicy())
+		var pending generation.StatePendingError
+		if errors.As(err, &pending) {
+			_ = s.log(task.UserID, task.ID, "warn", "憨包本轮查询暂不可用，继续查询原任务", err.Error())
+			err, providerStatus = nil, "pending"
+		}
+	} else if beefVideo {
 		result, providerStatus, err = queryBeefAPIVideoResult(queryCtx, input, providerRequestID)
 	} else {
 		result, providerStatus, err = queryProtocolAdapterVideoTask(queryCtx, input, adapter, providerRequestID)
 	}
 	if err != nil {
 		_ = s.log(task.UserID, task.ID, "error", "人工查询上游视频任务失败", err.Error())
+		if hanbaoVideo && errors.Is(err, hanbao.ErrBusy) {
+			return nil, &AuthError{Status: 409, Message: "憨包组件正在处理其他任务，请稍后再次取回原任务结果"}
+		}
+		var failure *hanbao.CallError
+		if hanbaoVideo && errors.As(err, &failure) && failure.Source == "upstream_response" {
+			return s.confirmHanbaoQueryFailure(task, providerStatus, err)
+		}
 		return nil, err
 	}
 	if result == nil {
@@ -156,6 +194,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		return nil, err
 	}
 	task.Error = ""
+	task.FailureDiagnostics = recorder.snapshot(true)
 	task.PollStage = strings.ToLower(providerStatus)
 	task.NextPollAt = nil
 	if err := s.saveTaskCompletionWithinStorageQuota(task, resultJSON, nil, false); err != nil {
@@ -169,6 +208,23 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	projected := s.attachRecoveredProviderTask(task)
 	_ = s.log(task.UserID, task.ID, "info", "人工查询确认生成成功，任务已恢复并登记项目产物", providerStatus)
 	return &ProviderTaskQueryResult{Task: projected, ProviderStatus: providerStatus, Recovered: true}, nil
+}
+
+func (s *Service) confirmHanbaoQueryFailure(task *model.Task, status string, cause error) (*ProviderTaskQueryResult, error) {
+	captureTaskFailureDiagnostics(task, cause, status)
+	message := persistableTaskFailureMessage(cause)
+	updated, err := s.repo.UpdateTaskTerminalState(task.ID, task.LeaseOwner, model.TaskStatusFailed, model.TaskStatusFailed, "生成失败", message, time.Now(), task.FailureDiagnostics)
+	if err != nil {
+		return nil, err
+	}
+	if !updated {
+		return nil, repository.ErrTaskProviderRecoveryConflict
+	}
+	stored, err := s.repo.Task(task.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &ProviderTaskQueryResult{Task: taskForOutput(*stored), ProviderStatus: status, Recovered: false}, nil
 }
 
 // Query-only: never route recovery through create, even when the original

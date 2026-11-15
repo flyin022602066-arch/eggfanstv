@@ -17,13 +17,14 @@ import { ModelPicker } from "@/components/model-picker";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { VideoTaskLocalStop } from "@/components/generation/video-task-local-stop";
 import { explainGenerationError } from "@/lib/generation-error";
-import { JiasuVideoReferenceSettings, TowoVideoReferenceSettings } from "@/components/video-settings-panel";
+import { DoubaoBrowserVideoReferenceSettings, HanbaoVideoReferenceSettings, JiasuVideoReferenceSettings, TowoVideoReferenceSettings } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { hasAutomaticVideoAudio, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
 import { isTowoSd25Model } from "@/lib/eggfans-sd2-face-mask";
 import { customShotTitle, formatShotOrdinal, normalizeDefaultShotTitle } from "@/lib/shot-label";
+import { resolveShotCameraLanguage } from "@/lib/shot-camera-language";
 import { modelCompatibilityError, resolveActiveWorkflowModel, resolveCompatibleModel, resolveWorkflowModelPreference, type ModelRequirements } from "@/lib/model-selection";
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import type { ProjectWorkflowModelStage } from "@/lib/project-workflow-model-preferences";
@@ -34,7 +35,7 @@ import { reviewChapterStoryboardPrompt } from "@/lib/chapter-storyboard-mode";
 import { ChapterSkillStatus } from "./chapter-skill-status";
 import { submitBackendGenerationTask } from "@/services/api/generation-task";
 import { prepareProjectShotAssets, prepareProjectUnitShotAssets } from "@/services/project-shot-assets";
-import { queryFailedVideoProviderTask, type GenerationTask } from "@/services/api/task-center";
+import { canRetrieveVideoResult, queryFailedVideoProviderTask, type GenerationTask } from "@/services/api/task-center";
 import {
     createUnitWorkflow,
     getProjectUnitWorkspace,
@@ -71,10 +72,11 @@ import {
 import { buildShotAssetReferenceContext, ensureShotAssetMentionPrompt, resolveShotAssetMentionPrompt } from "./workflow-shot-references";
 import { ProjectResourceMedia } from "./project-resource-media";
 import { ProjectPropCreateModal } from "./project-prop-create-modal";
-import { prepareWorkflowVideoPrompt, resolveWorkflowVideoSubmissionPrompt } from "./workflow-video-prompt";
+import { prepareWorkflowVideoPrompt, resolveWorkflowVideoSubmissionPrompt, workflowVideoPromptExceedsLimit } from "./workflow-video-prompt";
 import { WorkflowVideoTaskInfo } from "./workflow-video-task-info";
 import { WorkflowCharacterReferences } from "./workflow-character-references";
 import { workflowVideoGenerationConfig } from "@/lib/workflow-video-generation";
+import { useWorkflowVideoPromptDraft } from "./use-workflow-video-prompt-draft";
 
 type ShotEditorValues = Omit<ShotRevisionInput, "durationMs"> & {
     title: string;
@@ -165,7 +167,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const modelSettingsScopeRef = useRef("");
     const activeSelectedModel = resolveActiveWorkflowModel({ config: effectiveConfig, capability: generationCapability, selectedModel, initialModel });
     const selectedModelUnavailable = Boolean((selectedModel || initialModel) && !activeSelectedModel);
-    const [aspectRatio, setAspectRatio] = useState(detail.project.aspectRatio || "16:9");
+    const [aspectRatio, setAspectRatio] = useState((generationCapability === "video" ? effectiveConfig.projectWorkflowVideoRatios?.[projectId] : "") || detail.project.aspectRatio || "16:9");
     const [resolution, setResolution] = useState(effectiveConfig.vquality || "720");
     const [imageQuality, setImageQuality] = useState(effectiveConfig.quality || "auto");
     const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
@@ -233,9 +235,8 @@ export default function WorkflowProductionWorkbench(props: Props) {
         enabled: generationCapability === "video" && Boolean(selectedShot && debouncedPromptValues) && !skillsLoading && assetCatalogQuery.isSuccess,
         retry: false,
     });
-    const [finalPromptDraft, setFinalPromptDraft] = useState<string | undefined>(undefined);
-    const finalPromptResetKey = `${selectedShot?.id || ""}|${routedModel || ""}|${selectedSkillIds.join(",")}`;
-    const finalPromptResetKeyRef = useRef(finalPromptResetKey);
+    const finalPromptEditor = useWorkflowVideoPromptDraft(projectId, unitId, selectedShot?.id);
+    const finalPromptDraft = finalPromptEditor.value;
 
     const initializeModelSettings = useEffectEvent(() => {
         const scope = JSON.stringify([projectId, modelStage, detail.project.aspectRatio]);
@@ -248,7 +249,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
         if (generationCapability === "video" && profile.video) {
             const normalized = normalizeVideoValue(profile.video, {
                 seconds: effectiveConfig.videoSeconds,
-                ratio: detail.project.aspectRatio || effectiveConfig.size,
+                ratio: effectiveConfig.projectWorkflowVideoRatios?.[projectId] || detail.project.aspectRatio || effectiveConfig.size,
                 resolution: effectiveConfig.vquality,
             });
             setAspectRatio(normalized.ratio);
@@ -265,15 +266,16 @@ export default function WorkflowProductionWorkbench(props: Props) {
 
     const initializeShotEditor = useEffectEvent(() => {
         const shotDurationSeconds = Math.max(0.5, (revision?.durationMs || selectedShot?.durationMs || 3000) / 1000);
-        const videoPrompt = assetCatalogQuery.isSuccess ? ensureShotAssetMentionPrompt(revision?.videoPrompt || "", shotAssetReferenceContext.mentionReferences, shotMentionAssets, shotAssetReferenceContext.boundAssetIds) : revision?.videoPrompt || "";
+        const videoPrompt = assetCatalogQuery.isSuccess ? ensureShotAssetMentionPrompt(revision?.videoPrompt || "", shotAssetReferenceContext.mentionReferences, shotMentionAssets, shotAssetReferenceContext.boundAssetIds, shotAssetReferenceContext.excludedAssetIds) : revision?.videoPrompt || "";
+        const cameraLanguage = resolveShotCameraLanguage(revision || {});
         form.setFieldsValue({
             title: normalizeDefaultShotTitle(selectedShot?.title, Math.max(0, shotIndex)),
             plotDescription: revision?.plotDescription || selectedShot?.description || "",
             action: revision?.action || "",
             dialogue: revision?.dialogue || "",
-            shotSize: revision?.shotSize || "",
-            cameraAngle: revision?.cameraAngle || "",
-            cameraMovement: revision?.cameraMovement || "",
+            shotSize: cameraLanguage.shotSize || undefined,
+            cameraAngle: cameraLanguage.cameraAngle || undefined,
+            cameraMovement: cameraLanguage.cameraMovement || undefined,
             durationSeconds: shotDurationSeconds,
             imagePrompt: revision?.imagePrompt || "",
             videoPrompt,
@@ -293,19 +295,11 @@ export default function WorkflowProductionWorkbench(props: Props) {
         setAdvancedOpen(true);
         setPromptOpen(true);
     }, [activeStage, selectedShot?.id]);
-    useEffect(() => {
-        if (finalPromptResetKeyRef.current === finalPromptResetKey) return;
-        finalPromptResetKeyRef.current = finalPromptResetKey;
-        setFinalPromptDraft(undefined);
-    }, [finalPromptResetKey]);
-    useEffect(() => {
-        setFinalPromptDraft(undefined);
-    }, [promptPreview.data?.prompt]);
 
     const synchronizeAssetMentions = useEffectEvent(() => {
         if (!assetCatalogQuery.isSuccess) return;
         const value = form.getFieldValue("videoPrompt") || "";
-        const next = ensureShotAssetMentionPrompt(value, shotAssetReferenceContext.mentionReferences, shotMentionAssets, shotAssetReferenceContext.boundAssetIds);
+        const next = ensureShotAssetMentionPrompt(value, shotAssetReferenceContext.mentionReferences, shotMentionAssets, shotAssetReferenceContext.boundAssetIds, shotAssetReferenceContext.excludedAssetIds);
         if (value !== next) {
             form.setFieldValue("videoPrompt", next);
         }
@@ -337,6 +331,12 @@ export default function WorkflowProductionWorkbench(props: Props) {
         }
     };
 
+    const changeVideoAspectRatio = (ratio: string) => {
+        setAspectRatio(ratio);
+        const preferences = useConfigStore.getState().config.projectWorkflowVideoRatios || {};
+        updateConfig("projectWorkflowVideoRatios", { ...preferences, [projectId]: ratio });
+    };
+
     const saveShot = useMutation({
         mutationFn: async (values: ShotEditorValues) => {
             if (!selectedShot) throw new Error("请先选择镜头");
@@ -363,7 +363,6 @@ export default function WorkflowProductionWorkbench(props: Props) {
             : []));
         form.setFieldsValue(repaired);
         setEditorDirty(true);
-        setFinalPromptDraft(undefined);
         setSubmissionError(null);
         message.success("资产引用已更新，可保存脚本或直接生成");
     };
@@ -371,16 +370,20 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const recoverVideo = useMutation({
         mutationFn: (task: GenerationTask) => queryFailedVideoProviderTask(task.id),
         onSuccess: async (result) => {
-            message[result.recovered ? "success" : "info"](result.recovered ? "已取回视频并保存到原镜头" : "上游仍在生成，已恢复原任务自动查询");
+            if (result.recovered) message.success("已取回视频并保存到原镜头");
+            else if (result.task.status === "failed") message.error(result.task.failureDiagnostics?.summary || result.task.error || "上游已确认生成失败，请查看任务详情");
+            else message.info("上游仍在生成，已恢复原任务自动查询");
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "原任务查询失败，请稍后再次查询"),
+        onSettled: async () => {
             try {
                 await onRefresh();
             } catch {
-                message.warning("任务查询已完成，界面刷新失败，请刷新项目查看最新结果");
+                message.warning("界面刷新失败，请刷新项目查看最新任务状态");
             }
         },
-        onError: (error) => message.error(error instanceof Error ? error.message : "原任务查询失败，请稍后再次查询"),
     });
-    const canRecoverVideo = generationCapability === "video" && shotTask?.status === "failed" && Boolean(shotTask.providerRequestId?.trim());
+    const canRecoverVideo = generationCapability === "video" && shotTask && canRetrieveVideoResult(shotTask);
 
     const deleteShot = useMutation({
         mutationFn: async ({ shotId }: { shotId: string; nextShotId: string }) => deleteProjectShot(projectId, shotId),
@@ -395,7 +398,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const changeAssetBinding = useMutation({
         mutationFn: async ({ asset, reference }: { asset?: ProjectAsset; reference?: ShotAssetReference }) => {
             if (!selectedShot) throw new Error("请先选择镜头");
-            if (reference) return unlinkShotAsset(projectId, selectedShot.id, reference.id);
+            if (reference) return unlinkShotAsset(projectId, selectedShot.id, reference.id, { exclude: true });
             if (!asset?.primaryVersionId) throw new Error("该资产还没有可绑定版本");
             return linkShotAsset(projectId, selectedShot.id, { assetVersionId: asset.primaryVersionId, role: "reference" });
         },
@@ -431,11 +434,13 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const generateArtifact = async () => {
         if (!selectedShot || characterSelectionBusy || shotTaskActive || recoverVideo.isPending || submittingShotsRef.current.has(selectedShot.id) || matchAssetBindings.isPending || matchChapterAssets.isPending || changeAssetBinding.isPending) return;
         const submittingShot = selectedShot;
+        const finalPromptSnapshot = finalPromptEditor.snapshot();
         let submitted = false;
         submittingShotsRef.current.add(submittingShot.id);
         setSubmissionError(null);
         setSubmittingShotIds((current) => new Set(current).add(submittingShot.id));
         try {
+            if (generationCapability === "video" && !finalPromptEditor.ready) throw new Error(finalPromptEditor.error || "最终提示词草稿正在读取，请稍后提交");
             if (selectedModelUnavailable) throw new Error("上次选择的模型当前不可用，请重新选择生成模型；不会自动切换到其他模型");
             const values = await form.validateFields();
             const prepared = await prepareProjectShotAssets({ projectId, unitId, shotId: submittingShot.id, script: values, generationArtifactType: artifactType });
@@ -477,9 +482,9 @@ export default function WorkflowProductionWorkbench(props: Props) {
             const skillExecution = mode === "video"
                 ? await prepareWorkflowVideoPrompt({ values, context: referenceContext, interfaceType: resolveModelRequestConfig(config, routedModel).interfaceType, skills: availableSkills, selectedSkillIds })
                 : await skillRuntime.prepare({ profile: "shortDrama", prompt: resolveShotAssetMentionPrompt([values.imagePrompt || values.plotDescription, values.action, "黑白分镜草图，清晰动作节拍，电影构图"].filter(Boolean).join("\n"), referenceContext, { dialogue: values.dialogue }), skills: availableSkills, selectedSkillIds });
-            const submittedPrompt = mode === "video" ? resolveWorkflowVideoSubmissionPrompt(skillExecution.prompt, finalPromptDraft) : skillExecution.prompt;
+            const submittedPrompt = mode === "video" ? resolveWorkflowVideoSubmissionPrompt(skillExecution.prompt, finalPromptSnapshot) : skillExecution.prompt;
             if (!submittedPrompt.trim()) throw new Error("最终提交提示词不能为空，请先填写内容");
-            if (mode === "video" && Array.from(submittedPrompt).length > (videoProfile?.references.promptMaxChars || 0)) throw new Error(`最终提交提示词共 ${Array.from(submittedPrompt).length} 个字符，当前模型上限 ${videoProfile?.references.promptMaxChars}。请展开「最终提交提示词」查看镜头、资产和技能规则来源后精简。`);
+            if (mode === "video" && workflowVideoPromptExceedsLimit(submittedPrompt, videoProfile?.references.promptMaxChars)) throw new Error(`最终提交提示词共 ${Array.from(submittedPrompt).length} 个字符，当前模型上限 ${videoProfile?.references.promptMaxChars}。请展开「最终提交提示词」查看镜头、资产和技能规则来源后精简。`);
             await submitBackendGenerationTask({
                 projectId,
                 mode,
@@ -612,14 +617,14 @@ export default function WorkflowProductionWorkbench(props: Props) {
                         </div>
                         <div className="flex items-center gap-1"><span className="mr-1 text-[var(--fs-micro)] text-foreground/45">{shotIndex + 1} / {shots.length}</span><Button type="text" size="small" icon={<ChevronLeft className="size-4" />} disabled={shotIndex <= 0} onClick={() => selectRelativeShot(-1)} aria-label="上一个镜头" /><Button type="text" size="small" icon={<ChevronRight className="size-4" />} disabled={shotIndex >= shots.length - 1} onClick={() => selectRelativeShot(1)} aria-label="下一个镜头" /></div>
                     </header>
-                                <Form form={form} layout="vertical" className="workflow-shot-form" onValuesChange={() => { setEditorDirty(true); setFinalPromptDraft(undefined); }} onFinish={(values) => saveShot.mutate(values)}>
+                                <Form form={form} layout="vertical" className="workflow-shot-form" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => saveShot.mutate(values)}>
                         <div className="workflow-shot-form-scroll thin-scrollbar">
                             <div className="workflow-shot-editor-grid">
                                 <div className="workflow-shot-script-column">
                                     <div className="workflow-form-section-heading"><span>镜头脚本</span><small>先写清镜头里发生什么，再调整生成参数</small></div>
                                     <Form.Item name="title" label="镜头名称" rules={[{ required: true, whitespace: true, message: "请输入镜头名称" }]}><Input placeholder="用一句话概括这个镜头" /></Form.Item>
                                     <Form.Item className="workflow-shot-main-prompt" name="videoPrompt" label="视频提示词" rules={[{ required: true, whitespace: true, message: "请输入视频提示词" }]}><ShotAssetMentionTextarea references={shotAssetReferenceContext.mentionReferences} /></Form.Item>
-                                    <BoundAssets detail={detail} shotId={selectedShot.id} changing={changeAssetBinding.isPending || matchAssetBindings.isPending || matchChapterAssets.isPending || submittingShotIds.size > 0} matching={matchAssetBindings.isPending} matchingChapter={matchChapterAssets.isPending} onMatch={() => matchAssetBindings.mutate()} onMatchChapter={() => matchChapterAssets.mutate()} onAddAsset={(category, name = "") => setNewReferenceAsset({ category, name })} onUnlink={(reference) => changeAssetBinding.mutate({ reference })}>
+                                     <BoundAssets detail={detail} shotId={selectedShot.id} changing={changeAssetBinding.isPending || matchAssetBindings.isPending || matchChapterAssets.isPending || submittingShotIds.size > 0} matching={matchAssetBindings.isPending} matchingChapter={matchChapterAssets.isPending} onMatch={() => matchAssetBindings.mutate()} onMatchChapter={() => matchChapterAssets.mutate()} onAddAsset={(category, name = "") => setNewReferenceAsset({ category, name })} onUnlink={(reference) => changeAssetBinding.mutate({ reference })} onRelink={(asset) => changeAssetBinding.mutate({ asset })}>
                                         {changeAssetBinding.isError || matchAssetBindings.isError || matchChapterAssets.isError ? <Alert type="error" showIcon title="镜头资产更新失败" description={(changeAssetBinding.error || matchAssetBindings.error || matchChapterAssets.error)?.message} /> : null}
                                         {assetCatalogQuery.isError ? <Alert type="warning" showIcon title="资产目录读取失败" description="请重新读取项目资产后核对引用。" action={<Button size="small" onClick={() => void assetCatalogQuery.refetch()}>重新读取</Button>} /> : null}
                                         {shotAssetReferenceContext.missingImageTitles.length ? <Alert type="warning" showIcon title="待补参考图" description={`${shotAssetReferenceContext.missingImageTitles.join("、")} 已绑定，请到「角色与资产」生成或上传参考图。`} /> : null}
@@ -694,7 +699,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                                                         ? <Select options={Array.from(new Set([...videoDurationOptions(videoProfile), currentDurationSeconds])).sort((left, right) => left - right).map((value) => ({ value, label: value === -1 ? "自动" : `${value} 秒${videoDurationOptions(videoProfile).includes(value) ? "" : "（当前模型不支持）"}`, disabled: !videoDurationOptions(videoProfile).includes(value) }))} />
                                                         : <InputNumber className="w-full" min={generationCapability === "video" ? Math.min(videoProfile?.duration.min || 1, currentDurationSeconds) : 0.5} max={generationCapability === "video" ? Math.max(videoProfile?.duration.max || 60, currentDurationSeconds) : 60} step={generationCapability === "video" ? videoProfile?.duration.step || 1 : 0.5} />}
                                                 </Form.Item>
-                                                {generationCapability === "video" ? <Form.Item label="画幅"><Select value={aspectRatio} onChange={setAspectRatio} options={(videoProfile?.ratios || []).map((value) => ({value, label:value}))} /></Form.Item> : null}
+                                                {generationCapability === "video" ? <Form.Item label="画幅"><Select aria-label="画幅" value={aspectRatio} onChange={changeVideoAspectRatio} options={(videoProfile?.ratios || []).map((value) => ({value, label:value}))} /></Form.Item> : null}
                                                 {generationCapability === "video" ? (
                                                     <Form.Item label="分辨率"><Select value={resolution || undefined} placeholder="采用模型默认分辨率" onChange={setResolution} options={(videoProfile?.resolutions || []).map((value) => ({ value, label: formatVideoResolutionLabel(value) }))} /></Form.Item>
                                                 ) : imageProfile?.quality.supported && !imageResolutionUsesQuality(imageProfile) ? (
@@ -703,16 +708,19 @@ export default function WorkflowProductionWorkbench(props: Props) {
                                             </div>
                                             {generationCapability === "video" ? <Form.Item label="生成声音" extra={automaticAudio ? "该渠道默认同步生成声音" : videoProfile?.generateAudio.supported ? "同步生成音频，自动记住上次选择" : "当前渠道未提供声音切换参数"}>{automaticAudio ? <StatusBadge tone="success" label="同步声音已开启" /> : <Switch aria-label="生成声音" checked={videoBooleanOptions?.videoGenerateAudio === "true"} disabled={!videoProfile?.generateAudio.supported} onChange={(checked) => updateConfig("videoGenerateAudio", String(checked))} />}</Form.Item> : null}
                                             {generationCapability === "video" ? <JiasuVideoReferenceSettings config={generationConfig} theme={theme} onConfigChange={(key, value) => updateConfig(key, value)} /> : null}
+                                            {generationCapability === "video" ? <HanbaoVideoReferenceSettings config={generationConfig} theme={theme} onConfigChange={(key, value) => updateConfig(key, value)} /> : null}
+                                            {generationCapability === "video" ? <DoubaoBrowserVideoReferenceSettings config={generationConfig} theme={theme} onConfigChange={(key, value) => updateConfig(key, value)} /> : null}
                                             {generationCapability === "video" && isTowoSd25Model(resolveModelRequestConfig(generationConfig, routedModel).interfaceType, routedModel) ? <TowoVideoReferenceSettings config={generationConfig} theme={theme} onConfigChange={(key, value) => updateConfig(key, value)} /> : null}
                                             {generationCapability === "image" && imageProfile ? <ImageSizePicker profile={imageProfile} size={aspectRatio} quality={imageQuality} onChange={(size, quality) => { setAspectRatio(size); if (quality) setImageQuality(quality); }} /> : null}
                                         </div>
                                         <div className="workflow-settings-section">
                                             <div className="workflow-settings-section-title">镜头语言</div>
                                             <div className="workflow-form-grid is-three">
-                                                <Form.Item name="shotSize" label="景别"><Select allowClear placeholder="自动" options={["特写", "近景", "中景", "全景", "远景"].map((value) => ({ value, label: value }))} /></Form.Item>
-                                                <Form.Item name="cameraAngle" label="机位角度"><Select allowClear placeholder="自动" options={["平视", "俯拍", "仰拍", "侧面", "过肩"].map((value) => ({ value, label: value }))} /></Form.Item>
-                                                <Form.Item name="cameraMovement" label="运镜方式"><Select allowClear placeholder="自动" options={["固定", "推镜", "拉镜", "摇镜", "移镜", "跟拍"].map((value) => ({ value, label: value }))} /></Form.Item>
+                                                <Form.Item name="shotSize" label="景别"><Select allowClear placeholder="随逐镜脚本" options={cameraLanguageOptions(["特写", "近景", "中景", "全景", "远景"], watchedPromptValues?.shotSize)} /></Form.Item>
+                                                <Form.Item name="cameraAngle" label="机位角度"><Select allowClear placeholder="随逐镜脚本" options={cameraLanguageOptions(["平视", "俯拍", "仰拍", "侧面", "过肩"], watchedPromptValues?.cameraAngle)} /></Form.Item>
+                                                <Form.Item name="cameraMovement" label="运镜方式"><Select allowClear placeholder="随逐镜脚本" options={cameraLanguageOptions(["固定", "推镜", "拉镜", "摇镜", "移镜", "跟拍"], watchedPromptValues?.cameraMovement)} /></Form.Item>
                                             </div>
+                                            <small className="text-foreground/45">未单独填写时从逐镜脚本提取；多镜变化按顺序显示，生成仍遵循各镜详细设计。</small>
                                         </div>
                                     </WorkflowDisclosure>
                                 {generationCapability === "video" ? <WorkflowDisclosure
@@ -721,12 +729,14 @@ export default function WorkflowProductionWorkbench(props: Props) {
                                     description="包含镜头内容、资产引用与技能规则；可编辑，提交以编辑后的全文为准"
                                     open={promptOpen}
                                     onOpenChange={setPromptOpen}
-                                    summary={<span>{assetReferencesIncomplete ? "资产参考待完善" : promptPreview.data ? `${Array.from(finalPromptDraft ?? promptPreview.data.prompt).length} / ${videoProfile?.references.promptMaxChars || 0} 字符${finalPromptDraft !== undefined ? " · 已编辑" : ""}` : promptPreview.isFetching ? "正在整理" : "等待镜头内容"}</span>}
+                                    summary={<span>{assetReferencesIncomplete ? "资产参考待完善" : promptPreview.data ? `${Array.from(finalPromptDraft ?? promptPreview.data.prompt).length} / ${videoProfile?.references.promptMaxChars || "不限"} 字符${finalPromptDraft !== undefined ? " · 已编辑" : ""}` : promptPreview.isFetching ? "正在整理" : "等待镜头内容"}</span>}
                                 >
                                      {assetReferencesIncomplete ? <p className="m-0 text-xs text-foreground/60">请先处理上方「镜头资产」中的待完善项目，完成后会自动整理可编辑的完整提示词。</p> : promptPreview.error ? <Alert type="warning" showIcon title="提示词整理失败" description={promptPreview.error.message} /> : promptPreview.data ? <>
-                                        <div className="flex flex-wrap items-center gap-3 text-xs"><span>当前模型上限 {videoProfile?.references.promptMaxChars} 字符</span>{promptPreview.data.sections.map((section) => <span key={section.label}>{section.label} {section.chars} 字符</span>)}{finalPromptDraft !== undefined ? <span className="text-amber-600">已手动编辑</span> : null}<Button size="small" onClick={() => void navigator.clipboard.writeText(finalPromptDraft ?? promptPreview.data!.prompt).then(() => message.success("已复制完整提示词"), () => message.error("复制失败，请从下方选择文本复制"))}>复制全文</Button>{finalPromptDraft !== undefined ? <Button size="small" onClick={() => setFinalPromptDraft(undefined)}>恢复自动整理</Button> : null}</div>
-                                        <Input.TextArea aria-label="最终提交提示词全文" value={finalPromptDraft ?? promptPreview.data.prompt} onChange={(event) => setFinalPromptDraft(event.target.value)} autoSize={{ minRows: 5, maxRows: 14 }} />
-                                        {Array.from(finalPromptDraft ?? promptPreview.data.prompt).length > (videoProfile?.references.promptMaxChars || 0) ? <Alert type="warning" showIcon title="完整提示词超过模型上限" description="请精简镜头文本或取消不需要的技能。提交时将严格使用当前编辑框中的全文，不会自动截断对白、镜头序列或资产引用。" /> : null}
+                                        <div className="flex flex-wrap items-center gap-3 text-xs"><span>{videoProfile?.references.promptMaxChars ? `当前模型上限 ${videoProfile.references.promptMaxChars} 字符` : "未设本地字数上限"}</span>{promptPreview.data.sections.map((section) => <span key={section.label}>{section.label} {section.chars} 字符</span>)}{finalPromptDraft !== undefined ? <span className="text-amber-600">{finalPromptEditor.error ? "手动稿尚未保存" : finalPromptEditor.saving ? "正在保存手动稿" : "手动稿已保存到本机"}</span> : null}<Button size="small" onClick={() => void navigator.clipboard.writeText(finalPromptDraft ?? promptPreview.data!.prompt).then(() => message.success("已复制完整提示词"), () => message.error("复制失败，请从下方选择文本复制"))}>复制全文</Button>{finalPromptDraft !== undefined ? <Button size="small" onClick={() => finalPromptEditor.setDraft(undefined)}>恢复自动整理</Button> : null}</div>
+                                        <Input.TextArea aria-label="最终提交提示词全文" readOnly={!finalPromptEditor.ready} value={finalPromptDraft ?? promptPreview.data.prompt} onChange={(event) => finalPromptEditor.setDraft(event.target.value)} autoSize={{ minRows: 5, maxRows: 14 }} />
+                                        {finalPromptEditor.error ? <Alert type="warning" showIcon title="最终提示词草稿" description={finalPromptEditor.error} /> : null}
+                                        {finalPromptDraft !== undefined ? <small className="text-foreground/60">手动稿按当前全文提交，失败和刷新不会恢复旧稿；更换素材或技能后请核对引用，只有「恢复自动整理」会清除手动稿。</small> : null}
+                                        {workflowVideoPromptExceedsLimit(finalPromptDraft ?? promptPreview.data.prompt, videoProfile?.references.promptMaxChars) ? <Alert type="warning" showIcon title="完整提示词超过模型上限" description="请精简镜头文本或取消不需要的技能。提交时将严格使用当前编辑框中的全文，不会自动截断对白、镜头序列或资产引用。" /> : null}
                                      </> : null}
                                 </WorkflowDisclosure> : null}
                                 </div>
@@ -766,7 +776,10 @@ export default function WorkflowProductionWorkbench(props: Props) {
                             explanation={explainGenerationError({ code: shotTask.errorCode, message: shotTask.error }, { taskId: shotTask.id, stage: shotTask.stage })}
                             context={{ taskId: shotTask.id, providerRequestId: shotTask.providerRequestId, model: shotTask.model, stage: shotTask.stage, createdAt: shotTask.createdAt, completedAt: shotTask.completedAt, updatedAt: shotTask.updatedAt, failureDiagnostics: shotTask.failureDiagnostics }}
                         />} /> : null}
-                        {canRecoverVideo ? <Alert type="warning" showIcon title="本地任务失败，上游可能仍在生成" description="渠道后台已成功时，点击“查询并取回”加载原任务结果；上游处理中会恢复自动查询。重新生成会提交新任务。" action={<Button loading={recoverVideo.isPending} disabled={selectedShotSubmitting || deleteShot.isPending} onClick={() => shotTask && recoverVideo.mutate(shotTask)}>查询并取回</Button>} /> : null}
+                        {canRecoverVideo ? <Alert type="warning" showIcon title="查询原视频任务" description={<>
+                            <p>{shotTask?.providerRequestId?.trim() ? "重新查询已有上游任务，成功后取回到当前镜头；处理中会恢复自动查询。" : "本地未记录上游任务 ID，重新查询会先检查历史回执；缺少回执时会显示原因。"} 此操作不会重新提交生成。</p>
+                            {recoverVideo.isError && recoverVideo.variables?.id === shotTask?.id ? <p role="status">{recoverVideo.error instanceof Error ? recoverVideo.error.message : "原任务查询失败，请稍后再次查询"}</p> : null}
+                        </>} action={<Button loading={recoverVideo.isPending} disabled={selectedShotSubmitting || deleteShot.isPending} onClick={() => shotTask && recoverVideo.mutate(shotTask)}>重新查询</Button>} /> : null}
                         {shotTask?.status === "cancelled" && shotTask.stage === "本地已停止" ? <Alert type="info" showIcon title="本地已停止跟进，可以重新生成" description="上游任务未取消，原任务 ID 和记录已保留。" /> : null}
                         {generationCapability === "video" && shotTask ? <VideoTaskLocalStop key={`local-stop:${shotTask.id}`} task={shotTask} onStopped={(task) => {
                             setLocallyStoppedTask(task);
@@ -879,10 +892,14 @@ function ShotLibrary({ detail, shots, selectedShotId, onSelectShot }: { detail: 
     return <div className="workflow-simple-list">{shots.map((shot, index) => { const video = currentArtifact(detail, shot.id, "video"); return <button key={shot.id} type="button" className={shot.id === selectedShotId ? "is-active" : ""} onClick={() => onSelectShot(shot.id)}><span>{formatShotOrdinal(index)}</span><span className="min-w-0 flex-1"><strong>{customShotTitle(shot.title, index) || "未命名"}</strong><small>{formatDuration(shot.durationMs)}</small></span><ArtifactStatus artifact={video} compact /></button>; })}</div>;
 }
 
-function BoundAssets({ detail, shotId, changing, matching, matchingChapter, onMatch, onMatchChapter, onAddAsset, onUnlink, children }: { detail: ProjectDetail; shotId: string; changing: boolean; matching: boolean; matchingChapter: boolean; onMatch: () => void; onMatchChapter: () => void; onAddAsset: (category: "prop" | "environment", name?: string) => void; onUnlink: (reference: ShotAssetReference) => void; children?: ReactNode }) {
+function BoundAssets({ detail, shotId, changing, matching, matchingChapter, onMatch, onMatchChapter, onAddAsset, onUnlink, onRelink, children }: { detail: ProjectDetail; shotId: string; changing: boolean; matching: boolean; matchingChapter: boolean; onMatch: () => void; onMatchChapter: () => void; onAddAsset: (category: "prop" | "environment", name?: string) => void; onUnlink: (reference: ShotAssetReference) => void; onRelink: (asset: ProjectAsset) => void; children?: ReactNode }) {
     const [previewAsset, setPreviewAsset] = useState<{ title: string; storageKey: string } | null>(null);
     const references = (detail.shotReferences || []).filter((item) => item.shotId === shotId && item.status === "linked" && item.role === "reference");
     const assetByVersionId = useMemo(() => new Map(detail.assets.filter((asset) => asset.primaryVersionId).map((asset) => [asset.primaryVersionId as string, asset])), [detail.assets]);
+    const excludedAssets = [...new Map((detail.shotReferences || []).filter((reference) => reference.shotId === shotId && reference.role === "reference" && reference.status === "excluded").flatMap((reference) => {
+        const asset = reference.asset || detail.assets.find((item) => item.id === reference.referencedVersion?.assetId) || assetByVersionId.get(reference.assetVersionId);
+        return asset ? [[asset.id, asset] as const] : [];
+    })).values()];
     const imageByAssetId = useMemo(() => new Map(buildShotAssetReferenceContext(detail, shotId).referenceImages.map((image) => [image.id, image])), [detail, shotId]);
     const mediaReferences = references.filter((reference) => (reference.asset || detail.assets.find((asset) => asset.id === reference.referencedVersion?.assetId) || assetByVersionId.get(reference.assetVersionId))?.category !== "character");
     const revision = currentRevision(detail, detail.shots.find((shot) => shot.id === shotId));
@@ -906,6 +923,10 @@ function BoundAssets({ detail, shotId, changing, matching, matchingChapter, onMa
                     }) : <span>尚未绑定角色、场景或道具</span>}
                 </div> : null}
             </>
+            {excludedAssets.length ? <details className="text-xs text-foreground/65" aria-label="已手动移除的镜头资产">
+                <summary className="cursor-pointer">已手动移除 {excludedAssets.length} 项 · 不会自动匹配或提交</summary>
+                <div className="mt-2 flex flex-wrap gap-2">{excludedAssets.map((asset) => <Button key={asset.id} size="small" disabled={changing || !asset.primaryVersionId} onClick={() => onRelink(asset)} aria-label={`恢复引用 ${asset.title}`}>恢复：{asset.title}</Button>)}</div>
+            </details> : null}
             {children}
             <AppModal open={Boolean(previewAsset)} title={previewAsset?.title || "资产预览"} footer={null} centered width="min(960px, calc(100vw - 32px))" onCancel={() => setPreviewAsset(null)}>
                 {previewAsset ? <CachedResourceImage eager storageKey={previewAsset.storageKey} alt={previewAsset.title} className="workflow-image-preview-modal" fallback={<span>图片加载失败，请刷新重试</span>} /> : null}
@@ -956,8 +977,13 @@ function TimelineShot({ artifactType, detail, shot, task, submitting, index, sel
     const stateArtifact = artifactType === "video" ? video : artifactType === "action_board" ? previz : storyboard;
     const revision = currentRevision(detail, shot);
     const stageLabel = artifactType === "video" ? "镜头视频" : artifactType === "action_board" ? "动作预演" : "分镜画面";
-    const cameraMeta = [revision?.shotSize, revision?.cameraMovement].filter(Boolean).join(" · ") || "等待补充镜头参数";
+    const cameraLanguage = resolveShotCameraLanguage(revision || {});
+    const cameraMeta = [cameraLanguage.shotSize, cameraLanguage.cameraMovement].filter(Boolean).join(" · ") || "随逐镜脚本";
     return <button type="button" className={`workflow-timeline-shot ${selected ? "is-active" : ""}`} onClick={onSelect}><span className="workflow-timeline-media">{preview?.resourceId && preview.type !== "video" ? <CachedResourceImage storageKey={resourceStorageKey(preview.resourceId)} alt="" loading="lazy" fallback={<ImageIcon />} /> : <Film />}</span><span className="workflow-timeline-copy"><span className="workflow-timeline-heading"><strong>{formatShotOrdinal(index)}</strong><b>{formatDuration(shot.durationMs)}</b></span>{customShotTitle(shot.title, index) ? <em className="workflow-timeline-title">{customShotTitle(shot.title, index)}</em> : null}<small className="workflow-timeline-meta">{cameraMeta}</small><span className="workflow-timeline-status"><span>{stageLabel}{stateArtifact ? ` · v${stateArtifact.version}` : ""}</span><ArtifactStatus artifact={stateArtifact} taskStatus={submitting ? "queued" : task?.status} compact /></span></span></button>;
+}
+
+function cameraLanguageOptions(options: string[], current?: string) {
+    return Array.from(new Set([...options, ...(current ? [current] : [])])).map((value) => ({ value, label: value }));
 }
 
 function revisionInput(values: ShotEditorValues, actionBeats: ShotRevisionInput["actionBeats"] = []): ShotRevisionInput {

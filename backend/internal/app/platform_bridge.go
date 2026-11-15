@@ -193,6 +193,7 @@ func (s *Service) RecordChannelResult(ctx context.Context, channelID string, fai
 }
 
 func (s *Service) Close() error {
+	if s.doubaoBrowser != nil { s.doubaoBrowser.Close() }
 	return nil
 }
 

@@ -101,8 +101,8 @@ try {
         assert.equal(await page.locator("vite-error-overlay").count(), 0);
         await page.getByRole("button", { name: "切换脚本未保存" }).click();
         assert.equal(await panel.getByRole("button", { name: "识别本镜", exact: true }).isDisabled(), true);
-        assert.equal(await panel.getByRole("combobox").isDisabled(), true);
-        assert.equal(await panel.getByRole("button", { name: "锁定", exact: true }).isDisabled(), true);
+        assert.equal(await panel.getByRole("combobox").isEnabled(), true);
+        assert.equal(await panel.getByRole("button", { name: "锁定", exact: true }).isEnabled(), true);
         await page.getByRole("button", { name: "切换脚本未保存" }).click();
         await panel.locator(".ant-select").click();
         const selectedImageLoaded = page.waitForResponse((response) => new URL(response.url()).pathname.includes("img1"));
@@ -221,7 +221,7 @@ try {
             await page.keyboard.press("Escape");
             await manager.waitFor({ state: "hidden" });
             await page.getByLabel("对白 / 旁白", { exact: true }).fill("苏卉：保留这句未保存的修改。");
-            assert.equal(await integrated.getByRole("combobox").isDisabled(), true, "genuine script edits still require saving before switching");
+            assert.equal(await integrated.getByRole("combobox").isEnabled(), true, "manual look selection remains available while script edits are retained");
             assert.equal(writes.length, 10, "only explicit bindings are saved; no model tasks or script autosaves");
             assert.deepEqual(errors, []);
             shotBusy = true;

@@ -2,7 +2,7 @@ import { defaultImageCapabilityConfig, hasAutomaticVideoAudio, modelCapabilityCo
 import { normalizeVideoBoolean, normalizeVideoResolutionValue, videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
 import { sanitizeVideoPriceQuote, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
-import { configuredModelMatchesCapability, modelOptionName, normalizeModelOptionValue, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { configuredModelMatchesCapability, modelOptionName, normalizeModelOptionValue, resolveModelChannel, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
     textCount: number;
@@ -139,6 +139,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
     }
 
     if (capability === "video") {
+        if (resolveModelRequestConfig(config, model).interfaceType === "nono-video") return "";
         const profile = modelCapabilityConfigFor(config, model).video!;
         if (requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
         if (!input) return "";
@@ -161,6 +162,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
 }
 
 export function modelPromptLengthError(config: AiConfig, model: string, capability: ModelCapability, prompt: string) {
+    if (capability === "video" && resolveModelRequestConfig(config, model).interfaceType === "nono-video") return "";
     const channel = resolveModelChannel(config, model);
     const configuredProfile = channel.modelProfiles?.find((item) => item.model === modelOptionName(model))?.capabilityConfig;
     if (!configuredProfile) return "";
@@ -368,6 +370,7 @@ export function maxModelInputCapacity(config: AiConfig, capability: "image" | "v
     const options = selectableModelsByCapability(config, capability);
     if (!options.length) return null;
     return options.reduce((maximum, model) => {
+        if (capability === "video" && resolveModelRequestConfig(config, model).interfaceType === "nono-video") return Infinity;
         const profile = modelCapabilityConfigFor(config, model);
         const value =
             capability === "image" ? (kind === "image" ? profile.image!.references.maxImages : 0) : kind === "image" ? profile.video!.references.maxImages : kind === "video" ? profile.video!.references.maxVideos : profile.video!.references.maxAudios;
@@ -377,6 +380,7 @@ export function maxModelInputCapacity(config: AiConfig, capability: "image" | "v
 
 export function modelGroupReferenceLimits(config: AiConfig, selected: string, capability: ModelCapability, requirements?: ModelRequirements): ModelReferenceLimits | undefined {
     if (capability !== "image" && capability !== "video") return undefined;
+    if (capability === "video" && resolveModelRequestConfig(config, selected).interfaceType === "nono-video") return undefined;
     const options = selectableModelsByCapability(config, capability);
     const selectedGroup = groupModelsByDisplayName(config, options).find((group) => group.models.includes(selected));
     const groupModels = selectedGroup?.models || (selected ? [selected] : []);

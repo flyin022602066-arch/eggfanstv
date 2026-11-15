@@ -197,6 +197,12 @@ func (p appConfigPort) ApplyCapabilities(ctx context.Context, input *generation.
 	if p.service == nil || input == nil {
 		return nil
 	}
+	if input.Config.InterfaceType == "doubao-browser-video" {
+		if input.Mode != "video" { return errors.New("豆包浏览器只支持视频生成") }
+		profile := modelcatalog.DefaultModelCapabilityConfigForModel("doubao-browser-video", input.Config.Model)
+		input.Config.CapabilityConfig, input.VideoCapability = profile, profile.Video
+		return nil
+	}
 	if input.Config.InterfaceType == hanbao.Protocol {
 		if input.Mode != "video" { return errors.New("憨包只支持视频生成") }
 		profile := modelcatalog.DefaultModelCapabilityConfigForModel(hanbao.Protocol, input.Config.Model)
@@ -299,6 +305,7 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 		Images:    appImagePort{service: s},
 		Workflow:  appWorkflowPort{service: s},
 		Hanbao:    s.HanbaoDomain(),
+		DoubaoBrowser: s.DoubaoBrowserDomain(),
 		LocalVideoReceipts: hanbaoReceipt{service: s},
 		Prompt:    appPromptPort{service: s},
 		Config:    appConfigPort{service: s},

@@ -1,5 +1,5 @@
 export type GridFaceMaskMode = "grid" | "grid-60" | "grid-75";
-export type JiasuFaceMaskMode = GridFaceMaskMode | "mosaic" | "off";
+export type JiasuFaceMaskMode = GridFaceMaskMode | "mosaic" | "blur" | "solid" | "off";
 
 export const faceMaskGridOptions = [
     { value: "grid", label: "50%", density: 50 },
@@ -49,7 +49,7 @@ export function clampJiasuFaceRegion(region: JiasuFaceRegion): JiasuFaceRegion {
     return { ...region, x: left, y: top, width: right - left, height: bottom - top };
 }
 
-export function jiasuFaceMaskCacheKey(scope: string, sourceHash: string, mode: JiasuFaceMaskMode, regions: JiasuFaceRegion[], channel: "jiasu" | "eggfans-sd2" | "towo" = "jiasu") {
+export function jiasuFaceMaskCacheKey(scope: string, sourceHash: string, mode: JiasuFaceMaskMode, regions: JiasuFaceRegion[], channel: "jiasu" | "eggfans-sd2" | "towo" | "hanbao" | "doubao-browser" = "jiasu") {
     return JSON.stringify([`${channel}-face-mask-v1`, scope, sourceHash, mode, regions.map(({ x, y, width, height }) => ({ x, y, width, height }))]);
 }
 
@@ -70,7 +70,20 @@ export async function renderJiasuFaceMask(source: Blob, regions: JiasuFaceRegion
             const width = region.width * canvas.width;
             const height = region.height * canvas.height;
             if (width < 1 || height < 1) continue;
-            if (mode === "mosaic") {
+            if (mode === "solid") {
+                context.fillStyle = "#808080";
+                context.fillRect(left, top, width, height);
+            } else if (mode === "blur") {
+                context.save();
+                context.beginPath();
+                context.rect(left, top, width, height);
+                context.clip();
+                context.fillStyle = "#808080";
+                context.fillRect(left, top, width, height);
+                context.filter = `blur(${Math.max(12, Math.min(width, height) * 0.18)}px)`;
+                context.drawImage(bitmap, 0, 0);
+                context.restore();
+            } else if (mode === "mosaic") {
                 const tile = document.createElement("canvas");
                 tile.width = Math.max(1, Math.ceil(width / Math.max(8, width / 16)));
                 tile.height = Math.max(1, Math.ceil(height / Math.max(8, width / 16)));

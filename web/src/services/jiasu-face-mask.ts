@@ -70,7 +70,7 @@ export async function inspectJiasuFaceMask(image: ReferenceImage, override?: Jia
     }
 }
 
-export async function prepareJiasuFaceMaskedImage(image: ReferenceImage, mode: JiasuFaceMaskMode, override?: JiasuFaceMaskOverride, signal?: AbortSignal, channel: "jiasu" | "eggfans-sd2" | "towo" = "jiasu"): Promise<ReferenceImage> {
+export async function prepareJiasuFaceMaskedImage(image: ReferenceImage, mode: JiasuFaceMaskMode, override?: JiasuFaceMaskOverride, signal?: AbortSignal, channel: "jiasu" | "eggfans-sd2" | "towo" | "hanbao" | "doubao-browser" = "jiasu"): Promise<ReferenceImage> {
     if (mode === "off") return image;
     const inspection = await inspectJiasuFaceMask(image, override, signal);
     if (!inspection.regions.length) return image;
@@ -78,7 +78,9 @@ export async function prepareJiasuFaceMaskedImage(image: ReferenceImage, mode: J
     const saved = await cache.getItem<ReferenceImage>(key);
     if (saved?.storageKey) {
         try {
-            await getResource(resourceIdFromStorageKey(saved.storageKey));
+            const savedResource = await getResource(resourceIdFromStorageKey(saved.storageKey));
+            const sourceResourceId = resourceIdFromStorageKey(image.storageKey || "");
+            if (sourceResourceId && savedResource.sourceResourceId !== sourceResourceId) throw new Error("遮罩资源来源已变化");
             checkAbort(signal);
             return { ...saved, id: image.id, name: image.name };
         } catch (error) {
@@ -90,7 +92,8 @@ export async function prepareJiasuFaceMaskedImage(image: ReferenceImage, mode: J
     checkAbort(signal);
     const keyDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)));
     const idempotencyKey = `${channel}-face-mask:${Array.from(keyDigest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-    const resource = await uploadResourceFile(blob, "image", { fileName: `${channel}-face-mask.png`, width: inspection.width, height: inspection.height, idempotencyKey });
+    const sourceResourceId = resourceIdFromStorageKey(image.storageKey || "");
+    const resource = await uploadResourceFile(blob, "image", { fileName: `${channel}-face-mask.png`, width: inspection.width, height: inspection.height, idempotencyKey, sourceResourceId: sourceResourceId || undefined });
     checkAbort(signal);
     const prepared: ReferenceImage = { id: image.id, name: image.name, type: resource.mimeType || blob.type, dataUrl: "", storageKey: resourceStorageKey(resource.id), width: inspection.width, height: inspection.height, bytes: blob.size };
     await cache.setItem(key, prepared);

@@ -35,8 +35,8 @@ func (s *Service) LinkShotAsset(userID string, projectID string, shotID string, 
 	return s.projectDomain().LinkShotAsset(userID, projectID, shotID, req)
 }
 
-func (s *Service) UnlinkShotAsset(userID string, projectID string, shotID string, referenceID string) error {
-	return s.projectDomain().UnlinkShotAsset(userID, projectID, shotID, referenceID)
+func (s *Service) UnlinkShotAsset(userID string, projectID string, shotID string, referenceID string, exclude ...bool) error {
+	return s.projectDomain().UnlinkShotAsset(userID, projectID, shotID, referenceID, exclude...)
 }
 
 func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, req CreateAssetCandidatesRequest) ([]model.ProjectAssetCandidate, error) {

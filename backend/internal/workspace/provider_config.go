@@ -201,6 +201,7 @@ func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument Prov
 			return err
 		}
 	}
+	preserveChannelDeletions(incoming, existingDocument)
 	normalizeEggfansSeedanceChannels(incoming)
 	normalizeJiasuVideoChannels(incoming)
 	document := newProviderState(incoming, existingDocument.Revision+1)

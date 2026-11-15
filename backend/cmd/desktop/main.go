@@ -16,8 +16,8 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 func main() {
@@ -64,7 +64,7 @@ func main() {
 	}
 
 	err = wails.Run(&options.App{
-		Title:  "Eggfans TV",
+		Title:  "eggfansTV",
 		Width:  1440,
 		Height: 960,
 		Mac:    &mac.Options{},
@@ -141,4 +141,11 @@ func projectWorkspaceDataDir(executable string) string {
 			return ""
 		}
 	}
+}
+
+func desktopDoubaoOutputDir(executable string) string {
+	if dataDir := projectWorkspaceDataDir(executable); dataDir != "" {
+		return filepath.Join(filepath.Dir(filepath.Dir(dataDir)), "output")
+	}
+	return filepath.Join(filepath.Dir(executable), "output")
 }

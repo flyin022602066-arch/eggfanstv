@@ -13,3 +13,10 @@ test("历史候选默认核对总库，同名冲突必须人工归并", () => {
     expect(characterCandidateReview(candidate({})).label).toContain("自动核对总库");
     expect(characterCandidateReview(candidate({_characterMatch:{mode:"ambiguous"}})).ambiguous).toBe(true);
 });
+
+test("群体候选显示群体类型但不误判具名角色", () => {
+    expect(characterCandidateReview({ ...candidate({}), name: "工人与食客群像" }).characterType).toBe("group");
+    expect(characterCandidateReview(candidate({ characterType: "group" })).characterType).toBe("group");
+    expect(characterCandidateReview(candidate({ role: "与工人群像交谈" })).characterType).toBe("individual");
+    expect(characterCandidateReview(candidate(null)).characterType).toBe("individual");
+});

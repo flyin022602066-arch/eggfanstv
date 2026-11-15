@@ -66,7 +66,13 @@ func mapProjectWriteError(err error) error {
 	if errors.Is(err, repository.ErrProjectRevisionConflict) {
 		return kernel.WrapAppError(kernel.CodeConflict, "项目已被其他操作更新，请重新加载后再保存", err)
 	}
-	if errors.Is(err, repository.ErrCharacterReferenceLocked) || errors.Is(err, repository.ErrCharacterReferenceBusy) {
+	if errors.Is(err, repository.ErrPropMergeBusy) {
+		return kernel.WrapAppError(kernel.CodeConflict, err.Error(), err)
+	}
+	if errors.Is(err, repository.ErrInvalidPropMerge) {
+		return kernel.BadAuthRequest(err.Error())
+	}
+	if errors.Is(err, repository.ErrCharacterReferenceLocked) || errors.Is(err, repository.ErrCharacterReferenceBusy) || errors.Is(err, repository.ErrShotAssetExcluded) {
 		return kernel.WrapAppError(kernel.CodeConflict, err.Error(), err)
 	}
 	if errors.Is(err, repository.ErrExpectedRevisionRequired) {

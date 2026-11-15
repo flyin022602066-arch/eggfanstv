@@ -67,9 +67,15 @@ export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: Canva
     return { ...failure, taskFailureDiagnostics: diagnostics, taskProviderRequestId: task.providerRequestId };
 }
 
-export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | undefined, input?: CanvasGenerationFailureInput) {
+export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | undefined, input?: CanvasGenerationFailureInput, intent?: "manual") {
     if (metadata?.resourceReloadAvailable) return true;
     const error = { code: metadata?.generationErrorCode || metadata?.taskErrorCode, message: metadata?.errorDetails };
+    if (intent === "manual") {
+        if (metadata?.taskStatus === "running" || metadata?.taskStatus === "queued") return true;
+        const explanation = explainGenerationError(error);
+        if (metadata?.taskStage === "submission_unknown" || explanation.uncertain || ["submission_uncertain", "timeout", "download_failed", "results_missing", "partial_success", "canvas_conflict"].includes(explanation.category)) return true;
+        if (input && (metadata?.taskStatus === "failed" || metadata?.taskStatus === "cancelled")) return false;
+    }
     if (!shouldBlockAutomaticRetry(error, metadata?.taskStage)) return false;
     // Only a resolved submission can prove that moderated input was changed.
     if (input && explainGenerationError(error).moderation) {

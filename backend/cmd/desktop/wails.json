@@ -1,6 +1,6 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "Eggfans TV",
+  "name": "eggfansTV",
   "outputfilename": "EggfansTV",
   "frontend:dir": "../../../web",
   "frontend:install": "bun install --frozen-lockfile",
@@ -11,8 +11,8 @@
   "wailsjsdir": "frontend/wailsjs",
   "info": {
     "companyName": "Eggfans TV",
-    "productName": "Eggfans TV",
-    "productVersion": "1.7.84"
+    "productName": "eggfansTV",
+    "productVersion": "1.7.127"
   },
   "author": {
     "name": "Eggfans TV Contributors"

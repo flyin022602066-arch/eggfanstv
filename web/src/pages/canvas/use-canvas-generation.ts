@@ -318,12 +318,15 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             await queryClient.cancelQueries({ queryKey: ["task-details", projectId, task.id] });
             if (signal.aborted) return;
             queryClient.setQueryData(["task-details", projectId, task.id], (current: { task: GenerationTask; logs: unknown[] } | undefined) => ({ task: result.task, logs: current?.logs ?? [] }));
+            const node = nodesRef.current.find((item) => item.metadata?.taskId === task.id);
+            if (node) bindGenerationTask(node.id, result.task);
             if (result.recovered) {
-                const node = nodesRef.current.find((item) => item.metadata?.taskId === task.id);
                 if (!node) throw new Error("视频已取回，请在生成历史中查看");
                 await applyGenerationTaskResult(node.id, result.task);
                 if (signal.aborted) return;
                 message.success("视频已取回并放回画布，未重新生成");
+            } else if (result.task.status === "failed") {
+                message.error(result.task.failureDiagnostics?.summary || result.task.error || "上游已确认生成失败，请查看任务详情");
             } else {
                 message.info("原任务仍在处理中，请稍后再取回结果");
             }
@@ -336,7 +339,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 setRetrievingTaskId(null);
             }
         }
-    }, [applyGenerationTaskResult, message, nodesRef, projectId, queryClient]);
+    }, [applyGenerationTaskResult, bindGenerationTask, message, nodesRef, projectId, queryClient]);
 
     const observeSubscribedGenerationTask = useCallback(
         (taskId: string, signal: AbortSignal, onUpdate?: (task: GenerationTask) => void) =>

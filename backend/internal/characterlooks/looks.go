@@ -11,16 +11,18 @@ import (
 )
 
 type Look struct {
-	Name           string `json:"name"`
-	Clothing       string `json:"clothing"`
-	Appearance     string `json:"appearance,omitempty"`
-	AgeStage       string `json:"ageStage,omitempty"`
-	Hairstyle      string `json:"hairstyle,omitempty"`
-	State          string `json:"state,omitempty"`
-	MatchHints     string `json:"matchHints,omitempty"`
-	ExcludeHints   string `json:"excludeHints,omitempty"`
-	ChangeReason   string `json:"changeReason,omitempty"`
-	SourceEvidence string `json:"sourceEvidence,omitempty"`
+	Name           string  `json:"name"`
+	Clothing       string  `json:"clothing"`
+	Appearance     string  `json:"appearance,omitempty"`
+	Physique       string  `json:"physique,omitempty"`
+	Props          *string `json:"props,omitempty"`
+	AgeStage       string  `json:"ageStage,omitempty"`
+	Hairstyle      string  `json:"hairstyle,omitempty"`
+	State          string  `json:"state,omitempty"`
+	MatchHints     string  `json:"matchHints,omitempty"`
+	ExcludeHints   string  `json:"excludeHints,omitempty"`
+	ChangeReason   string  `json:"changeReason,omitempty"`
+	SourceEvidence string  `json:"sourceEvidence,omitempty"`
 }
 
 var numbered = regexp.MustCompile(`(?:造型|服装|形态)\s*[一二三四五六七八九十0-9]+\s*[（(]([^）)]+)[）)]\s*[：:]|(?:造型|服装|形态)\s*[一二三四五六七八九十0-9]+\s*[：:]`)
@@ -32,6 +34,9 @@ func inherit(look Look, d map[string]any) Look {
 	if look.Appearance == "" {
 		look.Appearance = text(d["appearance"])
 	}
+	if look.Physique == "" {
+		look.Physique = text(d["physique"])
+	}
 	if look.AgeStage == "" {
 		look.AgeStage = text(d["ageStage"])
 	}
@@ -40,6 +45,13 @@ func inherit(look Look, d map[string]any) Look {
 	}
 	if look.State == "" {
 		look.State = text(d["state"])
+	}
+	if look.Props == nil {
+		props := ""
+		if look.Clothing == text(d["clothing"]) && look.State == text(d["state"]) {
+			props = text(d["props"])
+		}
+		look.Props = &props
 	}
 	return look
 }
@@ -115,13 +127,16 @@ func Definition(base map[string]any, look Look) map[string]any {
 			result[k] = v
 		}
 	}
-	for k, v := range map[string]string{"clothing": look.Clothing, "appearance": look.Appearance, "ageStage": look.AgeStage, "hairstyle": look.Hairstyle, "state": look.State} {
+	for k, v := range map[string]string{"clothing": look.Clothing, "appearance": look.Appearance, "physique": look.Physique, "ageStage": look.AgeStage, "hairstyle": look.Hairstyle, "state": look.State} {
 		if v != "" {
 			result[k] = v
 		}
 	}
+	if look.Props != nil {
+		result["props"] = strings.TrimSpace(*look.Props)
+	}
 	// Rebuild visual prompts: old prose often hardcodes a different main outfit.
-	identity := strings.Join([]string{text(result["appearance"]), text(result["physique"]), text(result["ageStage"]), text(result["hairstyle"]), text(result["state"]), look.Clothing}, "；")
+	identity := strings.Join([]string{text(result["appearance"]), text(result["physique"]), text(result["ageStage"]), text(result["hairstyle"]), text(result["state"]), look.Clothing, text(result["props"])}, "；")
 	result["consistencyPrompt"] = "保持同一角色的身份、五官与体态。当前仅呈现造型「" + look.Name + "」：" + identity + "。不得混用其他服装、年龄或形态。"
 	if strings.Contains(text(base["role"]), "【拟人化系统角色】") {
 		result["multiViewPrompt"] = "同一角色当前造型的完整身体正面、侧面、背面三视图，保留已确认物种与完整形态。" + identity

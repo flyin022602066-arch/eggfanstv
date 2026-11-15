@@ -11,7 +11,7 @@ description: BeefTV后端核心持久化表与状态边界
 
 ### 本地临时图片链接
 
-本地工作区结构版本为 4。版本 3 的迁移 `resource-temporary-image-url` 在 `resources` 增加 `temporary_image_url`、`temporary_image_uploaded_at` 和 `temporary_image_expires_at` 三列，保存生成流程上传到 Uguu 的 URL、上传时间与预计失效时间。缓存复用沿用最初时间，不延长有效期。读取资源信息不会再次上传；原图、`object_key` 和 `public_url` 保持不变，链接仅对资源所有者可见。旧数据没有上传记录时显示尚未上传。
+本地工作区结构版本为 4。版本 3 的迁移 `resource-temporary-image-url` 在 `resources` 增加 `temporary_image_url`、`temporary_image_uploaded_at` 和 `temporary_image_expires_at` 三列，保存生成流程上传到 Uguu 的 URL、上传时间与预计失效时间；nono 图片自动准备使用 Pone、Leopard Hosting 兜底时也沿用这三列，记录备用直链及 24 小时本地复用窗口，不增加数据列，也不代表图床将在该时刻删除文件。缓存复用沿用最初时间，不延长有效期。读取资源信息不会再次上传；原图、`object_key` 和 `public_url` 保持不变，链接字段仅对资源所有者返回，但公开图床链接的持有者可直接访问原图。旧数据没有上传记录时显示尚未上传。
 
 ### Eggfans 私域参考素材
 
@@ -43,7 +43,11 @@ v17 `project-character-face-presets` 为 `projects` 追加可空 TEXT 列 `chara
 
 v18 `project-character-look-references` 为 `asset_versions` 追加 `reference_profile_json`，保存造型分组 ID、名称、外观说明、适用和排除线索，以及启用、定稿、默认标记；同一角色同一造型组仅一版定稿，默认造型也仅一版。`shot_asset_references` 追加 `selection_status`、`selection_source`、`selection_locked`、`selection_reason`、`selection_revision_id`，记录 resolved/pending、manual/auto/rule、锁定、依据与判定时的脚本修订。迁移只追加列；早期无项目版本表的工作区创建缺表，既有镜头和资产不重绑，历史内容保留。
 
+v19 `resource-source-reference` 为已有 `resources` 表追加可空 TEXT 列 `source_resource_id` 及非唯一索引 `idx_resources_source_resource_id`，与资源模型的来源引用字段对齐。旧资源不推断来源、不重写记录，也不重建表；列、索引与迁移记录在同一事务提交。就绪检查验证列和索引定义，避免旧库虽能启动，却在生成结果入库时才报缺列。重复启动保持既有数据和迁移记录不变。上游已经完成的视频通过原任务的“重新查询”取回，不重新提交生成。
+
 造型标注按版本更新时间 CAS，批量选择按项目修订与每镜脚本修订在一个事务提交。生成中镜头不允许替换引用，自动识别不覆盖锁定项。相同脚本另存修订时沿用判定修订；真实改稿后未锁定的自动判定需要重审。重绘产生新版本，不替换旧镜头引用；新版本不自动继承定稿或默认资格。新造型不复制旧服装图片，补图并核对后才可设为定稿。任务及产物 metadata 中的 `characterReferenceSnapshot` 保存实际使用的角色、版本、图片资源与选择依据，供复现排查。
+
+角色版本的 `definition_json.characterType` 可为 `individual`（单人）或 `group`（群体演员），业务分类仍为 `character`，不新增表或迁移。旧设定缺失类型时根据明确的群体名称或身份标记判断；显式设置优先。类型随版本保存，历史分镜仍使用其已绑定版本的类型。群体确认时不把不同成员的服装拆成同一角色的多套造型，生图不使用单人基础版锁脸。
 
 
 v13 `upload-reservation-witness` 追加 `user_upload_reservations`，以 `(user_id, identity)` 唯一索引记录未完成上传预留的日期和字节数。日额仍由 `user_daily_upload_usages` 记账，预留索引与日额增加在同一事务内完成。资源进入 READY 时与状态保存在同一事务清除索引并保留日额；进入 FAILED 或放弃时与状态保存在同一事务按索引金额和日期释放。FAILED 准入只把状态改成 PENDING，不退日额。未结算资源写成 READY 前必须持有见证，缺见证时再预留；残留 FAILED 若仍持有原见证则沿用，不二次扣额。已结算 READY 丢失物理文件时，恢复不重新预留；物理写入或最终保存失败保留原 READY 状态并返回错误，下一次恢复仍复用原资源身份及已消费额度。启动恢复：无对应资源则释放一次；PENDING 保留索引；FAILED 释放；READY 清索引且保留日额。删除 READY 资源只清索引，不把已计入日额当成孤儿退还。重复清理不再扣减其他上传的日额。分片会话文件不是配额账；查询失败时保留恢复证据并记录恢复错误。同一身份的进行中重复预留映射为上传进行中。
@@ -97,7 +101,7 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 ### 桌面本地任务诊断
 
-本地 SQLite 使用 `local_schema_migrations` 记录版本。本地候选目前为 v17，正式 v1.6.21 为 v3；历史图片恢复预览曾使用 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，v10 追加助手业务回合表，v11 追加创作对话表，v12 追加画布文件夹与画板，v13 追加上传预留恢复索引，v14 追加固定技能版本，v15 追加内置权限和跨画布快照，v16 追加助手持久会话绑定，v17 追加项目主角人脸预设，保留原迁移记录、Agent 表和任务扩展列。
+本地 SQLite 使用 `local_schema_migrations` 记录版本。本地候选目前为 v19，正式 v1.6.21 为 v3；历史图片恢复预览曾使用 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，v10 追加助手业务回合表，v11 追加创作对话表，v12 追加画布文件夹与画板，v13 追加上传预留恢复索引，v14 追加固定技能版本，v15 追加内置权限和跨画布快照，v16 追加助手持久会话绑定，v17 追加项目主角人脸预设，v18 追加角色造型引用，v19 追加资源来源引用，保留原迁移记录、Agent 表和任务扩展列。
 
 部分预览版曾将 v3–v6 用于其他迁移。启动时还会按实际表结构检查并补齐 `failure_diagnostics`，不覆盖迁移记录、不删除预览版字段或旧任务；就绪检查同时要求最低版本和该字段存在。任务入库失败返回 HTTP 500、`reason=local_storage_failed`，界面明确显示本地保存失败、尚未提交生成。内部错误链保留数据库原因，HTTP 响应不包含 SQL 原文；handler 日志记录错误类型。
 
@@ -201,6 +205,8 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 启动时 `EnsureDefaultPromptTemplates` 只为尚无任何版本的操作写入内置默认稿。新增操作（当前包括短剧大纲 `short_drama_outline` 和技能草稿 `skill_draft`）会在下次启动补种，不改已有操作的启用版本。
 
+角色设定图编译时，若命中系统自动写入且内容完全一致的旧版全身三视图默认稿，按当前角色类型使用现行内置构图：单人使用独立头部特写与身体三视图，群体使用多人同框选角图，不再混入旧版单人构图。此转换仅作用于本次编译，不写回模板表；人工创建或修改过的模板、用户追加和改写要求均保留。
+
 ## 短剧分镜生产
 
 | 表 | 用途 | 关键边界 |
@@ -208,10 +214,10 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 | `projects` | 保存短剧项目基础设置、画幅、画风快照、项目主图、主角人脸预设和默认图片/视频模型 | `default_image_model` / `default_video_model` 保存前端模型选择器的渠道限定引用；模型下架或渠道停用时前端回退当前全局默认。`cover_resource_id` 只能引用当前用户已就绪的图片资源。`character_face_presets_json` 保存男主/女主的 `resourceId`、`fileName` 与 `assetIds`，不保存图片正文或临时直链；绑定角色必须属于本项目，同一角色不能同时绑定两张主角面孔。资源删除检查会保留仍被项目主图或人脸预设引用的图片 |
 | `project_units` | 保存项目章节或集数的正文、排序和状态 | `word_count` 在正文创建、导入和更新时同步维护，项目详情只返回摘要和字数，不批量返回长篇正文；升级时会为旧正文回填字数 |
 | `assets` / `asset_folders` / `asset_versions` / `project_asset_links` | 保存用户资产、自定义分类、不可变版本及项目引用 | 业务分类统一为 `character`、`environment`、`prop`、`material`、`other`；自定义分类通过用户级 `asset_folders` 与 `assets.folder_id` 表达，不改变业务分类语义 |
-| `project_asset_candidates` | 保存章节或 Agent 提取后等待用户确认的资产候选 | `name_key` 保存规范化名称，`source` 记录提取入口；角色候选只允许来自 `chapter_character_extract` 且必须关联章节，同一项目、分类和规范化名称的待确认候选保持唯一 |
+| `project_asset_candidates` | 保存章节或 Agent 提取的资产候选和已确认关联 | `name_key` 保存规范化名称，`source` 记录入口；角色候选只允许来自 `chapter_character_extract` 且必须关联章节。同一项目、分类和规范化名称的待确认候选保持唯一；`manual_prop_merge` 为道具手动归并的已确认名称与别名记录，`resolved_asset_id` 指向保留目标，不修改其他项目的资产定义 |
 | `shots` | 保存章节内稳定的镜头身份、排序和当前版本指针 | 不保存完整生成历史；`current_revision_id` 指向当前采用的分镜脚本版本 |
 | `shot_revisions` | 保存画面、动作、台词、景别、机位、运镜、提示词和动作节拍 | 每次编辑创建新版本；历史版本不可被静默覆盖 |
-| `shot_asset_references` | 将镜头绑定到具体资产版本 | 修改引用时只使该镜头的下游产物过期，不影响其他镜头 |
+| `shot_asset_references` | 将镜头绑定到具体资产版本，并保存手动排除记录 | `linked` 为有效绑定；`excluded` 为当前镜头手动移除，同一资产更换版本后仍不自动恢复。修改引用时只使该镜头的下游产物过期，不影响其他镜头 |
 | `shot_artifacts` | 保存分镜图、动作预演、首尾帧、视频等版本化产物 | `selected` 表示当前采用版本；上游变化后状态转为 `stale`，历史资源继续保留 |
 | `production_task_links` | 显式记录生成任务所属的领域项目、画布、章节、镜头和工作流步骤 | `Task.project_id` 仍兼容画布任务身份，不再用它单独推断短剧领域归属 |
 | `creation_runs` | 保存创作 Agent 的服务端权威状态、执行租约、已批准提案和画布快照 | `(user_id, client_key)` 唯一；客户端会话只作为输入，修订号、执行 epoch 和租约由 service 强校验，不能据前端状态跳过审批或重复执行 |
@@ -279,7 +285,7 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |
-| `resources` | 保存资源元数据和实际存储位置引用 | `user_id + upload_key` 唯一约束保证逻辑上传幂等；浏览器默认经同源接口读取 |
+| `resources` | 保存资源元数据和实际存储位置引用 | `user_id + upload_key` 唯一约束保证逻辑上传幂等；`source_resource_id` 记录本地派生素材（例如人脸遮罩）的原始资源，提交校验仍按用户归属和就绪状态执行；浏览器默认经同源接口读取 |
 | `resource_deletion_jobs` | 在业务记录删除后可靠清理物理对象 | 固化资源的对象键；删除失败保留任务并重试，本地文件已不存在时按幂等成功处理 |
 
 `resources.upload_key` 保存客户端 `X-Idempotency-Key` 的 SHA-256 摘要。相同用户重复提交同一逻辑上传时复用已有资源。未提供幂等标识的后台生成资源保持 `NULL`，不参与该唯一约束。

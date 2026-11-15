@@ -38,6 +38,20 @@ test("asset workspace confirms looks, preserves redraw history and isolates look
     expect(code).toBe(0);
 }, 120000);
 afterAll(() => server?.stop(true));
+test("group actors persist their type and use the dedicated generation dialog in Chromium", async () => {
+    const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/character-group-browser.mjs"), server.url.toString(), artifactDir], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    console.log(stdout);
+    if (code) throw new Error(stdout + stderr);
+    expect(code).toBe(0);
+}, 60000);
+test("manual character bindings recover after removal and preserve unsaved scripts in Chromium", async () => {
+    const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/character-binding-recovery-browser.mjs"), server.url.toString(), artifactDir], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    console.log(stdout);
+    if (code) throw new Error(stdout + stderr);
+    expect(code).toBe(0);
+}, 60000);
 test("look sidebar and version manager persist manual locks and metadata without generation", async () => {
     const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/character-look-browser.mjs"), server.url.toString(), artifactDir], { stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);

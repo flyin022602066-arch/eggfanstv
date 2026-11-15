@@ -48,5 +48,7 @@ export function activeCharacterLookKeys(tasks: GenerationTask[], versions: Chara
 }
 
 export function newCharacterLookDefinition(base: CharacterReferenceVersion, differences: string, overrides: Record<string, unknown>) {
-    return { ...base.definition, clothing: differences.trim(), state: "", ...overrides };
+    const definition: Record<string, unknown> = { ...base.definition, clothing: differences.trim(), state: "", props: "", consistencyPrompt: "", multiViewPrompt: "", ...overrides };
+    delete definition.looks;
+    return definition;
 }

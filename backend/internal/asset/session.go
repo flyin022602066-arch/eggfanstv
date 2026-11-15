@@ -27,13 +27,14 @@ const (
 )
 
 type ChunkedUploadStart struct {
-	FileName       string
-	Kind           string
-	Size           int64
-	Width          int
-	Height         int
-	DurationMs     int64
-	IdempotencyKey string
+	FileName         string
+	Kind             string
+	Size             int64
+	Width            int
+	Height           int
+	DurationMs       int64
+	IdempotencyKey   string
+	SourceResourceID string
 }
 
 type ChunkedUploadSessionInfo struct {
@@ -43,40 +44,42 @@ type ChunkedUploadSessionInfo struct {
 }
 
 type chunkedUploadSession struct {
-	mu          sync.Mutex
-	ID          string
-	UserID      string
-	FileName    string
-	Kind        string
-	Size        int64
-	Width       int
-	Height      int
-	DurationMs  int64
-	Identity    string
-	Day         string
-	Reserved    bool
-	ChunkCount  int
-	Dir         string
-	CreatedAt   time.Time
-	completing  bool
-	complete    *model.Resource
-	completeErr error
+	mu               sync.Mutex
+	ID               string
+	UserID           string
+	FileName         string
+	Kind             string
+	Size             int64
+	Width            int
+	Height           int
+	DurationMs       int64
+	Identity         string
+	SourceResourceID string
+	Day              string
+	Reserved         bool
+	ChunkCount       int
+	Dir              string
+	CreatedAt        time.Time
+	completing       bool
+	complete         *model.Resource
+	completeErr      error
 }
 
 type chunkSessionMeta struct {
-	ID         string    `json:"id"`
-	UserID     string    `json:"userId"`
-	FileName   string    `json:"fileName"`
-	Kind       string    `json:"kind"`
-	Size       int64     `json:"size"`
-	Width      int       `json:"width"`
-	Height     int       `json:"height"`
-	DurationMs int64     `json:"durationMs"`
-	Identity   string    `json:"identity"`
-	Day        string    `json:"day"`
-	Reserved   bool      `json:"reserved"`
-	ChunkCount int       `json:"chunkCount"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID               string    `json:"id"`
+	UserID           string    `json:"userId"`
+	FileName         string    `json:"fileName"`
+	Kind             string    `json:"kind"`
+	Size             int64     `json:"size"`
+	Width            int       `json:"width"`
+	Height           int       `json:"height"`
+	DurationMs       int64     `json:"durationMs"`
+	Identity         string    `json:"identity"`
+	SourceResourceID string    `json:"sourceResourceId,omitempty"`
+	Day              string    `json:"day"`
+	Reserved         bool      `json:"reserved"`
+	ChunkCount       int       `json:"chunkCount"`
+	CreatedAt        time.Time `json:"createdAt"`
 }
 
 func (s *Service) sessionRoot() string {
@@ -141,7 +144,8 @@ func (sess *chunkedUploadSession) matchesRequest(req ChunkedUploadStart) bool {
 		sess.Size == req.Size &&
 		sess.Width == req.Width &&
 		sess.Height == req.Height &&
-		sess.DurationMs == req.DurationMs
+		sess.DurationMs == req.DurationMs &&
+		sess.SourceResourceID == strings.TrimSpace(req.SourceResourceID)
 }
 
 func resourceMatchesRequest(resource *model.Resource, req ChunkedUploadStart) error {
@@ -234,7 +238,7 @@ func (s *Service) StartChunkedUpload(userID string, req ChunkedUploadStart) (Chu
 	sess := &chunkedUploadSession{
 		ID: sessionID, UserID: userID, FileName: req.FileName, Kind: req.Kind,
 		Size: req.Size, Width: req.Width, Height: req.Height, DurationMs: req.DurationMs,
-		Identity: identity, ChunkCount: chunkCount, Dir: dir, CreatedAt: time.Now(),
+		Identity: identity, SourceResourceID: strings.TrimSpace(req.SourceResourceID), ChunkCount: chunkCount, Dir: dir, CreatedAt: time.Now(),
 	}
 	if err := writeSessionMeta(sess); err != nil {
 		_ = os.RemoveAll(dir)
@@ -358,6 +362,9 @@ func (s *Service) CompleteChunkedUpload(userID, uploadID string) (*model.Resourc
 	s.sessionMu.Unlock()
 	defer sess.mu.Unlock()
 	if sess.complete != nil {
+		if err := s.attachSourceResource(sess.UserID, sess.complete, sess.SourceResourceID); err != nil {
+			return nil, err
+		}
 		return sess.complete, nil
 	}
 	sess.completing = true
@@ -407,6 +414,9 @@ func (s *Service) completeSessionWork(sess *chunkedUploadSession) (*model.Resour
 	}
 	if existing != nil {
 		if existing.Status == model.ResourceStatusReady {
+			if err := s.attachSourceResource(sess.UserID, existing, sess.SourceResourceID); err != nil {
+				return nil, err
+			}
 			if commitErr := s.commitWitness(sess.UserID, identity, sess.Size); commitErr != nil {
 				return nil, commitErr
 			}
@@ -416,6 +426,9 @@ func (s *Service) completeSessionWork(sess *chunkedUploadSession) (*model.Resour
 			resource, err := s.promoteReady(existing, func() (string, error) {
 				return s.reserveRetry(existing.UserID, existing.Size, identity)
 			})
+			if err == nil {
+				err = s.attachSourceResource(sess.UserID, resource, sess.SourceResourceID)
+			}
 			if err == nil && resource != nil && resource.Status == model.ResourceStatusReady {
 				if commitErr := s.commitWitness(sess.UserID, identity, sess.Size); commitErr != nil {
 					return resource, commitErr
@@ -429,6 +442,9 @@ func (s *Service) completeSessionWork(sess *chunkedUploadSession) (*model.Resour
 		}
 		defer closeAssembled(body)
 		resource, err := s.RetryOwned(sess.UserID, existing.ID, existing.Kind, existing.MimeType, sess.Size, body)
+		if err == nil {
+			err = s.attachSourceResource(sess.UserID, resource, sess.SourceResourceID)
+		}
 		if err == nil && resource != nil && resource.Status == model.ResourceStatusReady {
 			s.quotaCommit(sess.UserID, sess.Size, identity)
 		}
@@ -442,6 +458,9 @@ func (s *Service) completeSessionWork(sess *chunkedUploadSession) (*model.Resour
 	mimeType := DetectUploadedMimeType(body, sess.FileName, "")
 	_, _ = body.Seek(0, io.SeekStart)
 	resource, created, err := s.Store(sess.UserID, sess.Kind, sess.FileName, mimeType, sess.Size, sess.Width, sess.Height, sess.DurationMs, body, &uploadKey)
+	if err == nil {
+		err = s.attachSourceResource(sess.UserID, resource, sess.SourceResourceID)
+	}
 	s.finishQuota(sess.UserID, sess.Day, sess.Size, resource, created, err, identity)
 	if err == nil && resource != nil && resource.Status == model.ResourceStatusReady {
 		s.quotaCommit(sess.UserID, sess.Size, identity)
@@ -537,7 +556,7 @@ func (s *Service) rememberCompletedLocked(userID, identity string, ready *model.
 	sess := &chunkedUploadSession{
 		ID: sessionID, UserID: userID, FileName: req.FileName, Kind: req.Kind,
 		Size: req.Size, Width: req.Width, Height: req.Height, DurationMs: req.DurationMs,
-		Identity: identity, ChunkCount: chunkCount, CreatedAt: time.Now(),
+		Identity: identity, SourceResourceID: strings.TrimSpace(req.SourceResourceID), ChunkCount: chunkCount, CreatedAt: time.Now(),
 		complete: ready,
 	}
 	s.sessions[sessionID] = sess
@@ -563,7 +582,7 @@ func writeSessionMeta(sess *chunkedUploadSession) error {
 	payload, err := json.Marshal(chunkSessionMeta{
 		ID: sess.ID, UserID: sess.UserID, FileName: sess.FileName, Kind: sess.Kind,
 		Size: sess.Size, Width: sess.Width, Height: sess.Height, DurationMs: sess.DurationMs,
-		Identity: sess.Identity, Day: sess.Day, Reserved: sess.Reserved,
+		Identity: sess.Identity, SourceResourceID: sess.SourceResourceID, Day: sess.Day, Reserved: sess.Reserved,
 		ChunkCount: sess.ChunkCount, CreatedAt: sess.CreatedAt,
 	})
 	if err != nil {

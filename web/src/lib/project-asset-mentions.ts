@@ -4,8 +4,35 @@ export const shotAssetPromptFields = ["videoPrompt", "plotDescription", "action"
 
 type ProjectCharacterIdentity = { name: string; aliases?: unknown; assetId?: string };
 
+export function projectCharacterIdentityNames<T extends ProjectCharacterIdentity>(characters: T[]): string[][] {
+    const generic = /^(?:我|你|他|她|它|他们|她们|它们|主角|男主|女主|男主角|女主角|主人公|说话人|人物|角色)$/u;
+    const names = characters.map((character) => [...new Set([character.name, ...(Array.isArray(character.aliases) ? character.aliases.filter((alias): alias is string => typeof alias === "string" && !generic.test(alias.trim())) : [])].map(normalizeName).filter(Boolean))]);
+    const owner = (index: number) => characters[index]!.assetId || normalizeName(characters[index]!.name);
+    const owners = new Map<string, Set<string>>();
+    const register = (name: string, identity: string) => {
+        const entries = owners.get(name) || new Set<string>();
+        entries.add(identity);
+        owners.set(name, entries);
+    };
+    const givenNames = names.map((entries, index) => {
+        for (const name of entries) register(name, owner(index));
+        return entries.flatMap((name) => {
+            if (/^[\p{Script=Latin}\p{M}]+(?:[-'’][\p{Script=Latin}\p{M}]+)*(?:\s+[\p{Script=Latin}\p{M}]+(?:[-'’][\p{Script=Latin}\p{M}]+)*)+$/u.test(name)) {
+                const parts = name.split(/\s+/u);
+                return [...new Set([parts[0]!, parts.at(-1)!])].filter((part) => part.length > 1 && !/^(?:mr|mrs|ms|miss|dr|sir|lady|lord|captain|officer|professor)$/u.test(part));
+            }
+            const surname = name.match(/^(?:欧阳|司马|上官|诸葛|东方|皇甫|尉迟|公孙|慕容|司徒|夏侯|令狐|南宫|独孤|宇文|长孙|轩辕|端木|百里|闻人|钟离|西门|东郭|第五|赵|钱|孙|李|周|吴|郑|王|冯|陈|褚|卫|蒋|沈|韩|杨|朱|秦|尤|许|何|吕|施|张|孔|曹|严|华|金|魏|陶|姜|戚|谢|邹|喻|柏|水|窦|章|云|苏|潘|葛|奚|范|彭|郎|鲁|韦|昌|马|苗|凤|花|方|俞|任|袁|柳|唐|罗|薛|雷|贺|倪|汤|滕|殷|毕|郝|安|常|乐|于|时|傅|皮|卞|齐|康|伍|余|元|卜|顾|孟|平|黄|和|穆|萧|尹|姚|邵|汪|祁|毛|禹|狄|米|贝|明|臧|计|伏|成|戴|宋|茅|庞|熊|纪|舒|屈|项|祝|董|梁|杜|阮|蓝|闵|席|季|麻|强|贾|路|娄|危|江|童|颜|郭|梅|盛|林|刁|钟|徐|邱|骆|高|夏|蔡|田|樊|胡|霍|虞|万|支|柯|管|卢|莫|房|裘|缪|解|应|宗|丁|宣|邓|单|洪|包|左|石|崔|程|龚|陆|叶|白|温|庄|晏|柴|欧|连|段|易|聂|向|卓|翟|曾|谭|尚|屠|巫|沙|关|游|宫|岳|黎|冷|薄|厉|楚|洛|墨|宁)/u)?.[0];
+            const givenName = surname ? name.slice(surname.length) : "";
+            return /^\p{Script=Han}{2}$/u.test(givenName) && !generic.test(givenName) && !/^(?:父亲|母亲|爷爷|奶奶|爸爸|妈妈|叔叔|阿姨|姐姐|哥哥|妹妹|弟弟|师傅|师父|老师|主任|医生|先生|女士|大人|公子|小姐|夫人|将军|大哥|大姐|老板)$/u.test(givenName) ? [givenName] : [];
+        });
+    });
+    givenNames.forEach((entries, index) => { for (const name of entries) register(name, owner(index)); });
+    return names.map((entries, index) => [...new Set([...entries, ...givenNames[index]!.filter((name) => owners.get(name)?.size === 1)])]);
+}
+
 export function projectCharacterAppearances<T extends ProjectCharacterIdentity>(source: string, characters: T[]): T[] {
-    const names = (character: T) => [character.name, ...(Array.isArray(character.aliases) ? character.aliases.filter((alias): alias is string => typeof alias === "string" && !/^(?:我|你|他|她|它|他们|她们|它们|主角|男主|女主|男主角|女主角|主人公|说话人|人物|角色)$/u.test(alias.trim())) : [])].map(normalizeName).filter(Boolean);
+    const identityNames = projectCharacterIdentityNames(characters);
+    const names = (character: T) => identityNames[characters.indexOf(character)]!;
     const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const identities = new Map(characters.filter((character) => character.assetId).map((character) => [character.assetId!, character.name]));
     let text = source.normalize("NFKC")
@@ -17,10 +44,13 @@ export function projectCharacterAppearances<T extends ProjectCharacterIdentity>(
         .replace(/^[\t ]*(?:[-*][\t ]*)?[^@\n：:]+[：:]\s*(?:(?:人物|角色|图片)参考\s*[：:]\s*)?@\[asset:[^\]]+\]\s*$/gmu, "")
         .replace(/@\[asset:([^\]]+)\]/gu, (_token, assetId: string) => identities.get(assetId.trim()) || "");
     const speakerNames = [...new Set(characters.flatMap(names))].sort((left, right) => right.length - left.length).map(escape).join("|");
+    const voiceOnly = "(?:画外|场外|电话|旁白|仅声音|未出镜|\\b(?:off[ -]?screen|voice[ -]?over|on[ -]+the[ -]+phone|O\\.?S\\.?|V\\.?O\\.?)\\b)";
     if (speakerNames) {
         text = text.replace(new RegExp(`(?:画外音|场外声音|仅声音)[\\t ]*(?:${speakerNames})[\\t ]*[：:][^\\n]*`, "gu"), "\n");
         text = text.replace(new RegExp(`(?:${speakerNames})\\s*[（(][^）)\\n]*(?:画外|场外|电话|旁白|仅声音|未出镜|OS|O\\.S\\.|V\\.O\\.)[^）)\\n]*[）)][^。！？；\\n]*`, "giu"), "\n");
+        text = text.replace(new RegExp(`(?<![a-z0-9])(?:${speakerNames})\\s*[（(][^）)\\n]*${voiceOnly}[^）)\\n]*[）)][^\\n]*`, "giu"), "\n");
     }
+    text = text.replace(/^[\t ]*(?:voice[ -]?over|narrator|off[ -]?screen|O\.S\.|V\.O\.)[\t ]*[：:][^\n]*/gimu, "\n");
     const audioEnd = "(?=\\n|→|(?:起幅|过程|落幅|动作(?:与表情)?|画面|镜头[0-9]+|结尾约束)[：:]|$)";
     text = text.replace(new RegExp(`(?<![\\p{L}\\p{N}])(?:声音(?:或台词)?|音频台词|对白|台词|旁白|画外音|场外声音|仅声音)[\\t ]*[：:][\\s\\S]*?${audioEnd}`, "gu"), "\n");
     text = text.replace(/“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』|"[^"\n]*"|'[^'\n]*'/gu, (quote: string, offset: number, original: string) => {
@@ -31,10 +61,11 @@ export function projectCharacterAppearances<T extends ProjectCharacterIdentity>(
         text = text
             .replace(new RegExp(`(?:${speakerNames})\\s*(?:在|从)?(?:电话|通话|对讲机|耳机)(?:的)?(?:另一端|那头|里|中)[^\\n]*?(?:〈台词结束〉|(?=\\n|$))`, "giu"), "\n")
             .replace(new RegExp(`((?:听见|听到)\\s*)(?:${speakerNames})(?=\\s*(?:说|问|喊|叫|回答|答道|道\\s*[：:]))`, "giu"), "$1")
-            .replace(new RegExp(`((?:${speakerNames}|他|她|旁人)\\s*(?:[（(][^）)\\n]*[）)]\\s*)?)(?:(?:说|问|答|喊|叫)(?:道)?|道)?\\s*[：:][^\\n]*?(?:〈台词结束〉|(?=\\n|$))`, "giu"), "$1〈可见〉");
+            .replace(new RegExp(`((?<![a-z0-9])(?:${speakerNames}|他|她|旁人)(?![a-z0-9])\\s*(?:[（(][^）)\\n]*[）)]\\s*)?)(?:(?:说|问|答|喊|叫)(?:道)?|道|(?:says?|asks?|replies|responds|shouts?|whispers?)\\b)?\\s*[：:][^\\n]*?(?:〈台词结束〉|(?=\\n|$))`, "giu"), "$1〈可见〉");
     }
     text = text.replaceAll("〈台词结束〉", "。");
     text = text
+        .replace(/\b(?:says?|said|asks?|asked|replies|replied|responds?|responded|shouts?|shouted|whispers?|whispered|mentions?|mentioned|recalls?|recalled|remembers?|remembered|hears?|heard|imagines?|imagined)\b[^。！？；\n]*/giu, "〈可见〉")
         .replace(/(?:说出|讲出|念出)(?:前半|后半|这|那|一整|下一|前一)?(?:段|句)(?:话|台词|对白)/gu, "〈可见〉")
         .replace(/(?:(?<![小传假学解评论听据])说(?:道)?(?!完|明|服|唱|书|法)|问(?:道)?(?!题|候)|答(?:道)?(?!案)|喊(?:道)?|叫(?:道)?|回应|回答|嘀咕|念叨|解释|叮嘱|提醒|提起|谈起|提到|听说|据说|想起|想念|回想|以为|假设|如果)(?!完)[：:\s]*[^。！？；\n]*/gu, "〈可见〉")
         .replace(/(?:传来|听见|听到|响起)[^。！？；\n]*(?:声音|嗓音|喊声)[^。！？；\n]*/gu, "〈可见〉");
@@ -43,26 +74,39 @@ export function projectCharacterAppearances<T extends ProjectCharacterIdentity>(
         .split(/[\s、，,；;\/|]+/u)
         .filter((entry) => !/画外|场外|电话|旁白|仅声音|未出镜|OS|O\.S\.|V\.O\./iu.test(entry))
         .map((entry) => normalizeName(entry.replace(/[（(][^）)]*[）)]/gu, "").replace(/(?:若干|数名|多名|群演|若干人)$/u, "")))));
+    const mentions = new Map<string, RegExpMatchArray[]>();
+    if (speakerNames) for (const match of text.matchAll(new RegExp(`(?<![a-z0-9])(?:${speakerNames})(?![a-z0-9])`, "giu"))) {
+        const name = normalizeName(match[0]);
+        const entries = mentions.get(name) || [];
+        entries.push(match);
+        mentions.set(name, entries);
+    }
     return characters.filter((character) => names(character).some((name) => {
         if (declaredCast.has(name)) return true;
-        const pattern = new RegExp(`(?<![a-z0-9])${escape(name)}(?![a-z0-9])`, "giu");
-        for (const match of text.matchAll(pattern)) {
+        for (const match of mentions.get(name) || []) {
             const before = text.slice(0, match.index).split(/[。！？；，,\n]/u).at(-1) || "";
             const after = text.slice(match.index! + match[0].length);
             if (/(?:明天|明日|将来|以后|下一章|下章|次日|假如|如果|尚未|未见|没有|不见|等待|等着|寻找|寻找着)[^。！？；，,\n]*$/u.test(before)) continue;
             if (/^\s*(?:不在|未在|未到|未出现|并未|尚未|没有|不曾|未曾|将会|才会|会在|明天|明日|的(?:父亲|母亲|女儿|儿子|名字|传闻|声音|消息|信|故事|来信))/u.test(after)) continue;
+            if (/\b(?:waiting for|looking for|searching for|without)\s*$/iu.test(before) || /^\s*(?:(?:is|was)\s+(?:not|absent|missing)|will\b|would\b|(?:is|was)\s+(?:on the phone|off[ -]?screen)|(?:'s|’s)\s+(?:voice|name|story))\b/iu.test(after)) continue;
             const action = after.replace(/^[\s）)]+/u, "").split(/[。！？；，,\n]/u)[0] || "";
             const collectiveAction = action.replace(/^(?:们)?(?:(?:也|都|均|皆|依旧|一同|一起|一齐|齐声|齐齐|纷纷|相继|互相|相互|随之|随即|接着|同时|安静地?|静静地?)\s*)+/u, "");
-            const physicalAction = /^(?:〈可见〉|正|正在|仍|依然|已经|已|突然|随后|缓缓|慢慢|轻轻|微微|默默|低声|高声|大声|小声|独自|独|一边|一手|双手|身穿|身着|穿|戴|披|背|在|站|坐|躺|卧|走|跑|奔|迈|踏|跨|停|靠|倚|蹲|跪|起|退|转|抬|低|垂|摇|点|伸|收|握|拿|提|抱|扶|推|拉|开|关|举|挥|拔|望|看|注视|凝视|盯|瞥|闭|睁|皱|露|笑|哭|流泪|叹|呼|吸|喘|沉思|愣|怔|惊|颤|打|击|砍|刺|踢|摔|扑|揽|捂|摸|触|碰|拍|递|接|取|拾|掏|翻|读|写|签|吃|喝|吞|咽|咬|嚼|听|等待|等候|出现在|出现|可见|入镜|出镜|交谈|说完|面无表情|面色|脸色|神色|面容|身形|的(?:脸|面容|身影|轮廓|手|眼|头发|背影))/u;
-            const expressiveAction = /^(?:守在|仰(?:着|起|头)|按(?:下|住|停|着)|(?:摘|脱|褪|卸)(?:下|去|掉|除|开|手|衣|帽)|(?:搓|揉|捏)(?:了|着|住|紧|手|指)|松(?:开|手)|面(?:朝|向)|向(?:前|后|左|右)(?:一|两|半|迈|走|跨|退|移|挪|伸)|一(?:怔|愣|惊|颤|笑|叹)|(?:的)?(?:睫毛|眉梢|嘴角|嘴唇|指尖|肩膀)(?:轻轻|微微|轻|微)?(?:颤|抖|扬|垂|动|紧|勾))/u;
-            const visibleState = /^(?:的)?(?:(?:胸前|胸口|额头|脸上|肩头|身上|手上|身旁)(?:虽|却|仍|还|已|正)?(?:有|留|露|浮现|泛起|缠绕)|呈(?:半?弧形|扇形|一字形|环形)(?:围站|站|围坐|坐)|围站|肩宽|腰窄|面无血色|双目紧闭|昏迷|沉睡|被(?:抬|抱|扶|推|拉|绑|捆)|扛(?:着|出|起|住))/u;
+            const physicalAction = /^(?:〈可见〉|正|正在|仍|依然|已经|已|突然|随后|缓缓|慢慢|轻轻|微微|默默|低声|高声|大声|小声|独自|独|一边|一手|双手|身穿|身着|穿|戴|披|背|在|站|坐|躺|卧|走|跑|奔|迈|踏|跨|停|靠|倚|蹲|跪|半跪|起|退|转|抬|低|垂|摇|点|伸|收|握|拿|提|抱|扶|推|拉|开|关|举|挥|拔|望|看|注视|凝视|盯|瞥|闭|睁|皱|露|笑|哭|流泪|叹|呼|吸|喘|沉思|愣|怔|惊|颤|打|击|砍|刺|踢|摔|扑|揽|捂|摸|触|碰|拍|递|接|取|拾|掏|翻|读|写|签|吃|喝|吞|咽|咬|嚼|听|等待|等候|出现在|出现|可见|入镜|出镜|交谈|说完|面无表情|面色|脸色|神色|面容|身形|的(?:脸|面容|身影|轮廓|手|眼|头发|背影))/u;
+            const englishAction = /^(?:(?:(?:is|was|still|slowly|quietly|suddenly|then)\s+)*(?:stand(?:s|ing)?|sit(?:s|ting)?|kneel(?:s|ing)?|step(?:s|ping)?|walk(?:s|ing)?|enter(?:s|ing)?|turn(?:s|ing)?|look(?:s|ing)?|hold(?:s|ing)?|reach(?:es|ing)?|smile(?:s)?|smiling|nod(?:s|ding)?|wear(?:s|ing)?|lean(?:s|ing)?|approach(?:es|ing)?|raise(?:s)?|raising)\b)/iu;
+            const expressiveAction = /^(?:守在|立(?:在|于|着)|分(?:立|站|坐)|张(?:嘴|口)|倾身|仰(?:着|起|头)|按(?:下|住|停|着)|(?:摘|脱|褪|卸)(?:下|去|掉|除|开|手|衣|帽)|(?:搓|揉|捏)(?:了|着|住|紧|手|指)|松(?:开|手)|面(?:朝|向)|向(?:前|后|左|右)(?:一|两|半|迈|走|跨|退|移|挪|伸)|一(?:怔|愣|惊|颤|笑|叹)|(?:的)?(?:睫毛|眉梢|嘴角|嘴唇|指尖|肩膀)(?:轻轻|微微|轻|微)?(?:颤|抖|扬|垂|动|紧|勾))/u;
+            const visibleState = /^(?:的)?(?:(?:胸前|胸口|额头|脸上|肩头|身上|手上|身旁)(?:虽|却|仍|还|已|正)?(?:有|留|露|浮现|泛起|缠绕)|处于(?:可用)?景深(?:内|中)|(?:位于|处在)(?:前景|中景|后景)|呈(?:半?弧形|扇形|一字形|环形)(?:围站|站|围坐|坐)|围站|肩宽|腰窄|面无血色|双目紧闭|昏迷|沉睡|被(?:抬|抱|扶|推|拉|绑|捆)|扛(?:着|出|起|住))/u;
             const placedCharacter = /(?:坐着|躺着|站着|卧着)(?:[^。！？；，,\n]{0,20})$/u.test(before) && /^[\s，,。！？；\n]|^$/u.test(after);
-            if (physicalAction.test(collectiveAction) || expressiveAction.test(collectiveAction) || visibleState.test(collectiveAction) || placedCharacter || /(?:看向|望向|对着|注视|凝视|盯着|扶着|拥抱|抱住|拽住|拉住|推向|看见|看到)\s*$/u.test(before) || /照片|画像|肖像|屏幕|影像|回忆画面|闪回画面/u.test(before)) return true;
-            if (/^[与和跟、]/u.test(action) && /交谈|对视|并肩|站|坐|走|握手|拥抱|挥手|争吵|推|拉|打/u.test(action)) return true;
+            if (physicalAction.test(collectiveAction) || englishAction.test(action.trimStart()) || expressiveAction.test(collectiveAction) || visibleState.test(collectiveAction) || placedCharacter || /(?:看向|望向|对着|注视|凝视|盯着|扶着|拥抱|抱住|拽住|拉住|推向|看见|看到)\s*$/u.test(before) || /照片|画像|肖像|屏幕|影像|回忆画面|闪回画面/u.test(before)) return true;
+            if (/^[与和跟、]/u.test(action) && /交谈|对视|并肩|分立|站|坐|走|握手|拥抱|挥手|争吵|推|拉|打/u.test(action)) return true;
             if (normalizeName(source) === name) return true;
         }
         return false;
     }));
+}
+
+export function projectCharacterDialogueSpeakers<T extends ProjectCharacterIdentity>(source: string, characters: T[]): T[] {
+    const labels = [...source.matchAll(/^[\t ]*([^\n：:]+[：:])[^\n]*/gmu)].map((match) => `${match[1]}""`).join("\n");
+    return projectCharacterAppearances(labels, characters);
 }
 
 export function normalizeProjectAssetMentions(prompt: string, assets: ProjectAssetMentionAsset[], declarations = prompt) {
@@ -108,6 +152,18 @@ export function pruneUnboundGeneratedCharacterReferences(prompt: string, assets:
         staleCompiledRow = false;
         return true;
     }).join("\n");
+}
+
+export function pruneExcludedProjectAssetReferences(prompt: string, assets: ProjectAssetMentionAsset[], excludedAssetIds: string[] = []) {
+    if (!excludedAssetIds.length) return prompt;
+    const excluded = new Map(assets.filter((asset) => excludedAssetIds.includes(asset.id)).map((asset) => [asset.id, asset.title]));
+    let referenceSection = false;
+    return prompt.split("\n").filter((line) => {
+        const heading = line.match(/^[\t ]*【([^】]+)】[\t \r]*$/u);
+        if (heading) referenceSection = ["角色参考", "场景与道具参考"].includes(heading[1]!);
+        const declaration = line.match(/^[\t ]*[^@\r\n：:]+[：:]\s*@\[asset:([^\]]+)\][\t \r]*$/u);
+        return !(referenceSection && declaration && excluded.has(declaration[1]!.trim()));
+    }).join("\n").replace(/@\[asset:([^\]]+)\]/gu, (token, assetId: string) => excluded.get(assetId.trim()) || token);
 }
 
 export function unresolvedProjectAssetMentions(prompt: string, assets: ProjectAssetMentionAsset[], boundAssetIds: string[]): ProjectAssetMentionIssue[] {

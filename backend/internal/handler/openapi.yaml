@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: BeefTV HTTP API
+  title: eggsfansTV HTTP API
   version: "1.0.0"
   description: |
     路径前缀是 `/api`。前后端一起发布，不按路径做 API 版本。
@@ -25,10 +25,68 @@ tags:
   - name: admin
   - name: beefapi
   - name: hanbao
+  - name: doubao-browser
   - name: agent-ops
   - name: assistant
   - name: creation-conversations
 paths:
+  /doubao-browser/status:
+    get:
+      tags: [doubao-browser]
+      summary: 读取当前本地工作区浏览器池状态
+      description: 返回 enabled、target=100、reserve=2、total、idle、busy、profiles。网页就绪不表示上游额度已确认；此读取不启动浏览器页面。
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '401': { description: 本地工作区身份无效 }
+        '503': { description: 本地服务不可用 }
+  /doubao-browser/settings:
+    put:
+      tags: [doubao-browser]
+      summary: 启停固定 100 个环境及两个空闲环境的自动维护
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 参数或运行环境无效 }
+        '403': { description: 缺少可信桌面写入权限 }
+  /doubao-browser/open:
+    post:
+      tags: [doubao-browser]
+      summary: 打开本池未占用的专用环境
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profileId]
+              properties:
+                profileId: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 环境无效或有任务占用 }
+        '403': { description: 缺少可信桌面写入权限 }
+  /doubao-browser/clear:
+    post:
+      tags: [doubao-browser]
+      summary: 批量清理本池网站数据并保留环境与任务回执
+      description: 清 Cookie、缓存和网站存储；任何未完成或未确认提交都会阻止清理。返回 cleared、failed 和 quotaResetConfirmed=false，不保证恢复上游额度。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { $ref: '#/components/responses/Envelope' }
+        '400': { description: 有未完成任务或清理失败 }
+        '403': { description: 缺少可信桌面写入权限 }
   /hanbao/status:
     get:
       tags: [hanbao]
@@ -334,6 +392,34 @@ paths:
       responses:
         "200": { description: 信封 data 为资产列表或含 assets、unitCounts、categoryCounts、folderCounts、page、pageSize、total、hasMore 的分页对象 }
         "404": { description: 项目不存在或不属于当前用户 }
+  /projects/{id}/assets/{assetId}/merge-prop:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: assetId
+        required: true
+        schema: { type: string }
+    post:
+      tags: [projects]
+      summary: 手动合并两个项目道具，保留目标图片并迁移当前引用
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetAssetId, expectedRevision]
+              properties:
+                targetAssetId: { type: string }
+                expectedRevision: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200": { description: 信封 data 为 asset 和迁移的镜头数 mergedShots，源媒体及历史保留 }
+        "400": { description: 目标无效、不是两个不同道具或项目已归档 }
+        "404": { description: 项目或道具不存在、不属于当前用户或未加入本项目 }
+        "409": { description: 项目修订冲突或相关镜头及道具图片仍在生成 }
   /volc-asset-library:
     get:
       tags: [assets]

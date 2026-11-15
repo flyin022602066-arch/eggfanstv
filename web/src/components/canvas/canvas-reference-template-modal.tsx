@@ -6,15 +6,18 @@ import { filterReferenceTemplates, REFERENCE_TEMPLATE_LABELS, REFERENCE_TEMPLATE
 import { captureUserScope, userScopeMatches } from '@/lib/user-scope-guard';
 import { referenceTemplateRepository } from '@/services/canvas-reference-templates';
 import { ReferenceTemplateThumbnail, useReferenceTemplateLibrary } from './use-reference-template-library';
+import { isBuiltinReferenceTemplate } from '@/lib/canvas/canvas-reference-builtins';
+import { isRuiCReferenceTemplate, RUIC_REFERENCE_SOURCES } from '@/lib/canvas/canvas-reference-ruic';
 
 const roles: ReferenceTemplateRole[] = ['pose', 'costume', 'character'];
 const controlClass = 'h-8 max-w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 type Editor = { row?: CanvasReferenceTemplate; combination: boolean };
 
-export function CanvasReferenceTemplateModal({ open, targetKey, onClose, onApply }: { open: boolean; targetKey: string; onClose: () => void; onApply: (row: CanvasReferenceTemplate, signal: AbortSignal) => Promise<void> }) {
+export function CanvasReferenceTemplateModal({ open, targetKey, initialKind = 'all', sourceNotice = false, onClose, onApply }: { open: boolean; targetKey: string; initialKind?: string; sourceNotice?: boolean; onClose: () => void; onApply: (row: CanvasReferenceTemplate, signal: AbortSignal) => Promise<void> }) {
     const { message } = App.useApp();
-    const { rows, loading, error, refresh, epoch } = useReferenceTemplateLibrary(open);
+    const { rows, loading, error, refresh, epoch, onlineLoading, onlineError, retryOnline } = useReferenceTemplateLibrary(open);
     const [tab, setTab] = useState('all');
+    const [source, setSource] = useState('ruic');
     const [query, setQuery] = useState('');
     const [tag, setTag] = useState('');
     const [angle, setAngle] = useState('');
@@ -31,9 +34,11 @@ export function CanvasReferenceTemplateModal({ open, targetKey, onClose, onApply
         operation.current?.abort(); setBusy(false); setOperationError(''); setSelectedId(undefined); setEditor(undefined); setDeleting(undefined);
         return () => { generation.current++; operation.current?.abort(); };
     }, [open, targetKey, epoch]);
-    useEffect(() => setPage(1), [tab, query, tag, angle]);
-    const filtered = useMemo(() => filterReferenceTemplates(rows, { kind: ['favorite', 'recent'].includes(tab) ? 'all' : tab, query, favorites: tab === 'favorite', recent: tab === 'recent' }).filter(row => (!tag || row.tags.includes(tag)) && (!angle || row.items.some(item => item.angle === angle))), [rows, tab, query, tag, angle]);
+    useEffect(() => { if (open) { setTab(initialKind); setSource('ruic'); setQuery(''); setTag(''); setAngle(''); } }, [open, targetKey, initialKind]);
+    useEffect(() => setPage(1), [tab, source, query, tag, angle]);
+    const filtered = useMemo(() => filterReferenceTemplates(rows, { kind: ['favorite', 'recent'].includes(tab) ? 'all' : tab, query, favorites: tab === 'favorite', recent: tab === 'recent' }).filter(row => (source === 'builtin' ? isBuiltinReferenceTemplate(row.id) : source === 'ruic' ? isRuiCReferenceTemplate(row) : source === 'custom' ? !isBuiltinReferenceTemplate(row.id) && !isRuiCReferenceTemplate(row) : !isBuiltinReferenceTemplate(row.id)) && (!tag || row.tags.includes(tag)) && (!angle || row.items.some(item => item.angle === angle))), [rows, tab, source, query, tag, angle]);
     const selected = rows.find(row => row.id === selectedId);
+    const selectedReadOnly = Boolean(selected && (isBuiltinReferenceTemplate(selected.id) || isRuiCReferenceTemplate(selected)));
     useEffect(() => setPage(value => Math.min(value, Math.max(1, Math.ceil(filtered.length / 18)))), [filtered.length]);
     const tags = [...new Set(rows.flatMap(row => row.tags))].sort();
     const angles = [...new Set(rows.flatMap(row => row.items.map(item => item.angle).filter((value): value is string => Boolean(value))))].sort();
@@ -51,32 +56,43 @@ export function CanvasReferenceTemplateModal({ open, targetKey, onClose, onApply
     return <>
         <AppModal open={open} onCancel={close} title={null} footer={null} closable={false} flush width={1060} centered>
             <section data-canvas-no-zoom data-canvas-wheel-scroll className="flex max-h-[85dvh] min-h-0 flex-col bg-background text-foreground" onPointerDown={event => event.stopPropagation()} onWheel={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-                <header className="flex items-center gap-3 border-b border-border p-4"><div className="min-w-0 flex-1"><h2 className="text-base font-semibold">参考模板库</h2><p className="mt-1 text-xs text-muted-foreground">姿势、服装与角色参考，按需组合应用到当前生图节点。</p></div><Button onClick={close} aria-label="关闭参考模板库">关闭</Button></header>
+                <header className="flex items-center gap-3 border-b border-border p-4"><div className="min-w-0 flex-1"><h2 className="text-base font-semibold">参考模板库</h2><p className="mt-1 text-xs text-muted-foreground">RuiC 原图库：多角度姿势 · 完整衣装 · 虚构人像。浏览缩略图，应用原图。</p></div><Button onClick={close} aria-label="关闭参考模板库">关闭</Button></header>
                 <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
                     <Button onClick={() => setEditor({ combination: false })} disabled={busy}>导入参考图</Button>
                     <Button onClick={() => setEditor({ combination: true })} disabled={busy || !rows.some(row => row.kind !== 'combination')}>新建组合</Button>
-                    <span className="ml-auto text-xs text-muted-foreground">模板保存在本机；应用时建立项目引用</span>
+                    <span className="ml-auto text-xs text-muted-foreground">原站 {rows.filter(isRuiCReferenceTemplate).length} 张参考；我的模板保存在本机</span>
                 </div>
-                <div className="flex flex-wrap gap-2 px-4 pt-3">{[['all', '全部'], ['pose', '姿势'], ['costume', '服装'], ['character', '角色'], ['combination', '组合'], ['favorite', '收藏'], ['recent', '最近']].map(([key, label]) => <button key={key} type="button" aria-pressed={tab === key} className="rounded-md border border-border px-3 py-1.5 text-xs aria-pressed:bg-muted aria-pressed:font-semibold focus-visible:outline" onClick={() => setTab(key)}>{label}</button>)}</div>
+                {sourceNotice ? <p role="status" className="px-4 pt-3 text-xs text-muted-foreground">应用后会新建“参考编辑”生图节点，并将当前图片作为原图连入；不会覆盖或修改原图，也不会自动生成。</p> : null}
+                <div className="flex flex-wrap gap-2 px-4 pt-3">{[['all', '全部'], ['pose', '姿势'], ['costume', '服装'], ['character', '人脸 / 角色'], ['combination', '组合'], ['favorite', '收藏'], ['recent', '最近']].map(([key, label]) => <button key={key} type="button" aria-pressed={tab === key} className="rounded-md border border-border px-3 py-1.5 text-xs aria-pressed:bg-muted aria-pressed:font-semibold focus-visible:outline" onClick={() => { setTab(key); setSelectedId(undefined); }}>{label}</button>)}</div>
+                <div className="flex flex-wrap gap-2 px-4 pt-3">{[['ruic', 'RuiC 原图库'], ['all', '所有来源'], ['custom', '我的模板'], ['builtin', '内置示意']].map(([key, label]) => <button key={key} type="button" aria-pressed={source === key} className="rounded-md border border-border px-2 py-1 text-xs aria-pressed:bg-muted focus-visible:outline" onClick={() => { setSource(key); setSelectedId(undefined); }}>{label}</button>)}</div>
+                {onlineLoading ? <p role="status" className="px-4 pt-2 text-xs text-muted-foreground">正在加载 RuiC 原图库目录，不会提交生成任务…</p> : null}
+                {onlineError ? <div role="alert" className="px-4 pt-2 text-sm text-destructive">{onlineError}<Button size="small" onClick={retryOnline}>重试原图库</Button></div> : null}
+                {source === 'builtin' ? <p role="status" className="px-4 pt-2 text-xs text-muted-foreground">这些是旧版本地结构示意，不是 RuiC 原图库图片。</p> : null}
                 <div className="flex flex-wrap items-center gap-2 px-4 py-3"><Input aria-label="搜索参考模板" placeholder="搜索名称、标签、视角" value={query} onChange={event => setQuery(event.target.value)} className="!w-60" allowClear /><select aria-label="筛选标签" className={controlClass} value={tag} onChange={event => setTag(event.target.value)}><option value="">全部标签</option>{tags.map(value => <option key={value}>{value}</option>)}</select><select aria-label="筛选视角" className={controlClass} value={angle} onChange={event => setAngle(event.target.value)}><option value="">全部视角</option>{angles.map(value => <option key={value}>{value}</option>)}</select><span className="text-xs text-muted-foreground">{filtered.length} 个模板</span></div>
                 {error ? <div role="alert" className="px-4 pb-2 text-destructive">{error}<Button size="small" onClick={() => void refresh()}>重试</Button></div> : null}
                 {operationError ? <p role="alert" className="px-4 pb-2 text-sm text-destructive">{operationError}</p> : null}
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-border md:flex-row">
                     <div className="w-full min-w-0 shrink-0 p-4 md:w-auto md:flex-1">
                         {loading ? <Spin /> : null}
-                        {!loading && !filtered.length ? <p className="py-12 text-center text-sm text-muted-foreground">{rows.length ? '没有匹配的模板' : '还没有模板。先导入一张参考图，即可保存和反复调用。'}</p> : null}
+                        {!loading && !onlineLoading && !filtered.length ? <p className="py-12 text-center text-sm text-muted-foreground">{source === 'custom' && !rows.some(row => !isBuiltinReferenceTemplate(row.id) && !isRuiCReferenceTemplate(row)) ? '还没有模板。先导入一张参考图，即可保存和反复调用。' : '没有匹配的模板，可清除筛选、重试原图库或导入自己的参考图。'}</p> : null}
                         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">{filtered.slice((page - 1) * 18, page * 18).map(row => <article key={row.id} className="overflow-hidden rounded-lg border border-border">
-                            <button type="button" aria-label={`查看模板：${row.title}`} className="grid h-40 w-full place-items-center bg-muted focus-visible:outline" onClick={() => setSelectedId(row.id)}><ReferenceTemplateThumbnail mediaId={row.items[0].mediaId} title={row.title} /></button>
+                            <button type="button" aria-label={`查看模板：${row.title}`} className="grid h-40 w-full place-items-center bg-muted focus-visible:outline" onClick={() => setSelectedId(row.id)}><ReferenceTemplateThumbnail mediaId={row.items[0].mediaId} title={row.title} sourceUrl={row.items[0].sourceImage?.thumbnailUrl} /></button>
                             <div className="space-y-2 p-2"><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium">{row.title}</span><button type="button" aria-label={`收藏模板：${row.title}`} aria-pressed={row.favorite} onClick={() => void perform(async () => { await referenceTemplateRepository.toggleFavorite(row.id); })} disabled={busy} className="px-1 text-sm focus-visible:outline">{row.favorite ? '★' : '☆'}</button></div><p className="truncate text-xs text-muted-foreground">{REFERENCE_TEMPLATE_LABELS[row.kind]} · {row.items.map(item => item.angle).filter(Boolean).join(' / ') || row.tags.join(' · ') || '自建模板'}</p><Button size="small" onClick={() => setSelectedId(row.id)}>查看与应用</Button></div>
                         </article>)}</div>
                         {filtered.length > 18 ? <div className="mt-4 flex items-center justify-center gap-3"><Button disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</Button><span className="text-xs">{page} / {Math.ceil(filtered.length / 18)}</span><Button disabled={page * 18 >= filtered.length} onClick={() => setPage(value => value + 1)}>下一页</Button></div> : null}
                     </div>
-                    {selected ? <aside className="w-full shrink-0 space-y-3 border-t border-border p-4 md:w-72 md:border-t-0 md:border-l"><h3 className="break-words font-semibold">{selected.title}</h3><p className="text-xs text-muted-foreground">{selected.tags.join(' · ')}</p>{selected.items.map(item => <div key={item.role} className="space-y-1"><div className="grid h-32 place-items-center rounded-md bg-muted"><ReferenceTemplateThumbnail mediaId={item.mediaId} title={selected.title + REFERENCE_TEMPLATE_LABELS[item.role]} /></div><p className="text-xs">{REFERENCE_TEMPLATE_LABELS[item.role]}{item.angle ? ` · ${item.angle}` : ''}</p><p className="whitespace-pre-wrap text-xs text-muted-foreground">{item.instruction}</p></div>)}<Button type="primary" block loading={busy} onClick={() => void perform(signal => onApply(selected, signal))}>应用到当前节点</Button><div className="flex gap-2"><Button size="small" disabled={busy} onClick={() => setEditor({ row: selected, combination: selected.kind === 'combination' })}>编辑模板</Button><Button size="small" danger disabled={busy} onClick={() => setDeleting(selected)}>删除模板</Button></div><p className="text-xs text-muted-foreground">应用不会启动生成，也不会覆盖主体提示词。模型仍按参考图数量限制执行。</p></aside> : null}
+                    {selected ? <aside className="w-full shrink-0 space-y-3 border-t border-border p-4 md:w-72 md:border-t-0 md:border-l">
+                        <h3 className="break-words font-semibold">{selected.title}</h3><p className="text-xs text-muted-foreground">{selected.tags.join(' · ')}</p>
+                        {selected.items.map(item => <div key={item.role} className="space-y-1"><div className="grid h-64 place-items-center rounded-md bg-muted"><ReferenceTemplateThumbnail mediaId={item.mediaId} title={selected.title + REFERENCE_TEMPLATE_LABELS[item.role]} sourceUrl={item.sourceImage?.thumbnailUrl} /></div><p className="text-xs">{REFERENCE_TEMPLATE_LABELS[item.role]}{item.angle ? ` · ${item.angle}` : ''}</p><p className="whitespace-pre-wrap text-xs text-muted-foreground">{item.instruction}</p>{item.sourceImage ? <a href={item.sourceImage.url} target="_blank" rel="noopener noreferrer" className="text-xs underline">查看原始大图</a> : null}</div>)}
+                        <Button type="primary" block loading={busy} onClick={() => void perform(signal => onApply(selected, signal))}>应用到当前节点</Button>
+                        <div className="flex flex-wrap gap-2"><Button size="small" disabled={busy} onClick={() => setEditor({ row: selectedReadOnly ? { ...selected, id: nanoid(), source: undefined, title: selected.title.slice(0, 90) + ' · 我的设定', favorite: false, lastUsedAt: undefined } : selected, combination: selected.kind === 'combination' })}>{selectedReadOnly ? '另存为我的模板' : '编辑模板'}</Button>{!selectedReadOnly ? <Button size="small" danger disabled={busy} onClick={() => setDeleting(selected)}>删除模板</Button> : null}</div>
+                        <p className="text-xs text-muted-foreground">应用原图，不会用缩略图代替；不会启动生成或覆盖主体提示词。实际效果取决于模型的参考编辑能力。</p>
+                    </aside> : null}
                 </div>
-                <footer className="space-y-1 border-t border-border px-4 py-3 text-xs text-muted-foreground"><p>原站允许逐张创作参考，禁止批量下载及素材再分发；此处不预装第三方图片。</p><div className="flex gap-4">{REFERENCE_TEMPLATE_SOURCES.map(source => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer" className="underline">{source.title}</a>)}</div></footer>
+                <footer className="space-y-1 border-t border-border px-4 py-3 text-xs text-muted-foreground"><p>图库图片在线引用；只在应用时读取所选原图，不随安装包再分发整库。版权归原作者，请遵守原站创作使用规则。</p><div className="flex flex-wrap gap-4">{[...RUIC_REFERENCE_SOURCES, ...REFERENCE_TEMPLATE_SOURCES].map(source => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer" className="underline">{source.title}</a>)}</div></footer>
             </section>
         </AppModal>
-        {editor && open ? <ReferenceTemplateEditor key={`${editor.row?.id || 'new'}-${editor.combination}`} editor={editor} rows={rows} onClose={() => setEditor(undefined)} onSaved={async row => { setSelectedId(row.id); setEditor(undefined); await refresh(); }} /> : null}
+        {editor && open ? <ReferenceTemplateEditor key={`${editor.row?.id || 'new'}-${editor.combination}`} editor={editor} rows={rows} onClose={() => setEditor(undefined)} onSaved={async row => { setSelectedId(row.id); setTab(row.kind); setSource('custom'); setQuery(''); setTag(''); setAngle(''); setEditor(undefined); await refresh(); }} /> : null}
         <AppModal open={Boolean(deleting) && open} title="删除参考模板" onCancel={() => setDeleting(undefined)} okText="删除模板" cancelText="取消" okButtonProps={{ danger: true, loading: busy }} onOk={() => void perform(async () => { if (deleting) await referenceTemplateRepository.remove(deleting.id); setDeleting(undefined); })}><p>删除“{deleting?.title}”？已经应用到项目的图片和引用会保留。</p></AppModal>
     </>;
 }

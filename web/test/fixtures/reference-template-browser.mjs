@@ -17,12 +17,23 @@ function pngPixel(red, green, blue) {
     const header = Buffer.alloc(13); header.writeUInt32BE(1); header.writeUInt32BE(1, 4); header[8] = 8; header[9] = 2;
     return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.from([0, red, green, blue]))), chunk('IEND', Buffer.alloc(0))]);
 }
-const evidenceDir = 'S:/codex/Temp/Codex/reference-template-qa'; mkdirSync(evidenceDir, { recursive: true });
+const evidenceDir = '../.local/cache/reference-template-qa'; mkdirSync(evidenceDir, { recursive: true });
 try {
     for (const theme of ['dark', 'light']) {
         const context = await browser.newContext({ viewport: { width: 1365, height: 950 } });
         const page = await context.newPage(); const errors = []; let generationRequests = 0; let uploadRequests = 0;
         page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message));
+        const originalRequests = [];
+        await page.route('https://hruiccc.github.io/RuiC-PoseAtlas/**', async route => {
+            const path = new URL(route.request().url()).pathname;
+            const root = '/RuiC-PoseAtlas/';
+            const pose = { generatedAt: '2026-10-28', angles: [{ key: 'front', names: { zh: '正面' } }, { key: 'side', names: { zh: '侧面' } }], series: [], poses: [{ id: 'qa-original-pose', names: { zh: 'RuiC测试坐姿' }, category: '坐姿', variants: [{ angle: 'front', thumb: 'thumbs/qa-front.jpg', full: 'img/qa-front.png' }, { angle: 'side', thumb: 'thumbs/qa-side.jpg', full: 'img/qa-side.png' }] }] };
+            const costume = { costumes: [{ id: 'QA-0001', cat: 'spring', group: 'top', tags: ['cotton'], thumb: 'costume/thumbs/QA-0001.webp', image: 'costume/img/QA-0001.webp' }] };
+            const face = { images: [{ id: 'qa-face', sec: 'face', hair: 'short', w: 1122, h: 1402, thumb: 'portrait/thumbs/qa-face.webp', full_remote: 'https://ai-portrait-gallery.pages.dev/img/full/qa-face.png' }] };
+            if (path.endsWith('.json')) { await route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(path.endsWith('/poses.json') ? pose : path.endsWith('/costumes.json') ? costume : face) }); return; }
+            originalRequests.push(path);
+            await route.fulfill({ contentType: 'image/png', headers: { 'Access-Control-Allow-Origin': '*' }, body: pngPixel(path.includes('/thumbs/') ? 80 : 160, 120, 180) });
+        });
         await page.route('**/api/**', async route => {
             if (/tasks|generation|ai\//.test(new URL(route.request().url()).pathname)) generationRequests++;
             if (route.request().method() === 'POST' && route.request().url().includes('/resources')) {
@@ -37,7 +48,24 @@ try {
         assert.deepEqual(errors, [], 'Fixture must render without browser errors');
         assert.ok(await page.getByRole('button', { name: '打开参考模板库', exact: true }).count(), await page.locator('body').innerText());
         await page.getByRole('button', { name: '打开参考模板库', exact: true }).click();
+        await library().getByText('4 个模板', { exact: true }).waitFor();
+        assert.equal(await library().getByRole('button', { name: 'RuiC 原图库', exact: true }).getAttribute('aria-pressed'), 'true');
+        assert.equal(await library().getByRole('button', { name: '查看模板：自然站姿', exact: true }).count(), 0, 'Diagrams do not replace the original gallery');
+        await library().getByRole('button', { name: '查看模板：RuiC测试坐姿 · 侧面', exact: true }).click();
+        assert.ok(await library().getByRole('link', { name: '查看原始大图' }).getAttribute('href') === 'https://hruiccc.github.io/RuiC-PoseAtlas/img/qa-side.png');
+        await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('[aria-label="参考图数"]')?.textContent === '1');
+        assert.ok(originalRequests.includes('/RuiC-PoseAtlas/img/qa-side.png'), 'Applying fetches the selected full-size image, not a thumbnail');
+        assert.ok(!originalRequests.includes('/RuiC-PoseAtlas/img/qa-front.png'), 'Unselected originals are not bulk downloaded');
+        const originalBinding = await page.evaluate(() => window.referenceFixture.graph().nodes.find(node => node.metadata?.referenceTemplateMediaId)?.metadata);
+        assert.equal(originalBinding.referenceTemplateMediaId, 'ruic-reference:pose:qa-original-pose:side');
+        await page.screenshot({ path: evidenceDir + '/ruic-gallery-' + theme + '.png' });
+        await library().getByRole('button', { name: '关闭参考模板库' }).click();
+        await page.getByRole('button', { name: '移除姿势模板', exact: true }).click();
+        await page.getByRole('button', { name: '打开参考模板库', exact: true }).click();
         const library = () => page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: '参考模板库', exact: true }) });
+        await library().getByText('36 个模板', { exact: true }).waitFor();
+        await library().getByRole('button', { name: '我的模板', exact: true }).click();
         await library().getByText('还没有模板。', { exact: false }).waitFor();
         const importOne = async (title, role) => {
             await library().getByRole('button', { name: '导入参考图', exact: true }).click();
@@ -51,6 +79,7 @@ try {
             await library().getByRole('button', { name: '查看模板：' + title, exact: true }).waitFor();
         };
         await importOne('正面站姿', 'pose'); await importOne('春季白衣', 'costume');
+        await library().getByRole('button', { name: '全部', exact: true }).click();
         await library().getByRole('button', { name: '收藏模板：正面站姿', exact: true }).click();
         await page.waitForFunction(() => document.querySelector('[aria-label="收藏模板：正面站姿"]')?.getAttribute('aria-pressed') === 'true');
         await library().getByRole('button', { name: '收藏', exact: true }).click();
@@ -87,6 +116,7 @@ try {
         await page.getByRole('button', { name: '移除组合模板', exact: true }).click();
         assert.equal(await page.getByLabel('参考图数').textContent(), '0');
         await page.getByRole('button', { name: '打开参考模板库', exact: true }).click();
+        await library().getByRole('button', { name: '我的模板', exact: true }).click();
         await library().getByRole('button', { name: '查看模板：站姿白衣组合', exact: true }).click();
         await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
         await page.waitForFunction(() => document.querySelector('[aria-label="参考图数"]')?.textContent === '2');
@@ -94,6 +124,7 @@ try {
         await page.getByRole('button', { name: '切换项目', exact: true }).click();
         assert.equal(await page.getByLabel('参考图数').textContent(), '0');
         await page.getByRole('button', { name: '打开参考模板库', exact: true }).click();
+        await library().getByRole('button', { name: '我的模板', exact: true }).click();
         await library().getByRole('button', { name: '查看模板：站姿白衣组合', exact: true }).waitFor();
         await library().getByRole('button', { name: '查看模板：正面站姿', exact: true }).click();
         await library().getByRole('button', { name: '删除模板', exact: true }).click();
@@ -107,6 +138,7 @@ try {
         await page.getByRole('button', { name: '移除组合模板', exact: true }).click();
         await page.evaluate(() => window.referenceFixture.setLimit(1));
         await page.getByRole('button', { name: '打开参考模板库', exact: true }).click();
+        await library().getByRole('button', { name: '我的模板', exact: true }).click();
         await library().getByRole('button', { name: '查看模板：站姿白衣组合', exact: true }).click();
         const beforeLimit = uploadRequests;
         await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
@@ -136,6 +168,7 @@ try {
         await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
         await page.waitForFunction(() => document.querySelector('[aria-label="参考图数"]')?.textContent === '2');
         await page.evaluate(() => window.referenceFixture.switchUser('reference-template-other'));
+        await library().getByRole('button', { name: '我的模板', exact: true }).click();
         await library().getByText('还没有模板。', { exact: false }).waitFor();
         assert.equal(await library().locator('img').count(), 0);
         await page.evaluate(() => window.referenceFixture.switchUser('reference-template-fixture'));
@@ -147,6 +180,87 @@ try {
         await page.screenshot({ path: evidenceDir + '/library-mobile-' + theme + '.png' });
         assert.ok(await library().getByRole('button', { name: '查看模板：站姿白衣组合', exact: true }).evaluate(element => element.getBoundingClientRect().width > 120), 'Mobile cards retain a usable width');
         assert.ok(await library().evaluate(element => element.getBoundingClientRect().width <= window.innerWidth), 'Library stays inside the viewport');
+        await library().getByRole('button', { name: '关闭参考模板库' }).click();
+        await page.setViewportSize({ width: 1365, height: 950 });
+        for (const role of ['姿势', '服装', '人脸 / 角色']) {
+            await page.getByRole('button', { name: '打开' + role + '参考库', exact: true }).click();
+            await library().getByRole('button', { name: '内置示意', exact: true }).click();
+            await library().getByText('12 个模板', { exact: true }).waitFor();
+            assert.equal(await library().getByRole('button', { name: role, exact: true }).getAttribute('aria-pressed'), 'true');
+            await library().locator('img').first().evaluate(img => img.decode());
+            await library().getByRole('button', { name: '关闭参考模板库' }).click();
+        }
+        await page.evaluate(() => window.referenceFixture.switchProject());
+        await page.getByRole('button', { name: '打开姿势参考库', exact: true }).click();
+        await library().getByRole('button', { name: '查看模板：自然站姿', exact: true }).click();
+        assert.equal(await library().getByRole('button', { name: '删除模板', exact: true }).count(), 0);
+        await library().getByRole('button', { name: '另存为我的模板', exact: true }).click();
+        const copyEditor = page.getByRole('dialog').filter({ has: page.getByRole('textbox', { name: '模板名称', exact: true }) });
+        await copyEditor.getByRole('textbox', { name: '模板名称', exact: true }).fill('我的自然站姿');
+        await copyEditor.getByRole('textbox', { name: '模板用途说明', exact: true }).fill('仅参考站姿，保留原角色人脸和服装。');
+        await copyEditor.getByRole('button', { name: '保存到本机模板库' }).click();
+        await library().getByRole('button', { name: '查看模板：我的自然站姿', exact: true }).waitFor();
+        await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('[aria-label="参考图数"]')?.textContent === '1');
+        const builtinImage = await page.evaluate(() => window.referenceFixture.graph().nodes.find(node => node.metadata?.referenceTemplateMediaId)?.metadata);
+        assert.equal(builtinImage.mimeType, 'image/png');
+        assert.equal(builtinImage.naturalWidth, 768);
+        assert.equal(builtinImage.naturalHeight, 1024);
+        await page.screenshot({ path: evidenceDir + '/builtin-' + theme + '.png' });
+        await library().getByRole('button', { name: '关闭参考模板库' }).click();
+        await page.getByRole('button', { name: '检查生成输入' }).click();
+        const builtinInput = JSON.parse(await page.getByLabel('生成输入快照').textContent());
+        assert.equal(builtinInput.referenceImages.length, 1);
+        assert.match(builtinInput.prompt, /保留原角色人脸/);
+        await page.evaluate(() => window.referenceFixture.sourceMode());
+        await page.waitForTimeout(100);
+        assert.deepEqual(errors, [], 'Source image toolbar must render without browser errors');
+        assert.ok(await page.getByRole('toolbar', { name: '节点快捷工具' }).count(), await page.locator('body').innerText());
+        const original = await page.evaluate(() => window.referenceFixture.graph().nodes[0]);
+        const sourceEntry = page.getByRole('button', { name: '姿势 / 服装 / 人脸', exact: true });
+        await sourceEntry.click();
+        await library().getByRole('status').filter({ hasText: '不会覆盖或修改原图' }).waitFor();
+        await library().getByRole('button', { name: '姿势', exact: true }).click();
+        await library().getByRole('button', { name: '查看模板：自然站姿', exact: true }).click();
+        const beforeCanceled = await page.evaluate(() => { window.referenceFixture.pauseMaterialize(); return window.referenceFixture.materializeStarted(); });
+        await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
+        await page.waitForFunction(before => window.referenceFixture.materializeStarted() > before, beforeCanceled);
+        await library().getByRole('button', { name: '关闭参考模板库' }).click();
+        await page.evaluate(() => window.referenceFixture.resumeMaterialize());
+        await page.waitForTimeout(200);
+        assert.deepEqual(await page.evaluate(() => window.referenceFixture.graph()), { nodes: [original], connections: [] }, 'Canceled apply must not leave a partial editor');
+        await sourceEntry.click();
+        await library().getByRole('button', { name: '人脸 / 角色', exact: true }).click();
+        await library().getByRole('button', { name: '查看模板：柔和椭圆脸', exact: true }).click();
+        await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('[aria-label="参考图数"]')?.textContent === '2');
+        await library().waitFor({ state: 'hidden' });
+        const edited = await page.evaluate(() => window.referenceFixture.graph());
+        assert.deepEqual(edited.nodes.find(node => node.id === 'original'), original, 'Original image and settings must remain unchanged');
+        assert.equal(edited.nodes.length, 3);
+        const editTarget = edited.nodes.find(node => node.metadata?.nodeRole === 'generator');
+        assert.equal(editTarget.metadata.generationType, 'edit');
+        assert.equal(editTarget.metadata.content, undefined);
+        await page.getByRole('button', { name: '检查生成输入' }).click();
+        const editInput = JSON.parse(await page.getByLabel('生成输入快照').textContent());
+        assert.equal(editInput.referenceImages.length, 2);
+        assert.equal(editInput.referenceImages[0].id, 'original');
+        assert.match(editInput.prompt, /@图片1.*原图/);
+        assert.match(editInput.prompt, /@图片2.*人脸/);
+        assert.doesNotMatch(editInput.prompt, /参考角色身份、面部特征及外貌/);
+        await page.screenshot({ path: evidenceDir + '/source-editor-' + theme + '.png' });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.waitForTimeout(100);
+        const compactEntry = page.getByRole('toolbar', { name: '节点快捷工具' }).getByRole('button', { name: '参考库', exact: true });
+        await compactEntry.waitFor();
+        assert.ok(await compactEntry.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth; }), 'Reference library entry stays reachable on narrow canvases');
+        await compactEntry.click();
+        await library().getByRole('button', { name: '服装', exact: true }).click();
+        await library().getByRole('button', { name: '查看模板：简约圆领便装', exact: true }).waitFor();
+        await library().getByRole('button', { name: '关闭参考模板库' }).click();
+        await page.setViewportSize({ width: 1365, height: 950 });
+        await page.evaluate(() => window.referenceFixture.lockSource());
+        await page.waitForFunction(() => document.querySelector('button[aria-label="姿势 / 服装 / 人脸"]')?.disabled);
         assert.equal(generationRequests, 0); assert.deepEqual(errors, []);
         await context.close();
         console.log(JSON.stringify({ theme, status: 'passed', generationRequests, screenshot: evidenceDir + '/library-' + theme + '.png' }));

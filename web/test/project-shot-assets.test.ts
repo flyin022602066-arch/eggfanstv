@@ -4,7 +4,7 @@ import { prepareProjectShotAssets, prepareProjectUnitShotAssets, projectUnitShot
 import type { ProjectAsset, ProjectUnitWorkspace, ShotAssetReference } from "../src/services/api/projects";
 import { unlinkShotAsset } from "../src/services/api/projects";
 import { http } from "../src/services/api/request";
-import { buildShotAssetReferenceContext, resolveShotAssetMentionPrompt } from "../src/pages/projects/detail/workflow-shot-references";
+import { buildShotAssetReferenceContext, ensureShotAssetMentionPrompt, resolveShotAssetMentionPrompt } from "../src/pages/projects/detail/workflow-shot-references";
 import type { ProjectDetail } from "../src/services/api/projects";
 
 function fixture() {
@@ -29,6 +29,64 @@ function fixture() {
     };
     return { api, workspace, calls };
 }
+
+test("manual exclusions survive chapter repair, new asset versions and submission without affecting other shots", async () => {
+    const { api, workspace, calls } = fixture();
+    const assets = [
+        { id: "scene", title: "电影院外", category: "environment", primaryVersionId: "scene-v2" },
+        { id: "box", title: "冰棍保温木箱", category: "prop", primaryVersionId: "box-v2" },
+        { id: "sign", title: "冰棍价目纸牌", category: "prop", primaryVersionId: "sign-v1" },
+    ] as ProjectAsset[];
+    api.listProjectAssets = async () => ({ assets });
+    workspace.shots = [0, 1].map((position) => ({ id: `shot-${position + 1}`, position, description: "电影院外，冰棍保温木箱旁立着冰棍价目纸牌。" })) as ProjectUnitWorkspace["shots"];
+    workspace.shotReferences = assets.slice(0, 2).map((asset) => ({ id: `excluded-${asset.id}`, shotId: "shot-1", assetVersionId: `${asset.id}-v1`, role: "reference", status: "excluded", referencedVersion: { assetId: asset.id } })) as ShotAssetReference[];
+    await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-1", generationArtifactType: "video", script: { sceneAssetId: "scene", propNames: ["冰棍保温木箱", "冰棍价目纸牌"] } }, api);
+    }
+    const linked = (shotId: string) => workspace.shotReferences.filter((reference) => reference.shotId === shotId && reference.status === "linked").map((reference) => reference.assetVersionId);
+    expect(linked("shot-1")).toEqual(["sign-v1"]);
+    expect(linked("shot-2")).toEqual(["scene-v2", "box-v2", "sign-v1"]);
+    expect(calls.filter((call) => call === "bind:box-v2")).toHaveLength(1);
+});
+
+test("an excluded inherited scene stays excluded only for its own shot", () => {
+    const scene = { id: "scene", title: "电影院外", category: "environment", primaryVersionId: "scene-v1" } as ProjectAsset;
+    const { workspace } = fixture();
+    workspace.shots = [0, 1, 2].map((position) => ({ id: `shot-${position + 1}`, position, description: position === 0 ? "电影院外" : "镜头继续推进" })) as ProjectUnitWorkspace["shots"];
+    workspace.shotReferences = [{ id: "excluded", shotId: "shot-2", assetVersionId: "scene-v1", asset: scene, role: "reference", status: "excluded" }] as ShotAssetReference[];
+    expect(projectUnitShotAssetPlan(workspace, [scene]).map((entry) => entry.matches.map((match) => match.asset.id))).toEqual([["scene"], [], ["scene"]]);
+});
+
+test("excluded duplicate names cannot create ambiguity before matching the remaining asset", async () => {
+    const { api, workspace } = fixture();
+    const scene = { id: "scene", title: "电影院外", category: "environment", primaryVersionId: "scene-v1" } as ProjectAsset;
+    const props = ["kept", "removed"].map((id) => ({ id, title: "冰棍箱", category: "prop", primaryVersionId: `${id}-v1` })) as ProjectAsset[];
+    api.listProjectAssets = async () => ({ assets: [scene, ...props] });
+    workspace.shotReferences = [{ id: "excluded", shotId: "shot-1", assetVersionId: "removed-v1", role: "reference", status: "excluded", asset: props[1] }] as ShotAssetReference[];
+    const result = await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-1", script: { sceneAssetId: "scene", propNames: ["冰棍箱"] } }, api);
+    expect(result.boundCount).toBe(2);
+    expect(result.workspace.shotReferences.filter((reference) => reference.status === "linked").map((reference) => reference.assetVersionId)).toEqual(["scene-v1", "kept-v1"]);
+});
+
+test("removed reference pictures and stale asset tokens stay out of the submission without losing story text", () => {
+    const { workspace } = fixture();
+    const assets = [
+        { id: "scene", title: "电影院外", category: "environment", mediaType: "image", primaryVersionId: "scene-v1", storageKey: "resource:scene-image" },
+        { id: "box", title: "冰棍保温木箱", category: "prop", mediaType: "image", primaryVersionId: "box-v1", storageKey: "resource:box-image" },
+    ] as ProjectAsset[];
+    workspace.shotReferences = assets.map((asset) => ({ id: asset.id, asset, shotId: "shot-1", assetVersionId: asset.primaryVersionId, role: "reference", status: asset.id === "box" ? "excluded" : "linked" })) as ShotAssetReference[];
+    const context = buildShotAssetReferenceContext({ ...workspace, assets } as ProjectDetail, "shot-1");
+    const original = "镜头继续推进，@[asset:box]放在门边。\n【场景与道具参考】\n电影院外：@[asset:scene]\n冰棍保温木箱：@[asset:box]";
+    const editor = ensureShotAssetMentionPrompt(original, context.mentionReferences, context.assetCatalog, context.boundAssetIds, context.excludedAssetIds);
+    const submitted = resolveShotAssetMentionPrompt(editor, context);
+    expect(context.referenceImages.map((image) => image.storageKey)).toEqual(["resource:scene-image"]);
+    expect(context.boundAssetIds).toEqual(["scene"]);
+    expect(submitted).toContain("冰棍保温木箱放在门边");
+    expect(submitted).not.toContain("@[asset:box]");
+    expect(submitted).not.toContain("冰棍保温木箱：");
+    expect(submitted).not.toContain("图片2");
+});
 
 test("generation repairs an unbound historical shot using the full project asset catalog", async () => {
     const { api, calls } = fixture();

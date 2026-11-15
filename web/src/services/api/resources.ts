@@ -5,6 +5,7 @@ import { http, apiBaseURL, ApiError, type HttpRequestConfig } from "@/services/a
 export type RemoteResource = {
     id: string;
     userId: string;
+    sourceResourceId?: string;
     kind: "image" | "video" | "audio" | "file" | string;
     status: "pending" | "ready" | "failed" | "deleted" | string;
     provider: string;
@@ -60,6 +61,7 @@ export type ResourceUploadMeta = {
     durationMs?: number;
     fileName?: string;
     idempotencyKey?: string;
+    sourceResourceId?: string;
     expectedScope?: CapturedUserScope;
 };
 
@@ -172,6 +174,7 @@ export async function uploadResourceFile(
         if (meta?.width) formData.append("width", String(Math.round(meta.width)));
         if (meta?.height) formData.append("height", String(Math.round(meta.height)));
         if (meta?.durationMs) formData.append("durationMs", String(Math.round(meta.durationMs)));
+        if (meta?.sourceResourceId) formData.append("sourceResourceId", meta.sourceResourceId);
         const data = await http.post<{ resource: RemoteResource }>("/resources", formData, {
             ...scopedUploadConfig(expected, meta?.idempotencyKey),
             onUploadProgress: onProgress ? ({ loaded, total }) => {
@@ -201,7 +204,7 @@ async function uploadFileInChunks(file: Blob, name: string, kind: "image" | "vid
 }
 
 async function runChunkedUpload(file: Blob, name: string, kind: "image" | "video" | "audio" | "file", meta: ResourceUploadMeta | undefined, expected: CapturedUserScope, onProgress?: (uploadedBytes: number, totalBytes: number) => void) {
-    const session = await http.post<{ uploadId: string; chunkSize: number; chunkCount: number }>("/resources/uploads", { fileName: name, kind, size: file.size, width: meta?.width, height: meta?.height, durationMs: meta?.durationMs }, scopedUploadConfig(expected, meta?.idempotencyKey));
+    const session = await http.post<{ uploadId: string; chunkSize: number; chunkCount: number }>("/resources/uploads", { fileName: name, kind, size: file.size, width: meta?.width, height: meta?.height, durationMs: meta?.durationMs, sourceResourceId: meta?.sourceResourceId }, scopedUploadConfig(expected, meta?.idempotencyKey));
     for (let index = 0; index < session.chunkCount; index++) {
         assertUserScope(expected);
         const start = index * session.chunkSize;

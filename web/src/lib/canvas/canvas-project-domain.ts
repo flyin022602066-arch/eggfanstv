@@ -2,6 +2,7 @@ import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { PromptTemplateOperation } from "@/lib/prompts";
 import type { ChapterStoryboardMode, ChapterStoryboardReviewPolicy } from "@/lib/chapter-storyboard-mode";
 import { chapterDirectorScriptOutputContract, compileChapterDirectorScript } from "@/lib/chapter-director-script";
+import { omitChineseDialogueTranslations, storyboardDialogueLanguageRule } from "@/lib/storyboard-dialogue-language";
 import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { normalizeStoryboardAssetBindings } from "@/lib/canvas/canvas-storyboard-assets";
 import { bindingForConnectedNode, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
@@ -107,16 +108,18 @@ export function cinematicStoryboardColumns(columns?: StoryboardColumn[]): Storyb
 // 后端只有带 metadata.promptTemplateOperation 的任务才会编译服务端分镜模板（含 JSON 契约），
 // 章节分镜走的是自定义 prompt，缺这段约束时模型会按自然语言习惯返回 Markdown 表格，解析阶段拿不到 rows。
 export function storyboardRowsOutputContract(requirement: string, mode: ChapterStoryboardMode = "standard", policy: ChapterStoryboardReviewPolicy = {}) {
+    if (policy.directorFormat === "shots-v1" && policy.maxDurationSeconds === 15) return chapterDirectorScriptOutputContract(requirement, 15);
     if (mode === "continuous_30s" && policy.maxInternalShotSeconds === 4) return chapterDirectorScriptOutputContract(requirement);
     return [
         "【受保护输出契约】",
+        storyboardDialogueLanguageRule,
         "- 只返回一个 JSON 对象，不要 Markdown、表格、代码块、注释或任何解释文字。",
         `- 顶层固定为 {"title": string, "rows": object[]}，rows 至少 1 项。${requirement}`,
         mode === "continuous_30s"
             ? "- rows 每项对应一个完整的 30 秒视频生成单元，内部按剧情需要包含连续镜头；shotNumber 只标记生成单元顺序，每个 rows 项内部的镜头编号都从镜头1重新开始，不沿用 shotNumber。"
             : "- rows 每项对应一个镜头，按剧情顺序排列。",
         "- 逐项填写下列字段；没有对应内容的字段填空字符串或空数组，不要省略字段，也不要用空值代替应有的导演脚本：",
-        "  shotNumber（整数，从 1 递增）、durationSeconds（整数，1-60）、plotDescription（本镜可见的剧情与关键动作）、",
+        `  shotNumber（整数，从 1 递增）、durationSeconds（整数，${policy.maxDurationSeconds ? policy.minDurationSeconds === policy.maxDurationSeconds ? `固定${policy.maxDurationSeconds}` : `${policy.minDurationSeconds || 1}-${policy.maxDurationSeconds}` : "1-60"}）、plotDescription（本镜可见的剧情与关键动作）、`,
         "  dialogue（本镜实际念出的原文台词或旁白，按自然表演时长在完整句或完整话轮边界分镜，不截断台词）、characters（本镜出现的角色名数组）、",
         "  narrativeIntent、viewerPOV、performanceBlocking、shotSize（景别）、emotion、lightingAndAtmosphere、",
         "  audioEffects、camera、motion、timeBeats、imageGenerationPrompt（首帧画面提示词）、",
@@ -205,7 +208,10 @@ export function storyboardRowsFromTask(task: GenerationTask) {
     return {
         title: result.title?.trim(),
         rows: result.rows.map((row, index) => {
-            const text = Object.fromEntries(STORYBOARD_TEXT_FIELDS.map((field) => [field, storyboardFieldText(row[field], field, index + 1)])) as Pick<StoryboardRow, typeof STORYBOARD_TEXT_FIELDS[number]>;
+            const text = Object.fromEntries(STORYBOARD_TEXT_FIELDS.map((field) => {
+                const value = storyboardFieldText(row[field], field, index + 1);
+                return [field, ["dialogue", "videoMotionPrompt", "audioEffects", "timeBeats"].includes(field) ? omitChineseDialogueTranslations(value, { unquoted: field === "dialogue" || field === "audioEffects" }) : value];
+            })) as Pick<StoryboardRow, typeof STORYBOARD_TEXT_FIELDS[number]>;
             const next = createStoryboardRow(index + 1, {
                 ...row,
                 ...text,

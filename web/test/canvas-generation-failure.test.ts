@@ -12,6 +12,19 @@ import moderationFixtures from "../../fixtures/moderation-errors.json";
 
 const rejection = { code: "content_policy_violation", message: "opaque" };
 
+test("explicit manual retry can confirm a terminal failure without enabling automatic retry", () => {
+    const input = { prompt: "rainy street", mode: "video" as const };
+    const failure = { ...canvasGenerationFailureMetadata(rejection, input), taskId: "failed-video", taskStatus: "failed" as const };
+    expect(canvasGenerationRetryBlocked(failure, input)).toBe(true);
+    expect(canvasGenerationRetryBlocked(failure, input, "manual")).toBe(false);
+    expect(canvasGenerationRetryBlocked({ ...failure, taskStatus: "running" }, input, "manual")).toBe(true);
+    expect(canvasGenerationRetryBlocked({ ...failure, taskStage: "submission_unknown" }, input, "manual")).toBe(true);
+    expect(canvasGenerationRetryBlocked({ ...failure, resourceReloadAvailable: true }, input, "manual")).toBe(true);
+    for (const generationErrorCode of ["submission_uncertain", "timeout", "download_failed", "results_missing", "partial_success", "canvas_conflict"]) {
+        expect(canvasGenerationRetryBlocked({ taskStatus: "failed", generationErrorCode, errorDetails: "opaque" }, input, "manual")).toBe(true);
+    }
+});
+
 test("completed media with a canvas commit conflict offers reload without another paid generation", () => {
     const failure = canvasGenerationFailureMetadata({ code: "canvas_conflict" }, { prompt: "red square", mode: "video" });
     expect(failure.errorDetails).toContain("生成结果已保留");

@@ -198,6 +198,22 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		}
 		ok(c, task)
 	})
+	r.POST("/tasks/:id/recover-image-result", func(c *gin.Context) {
+		if !requireTrustedDesktopWritePrincipal(c, "图片结果取回只能由当前桌面界面执行") {
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.RecoverImageTaskResult(c.Request.Context(), user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
 	r.POST("/tasks/:id/query-provider", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

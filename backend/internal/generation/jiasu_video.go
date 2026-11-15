@@ -63,6 +63,8 @@ func ValidateJiasuVideoInput(Input Input) error {
 		maxImages = 10
 		maxVideos = 3
 		maxAudios = 3
+	case "wan3-特惠":
+		maxVideos, maxAudios = 3, 3
 	case "sd-2.5-j2-v", "sd-2.5-j3-doubao":
 		maxImages = 30
 		maxVideos = 10

@@ -191,6 +191,7 @@ function LoadingContent({ node, theme, onOpenTaskDetails, onCancelTask }: Pick<C
     // leaving production nodes gated by the persisted task id.
     const hasTaskIdentity = Boolean(taskId) || node.metadata?.fixture === "libtv-generating";
     const displayTask = {
+        model: node.metadata?.model,
         provider: node.metadata?.taskProvider,
         status: (node.metadata?.taskStatus || "running") as GenerationTask["status"],
         stage: node.metadata?.taskStage,

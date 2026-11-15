@@ -147,15 +147,44 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		DefaultOperation:  "text_to_video",
 	}
 	switch model.ChannelInterfaceType(protocol) {
+	case "nono-video":
+		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
+		video.Duration = VideoDurationConfig{Selection: "range", Min: 5, Max: 30, Step: 1, Default: 10}
+		video.References = VideoReferenceConfig{MaxImages: 30, MaxVideos: 10, MaxAudios: 10}
+		if modelName == "按条福利seedance-2.5-720P" {
+			video.References = VideoReferenceConfig{MaxImages: 20, MaxVideos: 5, MaxAudios: 5}
+		}
+		if modelName == "按条seedance-2.5-720P 只支持参考图" {
+			video.Duration = VideoDurationConfig{Selection: "enum", Values: []int{30}, Default: 30}
+			video.References = VideoReferenceConfig{MaxImages: 9}
+		}
+		video.Ratios, video.DefaultRatio = []string{"16:9", "9:16", "1:1"}, "16:9"
+		video.References.PromptMaxChars = 15000
+		video.Resolutions, video.DefaultResolution = []string{"720p"}, "720p"
+		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
+	case "kanhai-video":
+		video.Duration = VideoDurationConfig{Selection: "range", Min: 1, Max: 30, Step: 1, Default: 30}
+		video.References = VideoReferenceConfig{MaxImages: 30, MaxVideos: 10, MaxAudios: 10}
+		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
+		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video", "audio_to_video"}
+	case "doubao-browser-video":
+		video.References = VideoReferenceConfig{MaxImages: 10, PromptMaxChars: 8000}
+		video.Duration = VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, Default: 5}
+		if modelName == "seedance_v2.5" { video.Duration.Max = 30 }
+		video.Ratios, video.DefaultRatio = []string{"16:9", "9:16", "1:1", "4:3", "3:4"}, "16:9"
+		video.Resolutions, video.DefaultResolution = []string{}, ""
+		video.GenerateAudio, video.Watermark = VideoBooleanConfig{}, VideoBooleanConfig{}
+		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
 	case "hanbao-video":
 		video.References.MaxImages = 9
 		video.References.MaxVideos, video.References.MaxAudios = 0, 0
-		video.References.MaxImageBytes = 4 << 20
+		video.References.MaxImageBytes = 0
 		video.Duration = VideoDurationConfig{Selection: "range", Min: 4, Max: 30, Step: 1, Default: 5}
 		video.Ratios = []string{"16:9", "9:16", "1:1", "4:3", "3:4"}
 		video.DefaultRatio = "16:9"
 		video.Resolutions, video.DefaultResolution = []string{}, ""
-		video.GenerateAudio, video.Watermark = VideoBooleanConfig{}, VideoBooleanConfig{}
+		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
+		video.Watermark = VideoBooleanConfig{}
 		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
 	case "jiasu-video":
 		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
@@ -164,6 +193,11 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		video.Duration.Default = 5
 		video.References.MaxVideos, video.References.MaxAudios = 3, 3
 		video.Operations = append(video.Operations, "reference_to_video", "audio_to_video")
+		if strings.EqualFold(strings.TrimSpace(modelName), "wan3-特惠") {
+			video.Duration = VideoDurationConfig{Selection: "range", Min: 5, Max: 30, Step: 1, Default: 5}
+			video.Ratios = []string{"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}
+			video.Resolutions, video.DefaultResolution = []string{"1080p"}, "1080p"
+		}
 		if strings.EqualFold(strings.TrimSpace(modelName), "dola-sd-2.5") {
 			video.References.MaxImages, video.References.MaxAudios = 30, 10
 			video.Duration.Max = 30
@@ -390,6 +424,13 @@ func applyModelSpecificVideoCapability(profile *VideoCapabilityConfig, protocol 
 	normalizedProtocol := strings.TrimSpace(protocol)
 	normalizedModel := strings.ToLower(strings.TrimSpace(modelName))
 	value := *profile
+	if normalizedProtocol == "nono-video" {
+		value.References.PromptMaxChars = 15000
+		return &value
+	}
+	if normalizedProtocol == "hanbao-video" || normalizedProtocol == "doubao-browser-video" {
+		return DefaultModelCapabilityConfigForModel(normalizedProtocol, modelName).Video
+	}
 	if maximum, ok := sdVideoImageReferenceLimit(normalizedProtocol, normalizedModel); ok {
 		value.References.MaxImages = maximum
 		if maximum == 30 {
@@ -399,10 +440,18 @@ func applyModelSpecificVideoCapability(profile *VideoCapabilityConfig, protocol 
 		value.References.MaxImages = 10
 	}
 	profile = &value
-	if normalizedProtocol == "jiasu-video" || normalizedProtocol == "eggfans-sd2-video" {
+	if normalizedProtocol == "jiasu-video" || normalizedProtocol == "eggfans-sd2-video" || normalizedProtocol == "hanbao-video" {
 		value := *profile
 		value.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
 		profile = &value
+	}
+	if normalizedProtocol == "jiasu-video" && normalizedModel == "wan3-特惠" {
+		defaults := DefaultModelCapabilityConfigForModel(normalizedProtocol, normalizedModel).Video
+		value := *profile
+		value.Duration = defaults.Duration
+		value.Ratios, value.DefaultRatio = defaults.Ratios, defaults.DefaultRatio
+		value.Resolutions, value.DefaultResolution = defaults.Resolutions, defaults.DefaultResolution
+		return &value
 	}
 	if normalizedProtocol == "jiasu-video" && isSeedance25Model(normalizedModel) {
 		defaults := DefaultModelCapabilityConfigForModel(normalizedProtocol, normalizedModel).Video
@@ -810,6 +859,9 @@ func validateReferenceDuration(kind string, index int, durationMs int64, minimum
 }
 
 func validateVideoTask(profile *VideoCapabilityConfig, input TaskInput) error {
+	if input.Config.InterfaceType == "nono-video" {
+		return nil
+	}
 	if profile == nil {
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
@@ -823,6 +875,9 @@ func validateVideoTask(profile *VideoCapabilityConfig, input TaskInput) error {
 }
 
 func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput) error {
+	if input.Config.InterfaceType == "nono-video" {
+		return nil
+	}
 	if profile == nil {
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"infinite-canvas/backend/internal/provider/hanbao"
+	"infinite-canvas/backend/internal/provider/doubaobrowser"
 )
 
 // ResourceInfo is the executor view of an owned workspace asset.
@@ -158,6 +159,7 @@ type Runtime struct {
 	Images     ImageSubmissionPort
 	Workflow   WorkflowPort
 	Hanbao     HanbaoPort
+	DoubaoBrowser DoubaoBrowserPort
 	LocalVideoReceipts LocalVideoReceiptPort
 	Prompt     PromptPort
 	Config     ConfigPort
@@ -177,4 +179,9 @@ type HanbaoPort interface {
 type LocalVideoReceiptPort interface {
 	Ready(context.Context) error
 	RecordAccepted(context.Context, string) error
+}
+
+type DoubaoBrowserPort interface {
+	Submit(context.Context, string, doubaobrowser.Request) (doubaobrowser.Receipt, error)
+	Query(context.Context, string, doubaobrowser.Receipt) (doubaobrowser.Result, error)
 }

@@ -41,6 +41,16 @@ test("scene and prop generation never inherit a character face or turnaround tem
     }
 });
 
+test("MV groups use diverse faces rather than a hero preset or single-person layout", () => {
+    for (const faces of [presets, { male: { resourceId: "male-face", assetIds: [] } }]) {
+        const request = sunoMusicVideoAssetRequest({ ...asset, name: "伴舞群像" }, imageModel, "电影感", imageConfig, faces);
+        expect(request.referenceImages).toEqual([]);
+        expect(request.metadata).toHaveProperty("promptTemplateVariables.角色类型", "group");
+        expect(JSON.stringify(request.metadata)).toContain("不同面孔");
+        expect(JSON.stringify(request.metadata)).not.toContain("主角预设人脸与服装造型设计");
+    }
+});
+
 test("MV image settings reach the final backend request without changing video or channel settings", async () => {
     const config = resolveSunoMusicVideoImageConfig(imageConfig, "character", { model: imageModel, size: "1536x1024", quality: "high" }, "9:16");
     const request = sunoMusicVideoAssetRequest(asset, imageModel, "电影感", config, presets);

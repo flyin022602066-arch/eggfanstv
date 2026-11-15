@@ -31,7 +31,11 @@ func reusableTemporaryURL(ctx context.Context, host temporaryURLValidator, value
 	if value == "" {
 		return false, nil
 	}
-	if !outbound.IsUguuURL(value) || expiresAt == nil || !time.Now().Add(outbound.TemporaryURLRefreshMargin).Before(*expiresAt) {
+	accepted := outbound.IsUguuURL(value)
+	if validator, ok := host.(interface{ AcceptsURL(string) bool }); ok {
+		accepted = validator.AcceptsURL(value)
+	}
+	if !accepted || expiresAt == nil || !time.Now().Add(outbound.TemporaryURLRefreshMargin).Before(*expiresAt) {
 		host.InvalidateURL(value)
 		return false, nil
 	}
@@ -49,6 +53,15 @@ func (s *Service) imageHost() temporaryImageUploader {
 		}
 	})
 	return s.temporaryImages
+}
+
+func (s *Service) nonoImageHost() temporaryImageUploader {
+	s.nonoImagesOnce.Do(func() {
+		if s.nonoImages == nil {
+			s.nonoImages = outbound.NewImageFailoverHost(s.imageHost(), outbound.NewPoneImageHost(nil), outbound.NewLeopardImageHost(nil))
+		}
+	})
+	return s.nonoImages
 }
 
 func (s *Service) ResourceUpstreamURL(ctx context.Context, userID string, id string) (string, error) {
@@ -95,7 +108,10 @@ func (s *Service) ResourceTemporaryImageURL(ctx context.Context, userID string, 
 }
 
 func (s *Service) uploadTemporaryResourceImage(ctx context.Context, userID string, resource *model.Resource) (string, error) {
-	host := s.imageHost()
+	return s.uploadTemporaryResourceImageWithHost(ctx, userID, resource, s.imageHost())
+}
+
+func (s *Service) uploadTemporaryResourceImageWithHost(ctx context.Context, userID string, resource *model.Resource, host temporaryImageUploader) (string, error) {
 	if available, err := reusableTemporaryURL(ctx, host, resource.TemporaryImageURL, resource.TemporaryImageExpiresAt); err != nil {
 		return "", err
 	} else if available {
@@ -153,6 +169,10 @@ func (s *Service) uploadTemporaryResourceMedia(ctx context.Context, userID strin
 }
 
 func (s *Service) uploadTemporaryInlineImage(ctx context.Context, userID string, media *providerMedia) error {
+	return s.uploadTemporaryInlineImageWithHost(ctx, userID, media, s.imageHost())
+}
+
+func (s *Service) uploadTemporaryInlineImageWithHost(ctx context.Context, userID string, media *providerMedia, host temporaryImageUploader) error {
 	data, mimeType, err := mediaBytes(*media)
 	if err != nil {
 		return err
@@ -160,7 +180,7 @@ func (s *Service) uploadTemporaryInlineImage(ctx context.Context, userID string,
 	if !strings.HasPrefix(mimeType, "image/") {
 		return errors.New("Uguu 自动图床仅接受图片文件")
 	}
-	upload, err := s.imageHost().Upload(ctx, userID, data)
+	upload, err := host.Upload(ctx, userID, data)
 	if err != nil {
 		return err
 	}

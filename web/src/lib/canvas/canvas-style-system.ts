@@ -1,15 +1,18 @@
 import type { StyleProfileSnapshot } from "@/lib/canvas/style-profile";
+import { builtinStyleCover } from "./canvas-style-covers";
 
-export type ProjectStyleWorldId = "xianxia" | "urban" | "historical" | "suspense" | "science-fiction" | "pastoral" | "apocalypse" | "wuxia" | "republican" | "mythology";
+export type ProjectStyleWorldId = "xianxia" | "urban" | "historical" | "suspense" | "science-fiction" | "pastoral" | "apocalypse" | "wuxia" | "republican" | "mythology" | "western-urban" | "western-period" | "western-fantasy";
 export type ProjectStyleToneId = "epic" | "dark" | "light-comedy" | "romantic" | "healing";
 export type ProjectStyleMediumId = "live-action" | "3d-anime" | "3d-realistic" | "3d-cartoon" | "2d-guoman" | "2d-anime" | "ink";
 export type ProjectStyleCharacterId = "realistic" | "semi-real" | "anime" | "stylized";
+export type ProjectStyleCastingId = "script" | "chinese" | "western" | "east-asian" | "south-asian" | "southeast-asian" | "latin-american" | "middle-eastern" | "african" | "diverse";
 
 export type ProjectStyleSelection = {
     world: ProjectStyleWorldId;
     tone: ProjectStyleToneId;
     medium: ProjectStyleMediumId;
     character: ProjectStyleCharacterId;
+    casting?: ProjectStyleCastingId;
 };
 
 export type CanvasStylePreset = {
@@ -20,6 +23,7 @@ export type CanvasStylePreset = {
     tags: string[];
     prompt: string;
     imageUrl: string;
+    thumbnailUrl?: string;
     selection?: ProjectStyleSelection;
     profile?: StyleProfileSnapshot;
 };
@@ -147,6 +151,39 @@ export const projectStyleWorlds: Array<StyleOption<ProjectStyleWorldId>> = [
         motion: "神力变化具有仪式、前兆与环境响应，神兽保持骨架、体量与独特运动特征",
         forbidden: "西式天使恶魔混入、神话谱系混淆、随机佛道符号、金光覆盖主体和无尺度奇观",
     },
+    {
+        id: "western-urban",
+        label: "海外现代都市",
+        description: "按故事所在国家与城市统一海外职场、家庭与情感短剧的选角和生活空间。",
+        prompt: "海外当代都市以原文明示的国家、城市、职业、家庭与阶层为依据；原文未明确地点时采用所选地域选角的生活文化参考作为美术补全，并保持全项目一致，不凭空把具体城市、国籍或族裔写成剧情事实。",
+        palette: "自然肤色、中性石灰、木色、深蓝与克制的角色识别色",
+        wardrobe: "通勤套装、针织、牛仔、晚礼服和职业制服依据具体地区、季节、职业与经济条件建立衣橱，不把海外等同于奢侈品广告",
+        environment: "住宅、办公室、医院、校园、街区、交通和生活用品遵循同一地域尺度；标识按原文语言设计，不默认中国城市、中文招牌或中式室内",
+        motion: "生活化重心、自然接话与微表情服务人物关系，不以地域概括性格、职业或行为",
+        forbidden: "中式都市模板默认套用、所有外国角色同一张脸、国籍与族裔混同、随机国旗、文化符号堆砌、无依据改名或改写对白语言",
+    },
+    {
+        id: "western-period",
+        label: "欧美古典年代",
+        description: "锁定具体国家与年代，以服装结构、建筑和器物建立可信的欧美年代剧。",
+        prompt: "欧美年代题材先遵循原文的地区与历史阶段；未明确时仅建立一致的美术参考，不杜撰朝代、王室或历史事件。服装版型、礼仪、交通、建筑和生活器物来自同一时代体系。",
+        palette: "石灰白、旧木棕、深海军蓝、暗酒红与克制金属色",
+        wardrobe: "衬衣、裙装、外套、鞋靴、帽饰和制服按具体年代、职业与阶层成套考据，保持角色轮廓与识别色",
+        environment: "城市街道、宅邸、庄园、乡村和公共空间依据原文地域使用一致结构、材料与室内陈设",
+        motion: "动作符合服装结构、生活劳动和时代交通条件，正式礼仪只在剧情需要时使用",
+        forbidden: "欧洲不同时代混搭、现代设施乱入、默认中式宫殿与古装、所有场景都做城堡、肤色或外貌与身份等级绑定",
+    },
+    {
+        id: "western-fantasy",
+        label: "西方奇幻",
+        description: "以原文的魔法、族群与阵营规则构建可连续制作的西方奇幻美术。",
+        prompt: "西方奇幻仅采用原文明示的魔法、物种、社会与力量规则，建立一致的地理、聚落与阵营资产；不因选择奇幻就新增精灵、狼人、吸血鬼、翅膀或特殊血统。",
+        palette: "石灰、森林绿、旧银、暗酒红与有明确来源的魔法强调色",
+        wardrobe: "旅行装、礼服、皮革、织物、护甲与首饰依据职业、气候、阵营和可用工艺建立稳定造型",
+        environment: "城镇、庄园、森林、堡垒和遗迹共享同一材料、尺度与文化体系，不默认东方宗门、牌坊或修仙法器",
+        motion: "人物、非人形态与魔法效果遵循各自骨架、重量、起势、作用范围和环境反馈",
+        forbidden: "无依据增加物种和超能力、随机东方仙侠符号、把尖耳或异色眼强加给普通人、不同阵营装备混用和没有功能的发光装饰",
+    },
 ];
 
 export const projectStyleTones: Array<StyleOption<ProjectStyleToneId>> = [
@@ -210,7 +247,7 @@ export const projectStyleMedia: Array<StyleOption<ProjectStyleMediumId> & { char
     {
         id: "3d-anime",
         label: "3D 动漫",
-        description: "高品质三维动画、东方动漫造型与电影化场景。",
+        description: "高品质三维动画、可定制角色造型与电影化场景。",
         prompt: "采用高品质 3D 动漫媒介：清晰三维体积、统一 PBR 或风格化 PBR 材质、受控次表面散射、稳定拓扑和电影级灯光；保持动画角色的设计感，不滑向真人恐怖谷或廉价游戏过场。",
         motion: "动画具备明确关键姿势、预备动作、跟随、受力和停顿，特效与角色动作共享同一空间和光照",
         forbidden: "廉价手游 CG、塑料手办反光、僵硬待机动作、真人毛孔皮肤、角色与背景渲染体系不一致",
@@ -268,21 +305,21 @@ export const projectStyleCharacters: Array<StyleOption<ProjectStyleCharacterId>>
         id: "realistic",
         label: "写实人物",
         description: "真实骨相、年龄、皮肤和身体比例。",
-        prompt: "角色采用真实东亚骨相、自然年龄和真实身体比例，通过脸型、五官、发型、体型、姿态与生活痕迹建立差异；保留自然皮肤和微表情。",
-        forbidden: "网红同脸、过度磨皮、幼态大眼、年龄漂移、欧美默认脸和夸张动漫比例",
+        prompt: "角色采用符合原文与地域选角的真实骨相、自然年龄和真实身体比例，通过脸型、五官、发型、体型、姿态与生活痕迹建立差异；保留自然皮肤和微表情。",
+        forbidden: "网红同脸、过度磨皮、幼态大眼、年龄漂移、地域选角漂移和夸张动漫比例",
     },
     {
         id: "semi-real",
         label: "半写实仿真人",
-        description: "东方骨相与理想化造型平衡，保留可信结构。",
-        prompt: "角色采用半写实东方造型：可信骨骼、肌肉和关节结构，五官适度理想化但保留年龄与身份差异；发丝、皮肤和服装细节服从所选媒介，不进入恐怖谷。",
+        description: "地域选角与理想化造型平衡，保留可信结构。",
+        prompt: "角色采用符合原文与地域选角的半写实造型：可信骨骼、肌肉和关节结构，五官适度理想化但保留年龄与身份差异；发丝、皮肤和服装细节服从所选媒介，不进入恐怖谷。",
         forbidden: "真人扫描僵硬感、统一偶像脸、毛孔级过度写实、假睫毛模板和身体比例漂移",
     },
     {
         id: "anime",
         label: "动漫角色",
         description: "修长比例、清晰五官设计和稳定角色剪影。",
-        prompt: "角色采用东方动漫造型：约 7 至 8 头身，五官、发束、眼形和服装结构高度可识别；夸张集中在设计语言和表情，不破坏身体结构与身份稳定性。",
+        prompt: "角色采用符合原文与地域选角的动漫造型：约 7 至 8 头身，五官、发束、眼形和服装结构高度可识别；夸张集中在设计语言和表情，不破坏身体结构与身份稳定性。",
         forbidden: "低幼大头、过大玻璃眼、随机发色、所有角色同一脸型、五官在转面中漂移",
     },
     {
@@ -294,11 +331,25 @@ export const projectStyleCharacters: Array<StyleOption<ProjectStyleCharacterId>>
     },
 ];
 
+export const projectStyleCastingOptions: Array<StyleOption<ProjectStyleCastingId>> = [
+    { id: "script", label: "跟随原著 / 不限定地域", description: "原文优先，不从中文姓名或文本语言推断族裔。", prompt: "按原文明示的角色身份、外观与故事地点设计；未明确时保持选角开放，不因中文叙述、中文译名或姓名自动补成中国人，也不把海外等同于单一肤色。", forbidden: "仅凭姓名、职业或叙述语言推断国籍、族裔和肤色" },
+    { id: "chinese", label: "中国 / 华语剧", description: "未明确外观时以华语剧选角为美术参考，保留明确的外籍角色。", prompt: "原文未明确的普通角色外观可参考华语剧选角，面部结构、肤色、年龄与体态有自然差异；原文明示的外籍或其他族裔角色仍按原文保留。", forbidden: "全员统一网红脸、用国籍直接决定五官或肤色" },
+    { id: "western", label: "欧美剧", description: "欧美剧选角与生活文化参考，不等于全员白人或同一种五官。", prompt: "未明确的普通外观按欧美剧选角语境补全，可设计有差异的脸型、眉弓、鼻唇比例、发质、发色与肤色，不默认套用东亚偶像脸；欧美社会具有多族裔角色，不能全员固定为白皮肤、金发蓝眼或深眼窝，不将外形与善恶、职业和地位绑定。", forbidden: "海外角色默认中国脸、全员金发蓝眼、以夸张鼻眼代替差异设计" },
+    { id: "east-asian", label: "日韩 / 东亚剧", description: "按具体故事地区设计当代或年代形象，不与中国古装模板混用。", prompt: "以原文所在的日本、韩国或其他东亚地区为生活文化参考；未明确的普通外观保留东亚人物间真实差异，发型、妆容和衣装服从原文时代与角色身份，不以国籍限定脸型。", forbidden: "全员同一偶像脸、将日韩与中国历史服装建筑混为一套" },
+    { id: "south-asian", label: "南亚剧", description: "尊重具体地区与现代身份，避免刻板服饰和同脸。", prompt: "南亚选角参考覆盖不同肤色、发质和面部结构，先服从原文身份、年龄、地点与时代；未明确时作克制的普通外观补全，不让所有人物默认穿宗教或节庆服装。", forbidden: "用宗教符号或节庆服饰代表所有南亚角色、肤色与社会地位绑定" },
+    { id: "southeast-asian", label: "东南亚剧", description: "依据具体国家、气候与生活空间设计，不用单一脸谱概括。", prompt: "东南亚选角与生活文化参考按具体国家与城乡环境区分，人物肤色、发质、五官、体态保持自然多样；原文未明确的普通补全不新增国籍、族裔或宗教事实。", forbidden: "把东南亚概括为单一脸型、全员热带旅游服或民族服" },
+    { id: "latin-american", label: "拉美剧", description: "现代都市、家庭与年代剧均可用，保留多族裔差异。", prompt: "拉美选角参考尊重地区内不同族裔与混合背景，发质、肤色、脸型和年龄具有自然差异；服装、发型与空间按具体地点、时代和身份设计，不靠热带装饰概括所有故事。", forbidden: "全员相同肤色卷发、刻板热带符号、以外貌设定性格" },
+    { id: "middle-eastern", label: "中东 / 北非剧", description: "以具体国家与时代为依据，服饰和宗教事实由原文决定。", prompt: "中东与北非选角参考保留地区内肤色、发质和面部结构差异；按原文国家、时代、职业与个人选择设计衣装，不能默认所有人物佩戴头巾、长袍或宗教配饰。", forbidden: "擅自添加宗教身份、全员统一服饰、将地域与反派身份绑定" },
+    { id: "african", label: "非洲 / 非裔剧", description: "涵盖现代都市与年代形象，按具体地区和人物区分。", prompt: "非洲与非裔选角参考尊重肤色层次、卷曲发质、脸型、五官和体态的真实多样性；造型按原文具体地区、时代与职业建立，不把所有人物归为同一个族群或默认部落装。", forbidden: "全员同脸、夸张种族脸谱、默认部落服饰、肤色与善恶地位绑定" },
+    { id: "diverse", label: "国际多族裔群像", description: "保持角色与群演差异，已确认身份不改变，不强行按配额改人。", prompt: "原文未限定的选角可使用多族裔群像作为美术参考，个体分别建立脸型、发质、肤色和服装剪影；已确认的角色与亲缘关系不因多样化目标被改写，群演不要复制同一张脸，不按配额替换原有角色。", forbidden: "以族裔配额改写原著、亲属关系被无依据改动、全员同脸或跨集换脸" },
+];
+
 export const defaultProjectStyleSelection: ProjectStyleSelection = {
     world: "xianxia",
     tone: "epic",
     medium: "3d-anime",
     character: "semi-real",
+    casting: "script",
 };
 
 const STYLE_SCOPE = "【使用边界】本规范锁定项目级题材世界、叙事气质、视觉媒介、角色造型、资产材质与影像基线。单镜头的剧情动作、构图、景别、机位、运镜、光源位置和天气由分镜按本规范创作，不得机械复制项目级描述。";
@@ -320,27 +371,30 @@ export function compileCanvasStylePreset(selection: ProjectStyleSelection): Canv
     const medium = requiredOption(projectStyleMedia, selection.medium);
     const resolvedSelection = normalizeProjectStyleSelection(selection);
     const character = requiredOption(projectStyleCharacters, resolvedSelection.character);
-    const title = `${world.label} · ${tone.label} · ${medium.label}`;
+    const casting = requiredOption(projectStyleCastingOptions, resolvedSelection.casting || (world.id.startsWith("western-") ? "western" : "chinese"));
+    const title = `${world.label} · ${tone.label} · ${medium.label}${resolvedSelection.casting ? ` · ${casting.label}` : ""}`;
     const preset = {
         id: styleSelectionId(resolvedSelection),
         title,
         category: medium.label,
         description: `${world.description}${tone.description}${medium.description}`,
-        tags: [world.label, tone.label, medium.label, character.label],
-        imageUrl: stylePreviewImage(resolvedSelection),
+        tags: [world.label, tone.label, medium.label, character.label, ...(resolvedSelection.casting ? [casting.label, ...(casting.id !== "chinese" && casting.id !== "script" ? ["海外"] : [])] : [])],
+        imageUrl: builtinStyleCover(styleSelectionId(resolvedSelection))?.imageUrl || stylePreviewImage(resolvedSelection),
+        thumbnailUrl: builtinStyleCover(styleSelectionId(resolvedSelection))?.thumbnailUrl,
         selection: resolvedSelection,
         prompt: [
-            `【风格组合】题材世界：${world.label}；叙事气质：${tone.label}；视觉媒介：${medium.label}；角色造型：${character.label}。以下四项必须同时成立，后续角色、场景、分镜和视频不得擅自替换其中任一维度。`,
+            `【风格组合】题材世界：${world.label}；叙事气质：${tone.label}；视觉媒介：${medium.label}；角色造型：${character.label}；地域选角：${casting.label}。以上维度必须同时成立，后续角色、场景、分镜和视频不得擅自替换。`,
             `【项目定位】面向“${world.label}”题材的${tone.label}${medium.label}项目，以统一世界规则、角色资产和视觉媒介支撑连续叙事；项目规范只定义长期稳定的美术基线，不代替单镜头导演设计。`,
             `【题材世界观】${world.prompt}`,
             `【叙事气质】${tone.prompt}`,
             `【视觉媒介】${medium.prompt} 成片保持高清可读的主体轮廓、稳定材质和受控高光；高清不等于过度锐化、磨皮或无来源泛光。`,
             `【角色设计系统】${character.prompt}`,
+            `【地域选角与文化语境】${casting.prompt} 原文明示的身份与外貌、用户确认的人脸参考优先于地域缺省；地域选角只补全未明确的普通外观，不改人物姓名、国籍、血缘、对白语言、故事地点或剧情。普通外观补全标记为“美术补全·非原文事实”，写入 appearance、physique、clothing，并同步 consistencyPrompt、multiViewPrompt；不要只写“外国人”或“欧美脸”。该规则同样作用于群演，保留个体差异；后续造型沿用已确认基础人脸。选角不改变真人、3D或二维媒介，也不改变所选世界的地域。`,
             `【项目色彩与光影】基础色彩来自${world.palette}；本项目采用${tone.palette}。色彩按角色、阵营、地点和叙事功能分配，保证人物与环境具有稳定的明度和色相分离。`,
             `【服饰、材质与场景】${world.wardrobe}；${world.environment}。所有材质和细节密度遵循“${medium.label}”媒介，不混入其他渲染体系。`,
             `【影像与动态基线】${tone.motion}；${medium.motion}；${world.motion}。分镜必须先确定镜头叙事意图，再选择景别与运镜。`,
             "【资产一致性】角色固定脸型、五官比例、发型、头身、服装、道具和阵营色；主要场景固定空间布局、建筑模块、材质与照明基线；换装、受损、升级和时间变化必须形成明确资产版本。",
-            `【全局禁用】${world.forbidden}；${tone.forbidden}；${medium.forbidden}；${character.forbidden}。`,
+            `【全局禁用】${world.forbidden}；${tone.forbidden}；${medium.forbidden}；${character.forbidden}；${casting.forbidden}。`,
             STYLE_SCOPE,
         ].join("\n"),
     } satisfies CanvasStylePreset;
@@ -364,20 +418,28 @@ function createBuiltinStyleProfile(preset: Omit<CanvasStylePreset, "profile">): 
 }
 
 export function parseCanvasStyleSelection(id?: string): ProjectStyleSelection | null {
-    if (!id?.startsWith("v2-")) return null;
+    if (!id || (!id.startsWith("v2-") && !id.startsWith("v3-"))) return null;
     const parts = id.slice(3).split("--");
-    if (parts.length !== 4) return null;
-    const selection = { world: parts[0], tone: parts[1], medium: parts[2], character: parts[3] } as ProjectStyleSelection;
+    const hasCasting = id.startsWith("v3-");
+    if (parts.length !== (hasCasting ? 5 : 4)) return null;
+    const selection = { world: parts[0], tone: parts[1], medium: parts[2], character: parts[3], ...(hasCasting ? { casting: parts[4] } : {}) } as ProjectStyleSelection;
     if (!projectStyleWorlds.some((item) => item.id === selection.world)
         || !projectStyleTones.some((item) => item.id === selection.tone)
         || !projectStyleMedia.some((item) => item.id === selection.medium)
-        || !projectStyleCharacters.some((item) => item.id === selection.character)) return null;
+        || !projectStyleCharacters.some((item) => item.id === selection.character)
+        || (hasCasting && !projectStyleCastingOptions.some((item) => item.id === selection.casting))) return null;
     return selection;
 }
 
 export function customCanvasStylePreset(id?: string) {
     const selection = parseCanvasStyleSelection(id);
     return selection ? compileCanvasStylePreset(selection) : undefined;
+}
+
+export function projectStyleSelectionFromSnapshot(selection?: Record<string, string>): ProjectStyleSelection | undefined {
+    if (!selection) return undefined;
+    const id = `${selection.casting ? "v3" : "v2"}-${selection.world}--${selection.tone}--${selection.medium}--${selection.character}${selection.casting ? `--${selection.casting}` : ""}`;
+    return parseCanvasStyleSelection(id) || undefined;
 }
 
 const recommendedSelections: ProjectStyleSelection[] = [
@@ -420,12 +482,22 @@ const recommendedSelections: ProjectStyleSelection[] = [
     { world: "mythology", tone: "epic", medium: "3d-anime", character: "semi-real" },
     { world: "mythology", tone: "epic", medium: "3d-realistic", character: "realistic" },
     { world: "mythology", tone: "epic", medium: "2d-guoman", character: "semi-real" },
+    { world: "western-urban", tone: "romantic", medium: "live-action", character: "realistic", casting: "western" },
+    { world: "western-urban", tone: "romantic", medium: "3d-realistic", character: "realistic", casting: "western" },
+    { world: "western-urban", tone: "romantic", medium: "2d-anime", character: "anime", casting: "western" },
+    { world: "western-period", tone: "romantic", medium: "live-action", character: "realistic", casting: "western" },
+    { world: "western-period", tone: "romantic", medium: "3d-realistic", character: "realistic", casting: "western" },
+    { world: "western-period", tone: "romantic", medium: "2d-anime", character: "anime", casting: "western" },
+    { world: "western-fantasy", tone: "epic", medium: "live-action", character: "realistic", casting: "western" },
+    { world: "western-fantasy", tone: "epic", medium: "3d-realistic", character: "realistic", casting: "western" },
+    { world: "western-fantasy", tone: "epic", medium: "2d-anime", character: "anime", casting: "western" },
+    ...(["east-asian", "south-asian", "southeast-asian", "latin-american", "middle-eastern", "african", "diverse"] as const).map((casting): ProjectStyleSelection => ({ world: "western-urban", tone: "romantic", medium: "live-action", character: "realistic", casting })),
 ];
 
 export const recommendedCanvasStylePresets = recommendedSelections.map(compileCanvasStylePreset);
 
 function styleSelectionId(selection: ProjectStyleSelection) {
-    return `v2-${selection.world}--${selection.tone}--${selection.medium}--${selection.character}`;
+    return selection.casting ? `v3-${selection.world}--${selection.tone}--${selection.medium}--${selection.character}--${selection.casting}` : `v2-${selection.world}--${selection.tone}--${selection.medium}--${selection.character}`;
 }
 
 function stylePreviewImage(selection: ProjectStyleSelection) {
@@ -433,6 +505,7 @@ function stylePreviewImage(selection: ProjectStyleSelection) {
     if (selection.medium === "3d-cartoon") return "/short-drama-styles/three-d-cartoon.jpg";
     if (selection.medium === "2d-guoman" || selection.medium === "2d-anime") return "/short-drama-styles/medium-2d.svg";
     if (selection.medium === "ink") return "/short-drama-styles/ink-narrative.jpg";
+    if (selection.world.startsWith("western-")) return "/short-drama-styles/overseas-live-action.svg";
     if (["xianxia", "historical", "wuxia", "mythology"].includes(selection.world)) return "/short-drama-styles/period-live-action.jpg";
     if (selection.world === "suspense") return "/short-drama-styles/suspense-noir.jpg";
     if (selection.world === "science-fiction") return "/short-drama-styles/future-tech.jpg";

@@ -10,16 +10,25 @@ try {
     for (const theme of ["dark", "light"]) {
         const context = await browser.newContext({ viewport: { width: 1280, height: 1050 }, reducedMotion: "reduce", acceptDownloads: true });
         const page = await context.newPage();
+        page.setDefaultTimeout(8000);
         const errors = [];
         const unexpected = [];
         const removals = [];
         const resourceRequests = [];
         const confirmations = [];
         const imageBindings = [];
+        const imageRecoveries = [];
+        const merges = [];
+        const isMerge = scenario.startsWith("prop-merge");
+        let merged = false;
+        let projectRevision = 1;
+        let taskReads = 0;
+        const recoveryTask = { id: "scene-recovery", projectId: "actions-project", type: "canvas_image", status: "succeeded", resultState: "FAILED_RETRYABLE", prompt: "", attempts: 1, createdAt: "2026-11-10T13:00:00Z", updatedAt: "2026-11-10T13:01:00Z", clientContext: { nodeId: "project-asset-image:media" } };
         let rejectRemoval = true;
         let removed = false;
         const character = { id: "character", title: "下载角色", category: "character", mediaType: "entity", status: "confirmed", storageKey: "resource:wrong-entity-storage", primaryVersionId: "selected-version", versionCount: 2, position: 0, usages: [], updatedAt: "2026-11-03T00:00:00Z", character: { versionId: "selected-version", version: 2, definition: {}, visualStatus: "ready", voiceStatus: "missing", representations: scenario === "missing-image" ? [] : [{ id: "selected-image", resourceId: "selected-original", mediaType: "image", role: "turnaround_sheet" }] } };
         const media = { id: "media", title: "移除道具", category: "prop", mediaType: "image", status: "confirmed", storageKey: "resource:prop-original", primaryVersionId: "prop-version", versionCount: 1, position: 1, usages: [], updatedAt: character.updatedAt };
+        const target = { ...media, id: "target", title: "保留道具", primaryVersionId: "target-version", storageKey: "resource:target-original" };
         if (scenario === "library-bind") { media.mediaType = "text"; media.storageKey = ""; media.definitionJson = '{"description":"道具造型"}'; }
         page.on("pageerror", (error) => errors.push(error.message));
         await page.route("**/*", async (route) => {
@@ -31,8 +40,20 @@ try {
             const json = (data) => route.fulfill({ json: { code: 0, data, msg: "" } });
             if (path === "/api/assets") return json({ assets: [{ id: "library-image", kind: "image", title: "素材库原图", coverUrl: "", category: "prop", status: "confirmed", source: "upload", tags: [], createdAt: character.updatedAt, updatedAt: character.updatedAt, data: { dataUrl: "", storageKey: "resource:library-original", width: 4096, height: 2048, bytes: 16000000, mimeType: "image/png" } }], total: 1, page: 1, pageSize: 40, hasMore: false });
             if (path === "/api/projects/actions-project/assets/media/replace-image" && request.method() === "POST") { imageBindings.push(request.postDataJSON()); return json({asset:media}); }
+            if (path === "/api/projects/actions-project/core") return json({project:{id:"actions-project", status:"active", revision:projectRevision}});
+            if (path === "/api/projects/actions-project/assets/media/merge-prop" && request.method() === "POST") {
+                merges.push(request.postDataJSON());
+                await new Promise(resolve => setTimeout(resolve, 250));
+                if (scenario === "prop-merge-retry" && merges.length === 1) {
+                    projectRevision = 2;
+                    return route.fulfill({status:409, json:{code:409, msg:"项目已被其他操作更新，请重新加载后再保存", reason:"conflict"}});
+                }
+                merged = true;
+                return json({asset:target, mergedShots:3});
+            }
             if (path === "/api/projects/actions-project/assets") {
-                const assets = removed ? [character] : [character, media];
+                if (isMerge && !parsed.searchParams.has("page")) return json({assets:[media,target]});
+                const assets = merged ? [character,target] : removed ? [character] : [character, media];
                 return json({ assets, categoryCounts: { character: 1, prop: removed ? 0 : 1 }, folderCounts: {}, unitCounts: {}, total: assets.length, page: 1, pageSize: 40, hasMore: false });
             }
             if (path === "/api/projects/actions-project/asset-folders") return json({ folders: [] });
@@ -42,7 +63,13 @@ try {
             }
             if (path === "/api/projects/actions-project/character-versions") return json({revision:1, versions:[{assetId:"original-character", title:"纪昼", versionId:"original-look", version:1, definition:{}, representations:[], visualStatus:"missing", voiceStatus:"missing", updatedAt:character.updatedAt}]});
             if (path === "/api/projects/actions-project/asset-candidates/look-candidate/confirm") { confirmations.push(request.postDataJSON()); return json({asset:character}); }
-            if (path === "/api/tasks") return json({ tasks: [] });
+            if (path === "/api/tasks") { taskReads++; return json(scenario === "image-recovery" ? [recoveryTask] : []); }
+            if (path === "/api/tasks/scene-recovery/recover-image-result" && request.method() === "POST") {
+                imageRecoveries.push(path);
+                await new Promise(resolve => setTimeout(resolve, 200));
+                recoveryTask.resultState = "READY";
+                return json({ task: recoveryTask, status: "ready", recovered: true, message: "原图片已取回并同步资产，没有重新生成。" });
+            }
             if (request.method() === "DELETE" && path.startsWith("/api/projects/actions-project/assets/")) {
                 removals.push(path);
                 if (rejectRemoval) return route.fulfill({ status: 400, json: { code: 400, data: null, msg: path.endsWith("/character") ? "角色仍被项目画布引用，请先删除对应角色卡节点" : "素材仍被分镜引用，请先解除对应镜头绑定", reason: "asset_still_referenced" } });
@@ -61,7 +88,55 @@ try {
         try {
             await page.goto(`${url}?theme=${theme}&scenario=${scenario}`);
             await page.getByRole("button", { name: "查看角色卡：下载角色", exact: true }).waitFor({ timeout: 10000 });
-            if (scenario === "library-bind") {
+            if (isMerge) {
+                const openMerge = page.getByRole("button", {name:"合并 移除道具", exact:true});
+                await openMerge.click();
+                let dialog = page.getByRole("dialog", {name:"合并道具资产", exact:true});
+                await dialog.getByRole("button", {name:/取\s*消/}).click();
+                assert.equal(merges.length, 0, "cancel must not merge");
+                await openMerge.click();
+                dialog = page.getByRole("dialog", {name:"合并道具资产", exact:true});
+                const confirm = dialog.getByRole("button", {name:"确认合并", exact:true});
+                assert.equal(await confirm.isDisabled(), true, "must choose a target");
+                await dialog.getByRole("combobox", {name:"保留的道具"}).fill("保留道具");
+                await dialog.getByRole("combobox", {name:"保留的道具"}).press("ArrowDown");
+                await dialog.getByRole("combobox", {name:"保留的道具"}).press("Enter");
+                await dialog.getByRole("region", {name:"保留的道具预览"}).getByText("保留道具", {exact:true}).waitFor();
+                await page.waitForFunction(() => { const image = document.querySelector('[aria-label="保留的道具预览"] img'); return image?.complete && image.naturalWidth > 0; });
+                assert.ok(resourceRequests.some(request=>request.path.includes("target-original")), "target preview must use chosen image");
+                await dialog.getByText("合并道具资产", {exact:true}).click();
+                await page.setViewportSize({width:760,height:800});
+                assert.equal(await dialog.evaluate(element=>element.scrollWidth <= element.clientWidth),true,"merge dialog must fit a narrow window");
+                await page.screenshot({path:join(artifactDir,`${theme}-${scenario}-preview.png`)});
+                await confirm.click();
+                if (scenario === "prop-merge-retry") {
+                    await dialog.getByRole("alert").filter({hasText:"项目已被其他操作更新"}).waitFor();
+                    assert.equal(await openMerge.count(), 1, "failed merge retains source card");
+                    await confirm.click();
+                }
+                await dialog.waitFor({state:"hidden"});
+                await openMerge.waitFor({state:"hidden"});
+                const success = page.getByRole("alert").filter({hasText:"已合并道具，同步了 3 个镜头"});
+                await success.scrollIntoViewIfNeeded();
+                await success.waitFor();
+                assert.deepEqual(merges, scenario === "prop-merge-retry" ? [{targetAssetId:"target",expectedRevision:1},{targetAssetId:"target",expectedRevision:2}] : [{targetAssetId:"target",expectedRevision:1}]);
+                assert.equal(removals.length, 0, "merge must use migration endpoint rather than delete");
+                assert.equal(await page.getByRole("button", {name:"合并 下载角色", exact:true}).count(),0);
+                await page.locator('[data-project-asset-id="target"]').scrollIntoViewIfNeeded();
+                await page.waitForFunction(() => { const image = document.querySelector('[data-project-asset-id="target"] img'); return image?.complete && image.naturalWidth > 0; });
+            } else if (scenario === "image-recovery") {
+                const panel = page.getByRole("region", {name: "资产图片检测与取回"});
+                await panel.getByText("图片任务状态已同步", {exact: true}).waitFor();
+                assert.ok(taskReads > 0, "entering asset page must detect tasks automatically");
+                assert.equal(await panel.locator("details").getAttribute("open"), null);
+                await panel.locator("summary").click();
+                await panel.getByText("图片已生成，入库失败", {exact: true}).waitFor();
+                await panel.getByRole("button", {name: "检查并取回", exact: true}).click();
+                await panel.getByText("原图片已取回并同步资产，没有重新生成。", {exact: true}).waitFor();
+                await panel.getByText("图片已取回入库", {exact: true}).waitFor();
+                assert.equal(imageRecoveries.length, 1);
+                assert.ok(taskReads >= 2, "manual recovery must reload task status");
+            } else if (scenario === "library-bind") {
                 await page.getByRole("button", {name:"生成道具图", exact:true}).click();
                 await page.getByRole("button", {name:"直接使用素材库图片", exact:true}).click();
                 await page.getByText("素材库原图", {exact:true}).click();

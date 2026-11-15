@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { builtinStyleCover } from "../src/lib/canvas/canvas-style-covers";
 
 import {
     compileCanvasStylePreset,
@@ -44,13 +45,13 @@ test("every supported topic, tone and medium compiles a consistent restorable pr
             }
         }
     }
-    expect(ids.size).toBe(750);
+    expect(ids.size).toBe(projectStyleWorlds.length * projectStyleTones.length * projectStyleMedia.reduce((sum, medium) => sum + compatibleProjectStyleCharacters(medium.id).length, 0));
 });
 
 test("all topics offer both live-action and 3D recommended presets", () => {
-    expect(recommendedCanvasStylePresets).toHaveLength(39);
-    expect(new Set(recommendedCanvasStylePresets.map((preset) => preset.id)).size).toBe(39);
-    expect(new Set(recommendedCanvasStylePresets.map((preset) => preset.prompt)).size).toBe(39);
+    expect(recommendedCanvasStylePresets).toHaveLength(55);
+    expect(new Set(recommendedCanvasStylePresets.map((preset) => preset.id)).size).toBe(recommendedCanvasStylePresets.length);
+    expect(new Set(recommendedCanvasStylePresets.map((preset) => preset.prompt)).size).toBe(recommendedCanvasStylePresets.length);
     for (const world of projectStyleWorlds) {
         const options = recommendedCanvasStylePresets.filter((preset) => preset.selection?.world === world.id);
         expect(options.some((preset) => preset.selection?.medium === "live-action")).toBe(true);
@@ -63,8 +64,14 @@ test("preview medium always follows the chosen medium instead of the topic", asy
         for (const medium of projectStyleMedia) {
             const preset = compileCanvasStylePreset({ world: world.id, tone: "epic", medium: medium.id, character: medium.characters[0] });
             expect(await Bun.file(new URL(`../public${preset.imageUrl}`, import.meta.url)).exists()).toBe(true);
-            if (medium.id === "3d-anime" || medium.id === "3d-realistic") expect(preset.imageUrl).toEndWith("medium-3d.svg");
-            if (medium.id === "2d-guoman" || medium.id === "2d-anime") expect(preset.imageUrl).toEndWith("medium-2d.svg");
+            const cover = builtinStyleCover(preset.id);
+            if (cover) {
+                expect(preset.imageUrl).toBe(cover.imageUrl);
+                expect(preset.thumbnailUrl).toBe(cover.thumbnailUrl);
+            } else {
+                if (medium.id === "3d-anime" || medium.id === "3d-realistic") expect(preset.imageUrl).toEndWith("medium-3d.svg");
+                if (medium.id === "2d-guoman" || medium.id === "2d-anime") expect(preset.imageUrl).toEndWith("medium-2d.svg");
+            }
             if (medium.id === "live-action") expect(preset.imageUrl).not.toMatch(/medium-3d|medium-2d|three-d-cartoon|ink-narrative/u);
         }
     }

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" fill="none" role="img" aria-label="海外真人影视美术示意">
+  <defs>
+    <linearGradient id="sky" x2="640" y2="360" gradientUnits="userSpaceOnUse"><stop stop-color="#172b40"/><stop offset="1" stop-color="#9c7462"/></linearGradient>
+    <linearGradient id="street" x2="0" y2="360" gradientUnits="userSpaceOnUse"><stop stop-color="#334253"/><stop offset="1" stop-color="#121c2a"/></linearGradient>
+    <linearGradient id="glass" x2="1" y2="1"><stop stop-color="#c4d3d5" stop-opacity=".65"/><stop offset="1" stop-color="#607e91" stop-opacity=".2"/></linearGradient>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h640v360H0z"/>
+  <circle cx="405" cy="132" r="53" fill="#ebc89a" opacity=".35"/>
+  <path fill="#354653" d="M0 108h87v142H0zm97-42h91v184H97zm112 66h70v118h-70zm242-36h68v154h-68zm82-45h107v199H533z"/>
+  <path fill="#1b2b38" d="M0 204 255 234l66 126H0zm640-14-255 44-66 126h321z"/>
+  <path fill="url(#street)" d="m255 234 64-20 66 20 93 126H162z"/>
+  <g fill="url(#glass)"><path d="M15 123h19v35H15zm31 0h19v35H46zm-31 51h19v35H15zm31 0h19v35H46zm67-90h22v38h-22zm33 0h22v38h-22zm-33 55h22v38h-22zm33 0h22v38h-22zm-33 55h22v28h-22zm33 0h22v28h-22zm403-122h25v44h-25zm40 0h25v44h-25zm-40 61h25v44h-25zm40 0h25v44h-25z"/></g>
+  <path stroke="#d6ad78" stroke-opacity=".55" stroke-width="3" d="m319 241-4 20m-5 25-8 40"/>
+  <path stroke="#f0d1a9" stroke-width="3" d="M220 194v87m0-87h33"/>
+  <path fill="#f0d1a9" d="M248 192h12v7h-12z"/>
+  <path stroke="#e8eef1" stroke-opacity=".5" stroke-width="2" d="M27 49V26h34m518 0h34v23M27 311v23h34m518 0h34v-23"/>
+  <text x="44" y="62" fill="#f0e8df" font-family="sans-serif" font-size="13" letter-spacing="3">OVERSEAS DRAMA</text>
+  <text x="44" y="316" fill="#d7dfe3" font-family="sans-serif" font-size="10" letter-spacing="2">LIVE ACTION · ART DIRECTION</text>
+</svg>

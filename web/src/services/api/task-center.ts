@@ -329,11 +329,17 @@ export function stopVideoTaskLocally(id: string) {
 }
 
 export function queryFailedVideoProviderTask(id: string) {
-    return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`);
+    return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`, undefined, { timeout: 10 * 60 * 1000 });
+}
+
+export type ImageResultRecovery = { task: GenerationTask; status: "pending" | "unavailable" | "ready"; message: string; recovered: boolean };
+
+export function recoverImageTaskResult(id: string, expectedScope?: CapturedUserScope) {
+    return http.post<ImageResultRecovery>(`/tasks/${encodeURIComponent(id)}/recover-image-result`, undefined, { timeout: 10 * 60 * 1000, expectedScope });
 }
 
 export function canRetrieveVideoResult(task: GenerationTask) {
-    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
+    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_"));
 }
 
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {

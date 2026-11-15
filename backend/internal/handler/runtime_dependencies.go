@@ -55,6 +55,7 @@ type RuntimeDependencies struct {
 	TextReplay  textreplay.API
 	BeefAPI     *beefapi.Service
 	Hanbao      HanbaoPort
+	DoubaoBrowser DoubaoBrowserPort
 	Eagle       *eagle.Client
 	Diagnostics *diagnostics.Service
 	Appearance  *appearance.Service

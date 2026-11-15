@@ -15,10 +15,11 @@ import { defaultModelCapabilityConfig, workflowFieldRole, workflowFieldSafeToOve
 import { applyChannelAdaptation } from "@/lib/channel-adaptation";
 import { BUILTIN_CHANNEL_SEEDS, isChannelVisibleInPackagedSettings } from "@/lib/builtin-channels";
 import { HANBAO_MODEL_NAMES, HANBAO_PROTOCOL, isHanbaoChannel } from "@/lib/hanbao";
+import { DOUBAO_BROWSER_MODEL_NAMES, DOUBAO_BROWSER_PROTOCOL, isDoubaoBrowserChannel, normalizeDoubaoBrowserFaceMaskMode } from "@/lib/doubao-browser";
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
 import { normalizeProjectAssetImagePresets, type ProjectAssetImagePresets } from "@/lib/project-asset-image-preferences";
-import { normalizeProjectWorkflowModels, type ProjectWorkflowModels } from "@/lib/project-workflow-model-preferences";
+import { normalizeProjectWorkflowModels, normalizeProjectWorkflowVideoRatios, type ProjectWorkflowModels } from "@/lib/project-workflow-model-preferences";
 import { normalizeChapterDialogueConstraintModes, normalizeChapterStoryboardModes, normalizeChapterStoryboardSkills, type ChapterDialogueConstraintModes, type ChapterStoryboardModes, type ChapterStoryboardSkills } from "@/lib/chapter-storyboard-mode";
 import { normalizeProjectSystemPresentations, type SystemPresentationSettings } from "@/lib/chapter-system-presentation";
 import { seedancePortraitLabel, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
@@ -400,11 +401,13 @@ export type ModelChannel = {
 };
 
 export type AiConfig = {
+    deletedChannelIds?: string[];
     projectSystemPresentations?: Record<string, SystemPresentationSettings>;
     projectChapterStoryboardModes?: ChapterStoryboardModes;
     projectChapterDialogueConstraintModes?: ChapterDialogueConstraintModes;
     projectChapterStoryboardSkills?: ChapterStoryboardSkills;
     projectWorkflowModels?: ProjectWorkflowModels;
+    projectWorkflowVideoRatios?: Record<string, string>;
     projectAssetImagePresets?: ProjectAssetImagePresets;
     imageThinkingLevel?: string;
     channelMode: "remote";
@@ -440,6 +443,8 @@ export type AiConfig = {
     videoJiasuFaceMode: string;
     videoJiasuFaceMask: string;
     videoSd2FaceMask: string;
+    videoHanbaoFaceMask: string;
+    videoDoubaoBrowserFaceMask: string;
     systemPrompt: string;
     models: string[];
     imageModels: string[];
@@ -497,6 +502,8 @@ export const defaultConfig: AiConfig = {
     videoJiasuFaceMode: "default",
     videoJiasuFaceMask: "grid",
     videoSd2FaceMask: "off",
+    videoHanbaoFaceMask: "off",
+    videoDoubaoBrowserFaceMask: "off",
     systemPrompt: "",
     models: [],
     imageModels: [],
@@ -659,7 +666,7 @@ export function channelHasManagedBeefAPICredential(channel: Pick<ModelChannel, "
 }
 
 export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey"> & Partial<Pick<ModelChannel, "interfaceType" | "modelProfiles">>) {
-    return isHanbaoChannel(channel) || channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
+    return isHanbaoChannel(channel) || isDoubaoBrowserChannel(channel) || channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
@@ -732,11 +739,12 @@ export function configWithoutCachedSecrets(config: AiConfig): AiConfig {
  * `applyChannelAdaptation` 按 hostname 补齐（网关对应 `channel-adaptation.ts` 的 jetmobo-hub 预设）。
  * 已存在的同 id 渠道保留使用者填写的密钥与自定义设置，只补缺失的模型。
  */
-function mergeBuiltinChannelSeeds(channels: ModelChannel[]): ModelChannel[] {
+function mergeBuiltinChannelSeeds(channels: ModelChannel[], deletedChannelIds: string[] = []): ModelChannel[] {
     if (!BUILTIN_CHANNEL_SEEDS.length) return channels;
     const result = [...channels];
     let changed = false;
     for (const seed of BUILTIN_CHANNEL_SEEDS) {
+        if (deletedChannelIds.includes(seed.id)) continue;
         const index = result.findIndex((channel) => channel.id === seed.id);
         if (index < 0) {
             result.push(createModelChannel({ ...seed, apiKey: "", enabled: true, pinned: true }));
@@ -744,8 +752,9 @@ function mergeBuiltinChannelSeeds(channels: ModelChannel[]): ModelChannel[] {
             continue;
         }
         const existing = result[index];
-        if (seed.id === "hanbao") {
-            result[index] = createModelChannel({ ...existing, ...seed, name: existing.name || seed.name, apiKey: "", secretKey: "", headers: [], modelProfiles: seed.modelProfiles?.map((profile) => ({ ...profile, displayName: HANBAO_MODEL_NAMES[profile.model] })) });
+        if (seed.id === "hanbao" || seed.id === "doubao-browser") {
+            const names = seed.id === "doubao-browser" ? DOUBAO_BROWSER_MODEL_NAMES : HANBAO_MODEL_NAMES;
+            result[index] = createModelChannel({ ...existing, ...seed, name: existing.name || seed.name, apiKey: "", secretKey: "", headers: [], modelProfiles: seed.modelProfiles?.map((profile) => ({ ...profile, displayName: names[profile.model] })) });
             changed = true;
             continue;
         }
@@ -783,6 +792,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
         ...defaultConfig,
         ...persistedConfig,
         projectWorkflowModels: normalizeProjectWorkflowModels(persistedConfig.projectWorkflowModels),
+        projectWorkflowVideoRatios: normalizeProjectWorkflowVideoRatios(persistedConfig.projectWorkflowVideoRatios),
         projectSystemPresentations: normalizeProjectSystemPresentations(persistedConfig.projectSystemPresentations),
         projectChapterStoryboardModes: normalizeChapterStoryboardModes(persistedConfig.projectChapterStoryboardModes),
         projectChapterDialogueConstraintModes: normalizeChapterDialogueConstraintModes(persistedConfig.projectChapterDialogueConstraintModes),
@@ -807,7 +817,8 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
     };
     const hasPersistedChannels = Array.isArray(persistedConfig.channels);
     if (!hasPersistedChannels) config.channels = [];
-    const channels = mergeBuiltinChannelSeeds(normalizeChannels(config, !hasPersistedChannels)).map(enrichBeefApiMediaChannel).map(repairNanoBananaProfiles).map(applyChannelAdaptation);
+    const deletedChannelIds = Array.isArray(config.deletedChannelIds) ? config.deletedChannelIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim())) : [];
+    const channels = mergeBuiltinChannelSeeds(normalizeChannels(config, !hasPersistedChannels), deletedChannelIds).map(enrichBeefApiMediaChannel).map(repairNanoBananaProfiles).map(applyChannelAdaptation);
     const models = modelOptionsFromChannels(channels);
     const imageModels = filterModelsByCapability(models, "image", channels);
     const videoModels = filterModelsByCapability(models, "video", channels);
@@ -820,6 +831,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             channelMode: "remote" as const,
             apiFormat: normalizeApiFormat(config.apiFormat),
             channels,
+            deletedChannelIds,
             models,
             model,
             imageModel: normalizeSelectedModel(config.imageModel || model, channels, imageModels),
@@ -848,6 +860,8 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             videoJiasuFaceMode: ["off", "light", "heavy"].includes(config.videoJiasuFaceMode) ? config.videoJiasuFaceMode : "default",
             videoJiasuFaceMask: normalizeJiasuFaceMaskMode(config.videoJiasuFaceMask),
             videoSd2FaceMask: normalizeSd2FaceMaskMode(config.videoSd2FaceMask),
+            videoHanbaoFaceMask: normalizeSd2FaceMaskMode(config.videoHanbaoFaceMask),
+            videoDoubaoBrowserFaceMask: normalizeDoubaoBrowserFaceMaskMode(config.videoDoubaoBrowserFaceMask),
             transparentBackground: config.transparentBackground === "true" ? "true" : "false",
             canvasImageCount: config.canvasImageCount || defaultConfig.canvasImageCount,
             imageModels,
@@ -1158,9 +1172,9 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
             ? "https://vip.eggfans.asia"
             : channel.baseUrl,
         referenceAssetOrigin: channel.referenceAssetOrigin,
-        apiKey: interfaceType === HANBAO_PROTOCOL || channel.credentialRef ? "" : channel.apiKey,
-        secretKey: interfaceType === HANBAO_PROTOCOL || channel.credentialRef ? "" : channel.secretKey,
-        headers: interfaceType === HANBAO_PROTOCOL ? [] : channel.headers,
+        apiKey: interfaceType === HANBAO_PROTOCOL || interfaceType === DOUBAO_BROWSER_PROTOCOL || channel.credentialRef ? "" : channel.apiKey,
+        secretKey: interfaceType === HANBAO_PROTOCOL || interfaceType === DOUBAO_BROWSER_PROTOCOL || channel.credentialRef ? "" : channel.secretKey,
+        headers: interfaceType === HANBAO_PROTOCOL || interfaceType === DOUBAO_BROWSER_PROTOCOL ? [] : channel.headers,
         apiFormat: interfaceType ? (interfaceType === "gemini-veo" || interfaceType === "gemini-image" || interfaceType === "gemini-generate-content" ? ("gemini" as const) : interfaceType === "claude-api" ? ("claude" as const) : ("openai" as const)) : channel.apiFormat,
         interfaceType,
         channelId: channel.scope === "system" ? channel.id : "",

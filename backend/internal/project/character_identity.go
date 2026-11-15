@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"infinite-canvas/backend/internal/characterkind"
 	"infinite-canvas/backend/internal/characterlooks"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -33,6 +34,24 @@ func sameCharacterIdentityLook(left, right model.AssetVersion) bool {
 func (s *Service) ValidateCharacterIdentityReference(userID, assetID, versionID, referenceVersionID, resourceID string, submittedResourceIDs []string) error {
 	if err := s.ValidateCharacterTurnaroundSource(userID, assetID, versionID); err != nil {
 		return err
+	}
+	asset, err := s.repo.AssetForUser(userID, assetID)
+	if err != nil {
+		return err
+	}
+	targetVersion, err := s.repo.AssetVersion(versionID)
+	if err != nil {
+		return err
+	}
+	var targetDefinition map[string]any
+	if err := json.Unmarshal([]byte(targetVersion.DefinitionJSON), &targetDefinition); err != nil {
+		return kernel.BadAuthRequest("角色设定格式无效")
+	}
+	if characterkind.IsGroup(asset.Title, targetDefinition) {
+		if referenceVersionID != "" || resourceID != "" {
+			return kernel.BadAuthRequest("群体演员不使用单人基础版锁脸，请刷新后重新生成")
+		}
+		return nil
 	}
 	versions, err := s.repo.AssetVersions(assetID)
 	if err != nil {

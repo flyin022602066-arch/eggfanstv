@@ -29,13 +29,14 @@ func RegisterChunkedUploadRoutes(r *gin.RouterGroup, svc *app.Service, hostedPro
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, chunkUploadBodyCapJSON)
 		var req struct {
-			FileName       string `json:"fileName"`
-			Kind           string `json:"kind"`
-			Size           int64  `json:"size"`
-			Width          int    `json:"width"`
-			Height         int    `json:"height"`
-			DurationMs     int64  `json:"durationMs"`
-			IdempotencyKey string `json:"idempotencyKey"`
+			FileName         string `json:"fileName"`
+			Kind             string `json:"kind"`
+			Size             int64  `json:"size"`
+			Width            int    `json:"width"`
+			Height           int    `json:"height"`
+			DurationMs       int64  `json:"durationMs"`
+			IdempotencyKey   string `json:"idempotencyKey"`
+			SourceResourceID string `json:"sourceResourceId"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
@@ -47,7 +48,7 @@ func RegisterChunkedUploadRoutes(r *gin.RouterGroup, svc *app.Service, hostedPro
 		session, err := svc.StartChunkedResourceUpload(user.ID, localasset.ChunkedUploadStart{
 			FileName: req.FileName, Kind: req.Kind, Size: req.Size,
 			Width: req.Width, Height: req.Height, DurationMs: req.DurationMs,
-			IdempotencyKey: req.IdempotencyKey,
+			IdempotencyKey: req.IdempotencyKey, SourceResourceID: req.SourceResourceID,
 		})
 		if err != nil {
 			failService(c, err)

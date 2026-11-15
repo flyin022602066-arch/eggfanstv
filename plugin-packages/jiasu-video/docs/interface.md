@@ -12,11 +12,11 @@
 
 | 字段 | 来源与说明 |
 | --- | --- |
-| `model` | 原样使用 `dola-sd-2.5`、`dola-sd-2.0`、`minimax-h3`、`sd-2.5-j2-V`、`sd-2.5-J2`、`sd-2.0-mini-J1`；不替换为文档示例的模型 ID |
+| `model` | 原样使用 `dola-sd-2.5`、`dola-sd-2.0`、`minimax-h3`、`sd-2.5-j2-V`、`sd-2.5-J2`、`sd-2.0-mini-J1`、`wan3-特惠`；不替换为文档示例的模型 ID |
 | `prompt` | 提示词，支持 `@图片N`、`@视频N`、`@音频N` 或 `@素材名称` |
 | `duration` | 节点时长（秒）；H3 按专用文档固定提交 15 |
-| `ratio` | `16:9`、`9:16`、`1:1` |
-| `resolution` | Dola/J2 为 `480p`、`720p`、`1080p`；J2-V 固定 `720p`；H3 固定 `2k` |
+| `ratio` | 通用 `16:9`、`9:16`、`1:1`；`wan3-特惠` 另支持 `4:3`、`3:4`、`21:9` |
+| `resolution` | Dola/J2 为 `480p`、`720p`、`1080p`；J2-V 固定 `720p`；H3 固定 `2k`；`wan3-特惠` 固定 `1080p` |
 | `images` | `[{url,name?,type?}]`；普通参考图省略 type，首帧为 `first_frame`，尾帧为 `end_frame` |
 | `videos` | `[{url,name?}]`；J2/J2-V 最多 10 段；H3 额外提交实际 `duration_seconds`（毫秒元数据除以 1000），可带 `mime` |
 | `audios` | `[{url,name?}]`；J2/J2-V 最多 10 段；H3 可带 `mime` |
@@ -27,6 +27,8 @@
 ## 模型能力
 
 佳速视频模型按渠道默认同步生成声音。界面显示“同步声音已开启”，已有配置中误存的声音不支持标记自动修正；此接口未公开 `generate_audio` 开关字段，因此请求保持原生字段，由渠道默认生成声音，不混入其他协议参数。
+
+`wan3-特惠` 的 `duration` 为 5–30 的整数，默认 5，选择 30 秒时原样提交 `duration: 30`。缺省分辨率为 `1080p`，比例支持 `16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`21:9`。前后端均纠正该模型误存的通用 15 秒、720p 能力画像，不影响其他模型。三类参考素材统一使用 `{url,name?}` 数组，不重复发送 `materials`。
 
 `sd-2.0-mini-J1` 使用同一创建与查询协议，模型 ID 原样提交；本地和插件校验均允许该模型，参考上限为 10 张图片、3 段视频和 3 段音频。
 
@@ -68,7 +70,7 @@ H3 专用文档规定：输出 15 秒、2k，最多 3 段参考视频、3 段参
   "apiVersion": "beeftv.plugin/v2",
   "id": "jiasu-video",
   "name": "极途 Gway",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "Eggfans TV",
   "description": "极途 Gway 独立视频协议，支持 dola-sd-2.5、dola-sd-2.0、minimax-h3、sd-2.5-j2-V、sd-2.5-J2。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -774,7 +776,22 @@ H3 专用文档规定：输出 15 秒、2k，最多 3 段参考视频、3 段参
                     {
                       "$ref": "request.resolution"
                     },
-                    "720p"
+                    {
+                      "$if": {
+                        "condition": {
+                          "$eq": [
+                            {
+                              "$lower": {
+                                "$ref": "request.model"
+                              }
+                            },
+                            "wan3-特惠"
+                          ]
+                        },
+                        "then": "1080p",
+                        "else": "720p"
+                      }
+                    }
                   ]
                 }
               }

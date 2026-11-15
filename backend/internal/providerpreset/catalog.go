@@ -13,6 +13,7 @@ import (
 var catalogFiles embed.FS
 
 type ModelProfile struct {
+	DisplayName      string          `json:"displayName,omitempty"`
 	Model            string          `json:"model"`
 	Capability       string          `json:"capability"`
 	Protocol         string          `json:"protocol"`
@@ -130,7 +131,7 @@ func mustLoadCatalog() []ChannelPreset {
 
 func knownProtocol(value string) bool {
 	switch value {
-	case "chat-completion", "openai-response", "claude-api", "openai-image", "openai-audio", "async-audio", "newapi", "newapi-channel-1", "newapi-channel-2", "xai-video", "eggfans-sd2-video", "jiasu-video", "towo-sd25-video", "mints-seedance-video", "hanbao-video":
+	case "chat-completion", "openai-response", "claude-api", "openai-image", "openai-audio", "async-audio", "newapi", "newapi-channel-1", "newapi-channel-2", "xai-video", "eggfans-sd2-video", "jiasu-video", "towo-sd25-video", "mints-seedance-video", "hanbao-video", "doubao-browser-video", "kanhai-video", "nono-video":
 		return true
 	default:
 		return false

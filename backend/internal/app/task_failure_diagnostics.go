@@ -9,6 +9,7 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/provider/hanbao"
 )
 
 func captureTaskFailureDiagnostics(task *model.Task, err error, source string) {
@@ -33,7 +34,18 @@ func captureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 	var httpErr providerHTTPError
 	var payload providerPayloadError
 	var appErr *kernel.AppError
+	var hanbaoErr *hanbao.CallError
 	switch {
+	case errors.As(err, &hanbaoErr):
+		d.Source, d.Stage, d.Summary = hanbaoErr.Source, hanbaoErr.Stage, hanbaoErr.Error()
+		if hanbaoErr.Source == "upstream_response" {
+			d.ProviderCode = hanbaoErr.Code
+		}
+		if failure.Uncertain {
+			d.ExecutionResult = "pending"
+		} else if hanbaoErr.Source == "upstream_response" {
+			d.ExecutionResult = "failed"
+		}
 	case errors.As(err, &httpErr):
 		d.Source, d.HTTPStatus, d.ProviderCode = "upstream_http", httpErr.StatusCode, failure.ProviderCode
 		d.RequestID = firstNonEmpty(failure.RequestID, httpErr.RequestID)

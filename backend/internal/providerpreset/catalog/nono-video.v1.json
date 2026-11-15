@@ -1,0 +1,174 @@
+{
+  "baseUrl": "https://sub-tz.top/prod-api/v1",
+  "catalogProtocol": "openai",
+  "displayName": "nono Seedance 2.5",
+  "id": "nono-video",
+  "models": [
+    {
+      "capability": "video",
+      "capabilityConfig": {
+        "version": 1,
+        "video": {
+          "references": {
+            "promptMaxChars": 15000,
+            "minImages": 0,
+            "maxImages": 30,
+            "maxImageBytes": 0,
+            "maxVideos": 10,
+            "maxVideoBytes": 0,
+            "maxVideoDurationSeconds": 0,
+            "maxAudios": 10,
+            "maxAudioBytes": 0,
+            "maxAudioDurationSeconds": 0
+          },
+          "duration": {
+            "selection": "range",
+            "min": 5,
+            "max": 30,
+            "step": 1,
+            "default": 10
+          },
+          "ratios": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ],
+          "defaultRatio": "16:9",
+          "resolutions": [
+            "720p"
+          ],
+          "defaultResolution": "720p",
+          "generateAudio": {
+            "supported": true,
+            "default": true
+          },
+          "watermark": {
+            "supported": false,
+            "default": false
+          },
+          "operations": [
+            "text_to_video",
+            "image_to_video",
+            "reference_to_video",
+            "audio_to_video"
+          ],
+          "defaultOperation": "text_to_video"
+        }
+      },
+      "displayName": "按条特惠seedance-2.5-720P 满血 · 5.5积分/条",
+      "model": "按条特惠seedance-2.5-720P 满血",
+      "protocol": "nono-video"
+    },
+    {
+      "capability": "video",
+      "capabilityConfig": {
+        "version": 1,
+        "video": {
+          "references": {
+            "promptMaxChars": 15000,
+            "minImages": 0,
+            "maxImages": 20,
+            "maxImageBytes": 0,
+            "maxVideos": 5,
+            "maxVideoBytes": 0,
+            "maxVideoDurationSeconds": 0,
+            "maxAudios": 5,
+            "maxAudioBytes": 0,
+            "maxAudioDurationSeconds": 0
+          },
+          "duration": {
+            "selection": "range",
+            "min": 5,
+            "max": 30,
+            "step": 1,
+            "default": 10
+          },
+          "ratios": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ],
+          "defaultRatio": "16:9",
+          "resolutions": [
+            "720p"
+          ],
+          "defaultResolution": "720p",
+          "generateAudio": {
+            "supported": true,
+            "default": true
+          },
+          "watermark": {
+            "supported": false,
+            "default": false
+          },
+          "operations": [
+            "text_to_video",
+            "image_to_video",
+            "reference_to_video",
+            "audio_to_video"
+          ],
+          "defaultOperation": "text_to_video"
+        }
+      },
+      "displayName": "按条福利seedance-2.5-720P · 4.8积分/条",
+      "model": "按条福利seedance-2.5-720P",
+      "protocol": "nono-video"
+    },
+    {
+      "capability": "video",
+      "capabilityConfig": {
+        "version": 1,
+        "video": {
+          "references": {
+            "promptMaxChars": 15000,
+            "minImages": 0,
+            "maxImages": 9,
+            "maxImageBytes": 0,
+            "maxVideos": 0,
+            "maxVideoBytes": 0,
+            "maxVideoDurationSeconds": 0,
+            "maxAudios": 0,
+            "maxAudioBytes": 0,
+            "maxAudioDurationSeconds": 0
+          },
+          "duration": {
+            "selection": "range",
+            "min": 30,
+            "max": 30,
+            "step": 1,
+            "default": 30
+          },
+          "ratios": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ],
+          "defaultRatio": "16:9",
+          "resolutions": [
+            "720p"
+          ],
+          "defaultResolution": "720p",
+          "generateAudio": {
+            "supported": true,
+            "default": true
+          },
+          "watermark": {
+            "supported": false,
+            "default": false
+          },
+          "operations": [
+            "text_to_video",
+            "image_to_video",
+            "reference_to_video"
+          ],
+          "defaultOperation": "text_to_video"
+        }
+      },
+      "displayName": "按条seedance-2.5-720P 只支持参考图 · 3.5积分/条",
+      "model": "按条seedance-2.5-720P 只支持参考图",
+      "protocol": "nono-video"
+    }
+  ],
+  "pinned": false,
+  "presetVersion": 1
+}

@@ -18,3 +18,13 @@ test("missing, invalid and expired URLs are not offered for copying", () => {
     }
     expect(temporaryImageLink({ ...resource, temporaryImageExpiresAt: "unknown" })).toEqual({ status: "invalid" });
 });
+
+test("nono backup URL keeps its original expiry and rejects lookalikes", () => {
+    const backup = { ...resource, temporaryImageUrl: "https://u.pone.rs/reference.png" };
+    for (const url of [backup.temporaryImageUrl, "https://leopard.hosting.pecon.us/dl/abc/reference.png"]) {
+        expect(temporaryImageLink({ ...backup, temporaryImageUrl: url }, Date.parse(uploadedAt)).status).toBe("ready");
+    }
+    for (const url of ["https://u.pone.rs.attacker.example/test.png", "https://u.pone.rs/", "https://u.pone.rs/a.png?token=secret", "https://secret@u.pone.rs/a.png", "https://leopard.hosting.pecon.us/upload.php", "https://temp.sh/a.png"]) {
+        expect(temporaryImageLink({ ...backup, temporaryImageUrl: url }, Date.parse(uploadedAt)).status).toBe("invalid");
+    }
+});

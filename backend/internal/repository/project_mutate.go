@@ -23,6 +23,8 @@ var ErrProjectArchived = errors.New("project is archived")
 
 var ErrProjectAssetStillReferenced = errors.New("project asset still referenced")
 
+var ErrShotAssetExcluded = errors.New("该资产已被手动移出当前镜头，自动匹配不会恢复；如需使用，请手动重新绑定")
+
 // WorkflowOutputCurrent is the step/instance/shot snapshot loaded inside the
 // registration transaction. Callers must derive transitions from this state.
 type WorkflowOutputCurrent struct {
@@ -674,12 +676,17 @@ func (r *Repository) UnlinkProjectAssetAndBump(userID, projectID, assetID string
 		if err := tx.Table("shot_asset_references").
 			Joins("JOIN shots ON shots.id = shot_asset_references.shot_id").
 			Joins("JOIN asset_versions ON asset_versions.id = shot_asset_references.asset_version_id").
-			Where("shots.project_id = ? AND asset_versions.asset_id = ?", projectID, assetID).
+			Where("shots.project_id = ? AND asset_versions.asset_id = ? AND shot_asset_references.status <> ?", projectID, assetID, "excluded").
 			Count(&references).Error; err != nil {
 			return err
 		}
 		if references > 0 {
 			return ErrProjectAssetStillReferenced
+		}
+		shotIDs := tx.Model(&model.Shot{}).Select("id").Where("project_id = ?", projectID)
+		versionIDs := tx.Model(&model.AssetVersion{}).Select("id").Where("asset_id = ?", assetID)
+		if err := tx.Where("shot_id IN (?) AND asset_version_id IN (?) AND status = ?", shotIDs, versionIDs, "excluded").Delete(&model.ShotAssetReference{}).Error; err != nil {
+			return err
 		}
 		result := tx.Delete(&model.ProjectAssetLink{}, "project_id = ? AND asset_id = ?", projectID, assetID)
 		if result.Error != nil {
@@ -1165,7 +1172,30 @@ func (r *Repository) UpsertShotAssetReferenceActive(userID, projectID string, re
 		if err := requireProjectAssetVersionTx(tx, projectID, reference.AssetVersionID); err != nil {
 			return err
 		}
-		result := tx.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND asset_version_id = ? AND role = ?", reference.ShotID, reference.AssetVersionID, reference.Role).Updates(map[string]any{"status": reference.Status})
+		var version model.AssetVersion
+		if err := tx.First(&version, "id = ?", reference.AssetVersionID).Error; err != nil {
+			return err
+		}
+		versionIDs := tx.Model(&model.AssetVersion{}).Select("id").Where("asset_id = ?", version.AssetID)
+		excluded := tx.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND role = ? AND status = ? AND asset_version_id IN (?)", reference.ShotID, reference.Role, "excluded", versionIDs)
+		if reference.SelectionSource == "manual" {
+			if err := excluded.Delete(&model.ShotAssetReference{}).Error; err != nil {
+				return err
+			}
+		} else {
+			var count int64
+			if err := excluded.Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return ErrShotAssetExcluded
+			}
+		}
+		updates := map[string]any{"status": reference.Status}
+		if reference.SelectionSource == "manual" {
+			updates["selection_source"] = "manual"
+		}
+		result := tx.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND asset_version_id = ? AND role = ?", reference.ShotID, reference.AssetVersionID, reference.Role).Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -1178,8 +1208,7 @@ func (r *Repository) UpsertShotAssetReferenceActive(userID, projectID string, re
 			if err := tx.First(&existing, "shot_id = ? AND asset_version_id = ? AND role = ?", reference.ShotID, reference.AssetVersionID, reference.Role).Error; err != nil {
 				return err
 			}
-			reference.ID = existing.ID
-			reference.CreatedAt = existing.CreatedAt
+			*reference = existing
 		}
 		if err := tx.Model(&model.ShotArtifact{}).Where("shot_id = ? AND status NOT IN ?", reference.ShotID, []string{"failed", "stale"}).Updates(map[string]any{"status": "stale", "selected": false, "updated_at": updatedAt}).Error; err != nil {
 			return err
@@ -1195,13 +1224,27 @@ func (r *Repository) UpsertShotAssetReferenceActive(userID, projectID string, re
 	})
 }
 
-func (r *Repository) DeleteShotAssetReferenceActive(userID, projectID, shotID, referenceID string, updatedAt time.Time) (bool, error) {
+func (r *Repository) DeleteShotAssetReferenceActive(userID, projectID, shotID, referenceID string, updatedAt time.Time, exclude bool) (bool, error) {
 	deleted := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
 			return err
 		}
-		result := tx.Where("id = ? AND shot_id = ?", referenceID, shotID).Delete(&model.ShotAssetReference{})
+		var result *gorm.DB
+		if exclude {
+			var reference model.ShotAssetReference
+			if err := tx.First(&reference, "id = ? AND shot_id = ?", referenceID, shotID).Error; err != nil {
+				return err
+			}
+			var version model.AssetVersion
+			if err := tx.First(&version, "id = ?", reference.AssetVersionID).Error; err != nil {
+				return err
+			}
+			versionIDs := tx.Model(&model.AssetVersion{}).Select("id").Where("asset_id = ?", version.AssetID)
+			result = tx.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND role = ? AND asset_version_id IN (?)", shotID, reference.Role, versionIDs).Updates(map[string]any{"status": "excluded", "selection_source": "manual", "selection_locked": true, "selection_reason": "用户已手动移出当前镜头"})
+		} else {
+			result = tx.Where("id = ? AND shot_id = ? AND status <> ?", referenceID, shotID, "excluded").Delete(&model.ShotAssetReference{})
+		}
 		if result.Error != nil {
 			return result.Error
 		}

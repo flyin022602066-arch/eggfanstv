@@ -17,7 +17,12 @@ export function projectUnitShotAssetPlan(workspace: ProjectUnitWorkspace, assets
             const asset = reference.asset || assets.find((item) => item.id === reference.referencedVersion?.assetId || item.primaryVersionId === reference.assetVersionId);
             return asset ? [{ asset, assetVersionId: reference.assetVersionId, selectionSource: reference.selectionSource, selectionLocked: reference.selectionLocked }] : [];
         });
-        return { script, existing };
+        const excludedAssetIds = workspace.shotReferences.flatMap((reference) => {
+            if (reference.shotId !== shot.id || reference.status !== "excluded" || reference.role !== "reference") return [];
+            const assetId = reference.asset?.id || reference.referencedVersion?.assetId || assets.find((asset) => asset.primaryVersionId === reference.assetVersionId)?.id;
+            return assetId ? [assetId] : [];
+        });
+        return { script, existing, excludedAssetIds };
     });
     const matches = matchProjectShotSequenceAssets(assets, inputs, options);
     return shots.map((shot, index) => ({ shot, script: inputs[index]!.script, matches: matches[index]! }));
@@ -112,7 +117,7 @@ async function prepareAssets(input: { projectId: string; unitId: string; shotId?
     try {
         for (const { shotId, asset, assetVersionId } of missing) {
             try {
-                const { reference } = await api.linkShotAsset(input.projectId, shotId, { assetVersionId, role: "reference" });
+                const { reference } = await api.linkShotAsset(input.projectId, shotId, { assetVersionId, role: "reference", selectionSource: "rule" });
                 created.push({ shotId, referenceId: reference.id });
             } catch (error) {
                 throw new Error(`绑定资产“${asset.title}”失败：${error instanceof Error ? error.message : "请重试"}`);
@@ -129,7 +134,7 @@ async function prepareAssets(input: { projectId: string; unitId: string; shotId?
             if (current.assetVersionId !== repair.reference.assetVersionId) throw new Error(`资产“${repair.asset.title}”的旧绑定已发生变化，请刷新后重试`);
             await api.unlinkShotAsset(input.projectId, repair.shotId, current.id);
             removed.push(repair);
-            const { reference } = await api.linkShotAsset(input.projectId, repair.shotId, { assetVersionId: repair.assetVersionId, role: repair.reference.role });
+            const { reference } = await api.linkShotAsset(input.projectId, repair.shotId, { assetVersionId: repair.assetVersionId, role: repair.reference.role, selectionSource: "rule" });
             created.push({ shotId: repair.shotId, referenceId: reference.id });
             replacedCount += 1;
             updated = await api.getProjectUnitWorkspace(input.projectId, input.unitId);
@@ -140,7 +145,7 @@ async function prepareAssets(input: { projectId: string; unitId: string; shotId?
     } catch (error) {
         const rollback = await Promise.allSettled([
             ...created.map(({ shotId, referenceId }) => api.unlinkShotAsset(input.projectId, shotId, referenceId)),
-            ...removed.map(({ shotId, reference }) => api.linkShotAsset(input.projectId, shotId, { assetVersionId: reference.assetVersionId, role: reference.role })),
+            ...removed.map(({ shotId, reference }) => api.linkShotAsset(input.projectId, shotId, { assetVersionId: reference.assetVersionId, role: reference.role, selectionSource: "rule" })),
         ]);
         if (rollback.some((result) => result.status === "rejected")) {
             throw new Error(`${error instanceof Error ? error.message : "资产绑定失败"}；部分绑定未能撤回，请检查镜头资产后重试，未提交生成任务`);

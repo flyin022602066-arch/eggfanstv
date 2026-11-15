@@ -80,7 +80,7 @@ func (host *UguuImageHost) URLAvailable(ctx context.Context, value string) (bool
 		return false, nil
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
-		return false, fmt.Errorf("检查 Uguu 素材链接失败（HTTP %d）", response.StatusCode)
+		return false, fmt.Errorf("检查 Uguu 素材链接失败：%w", temporaryUploadHTTPError{status: response.StatusCode})
 	}
 	return !strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/html"), nil
 }
@@ -202,10 +202,15 @@ func (host *UguuImageHost) upload(ctx context.Context, data []byte, mimeType str
 
 type temporaryUploadHTTPError struct {
 	status int
+	host   string
 }
 
 func (err temporaryUploadHTTPError) Error() string {
-	return fmt.Sprintf("Uguu 图片上传失败（HTTP %d），请稍后重试", err.status)
+	name := err.host
+	if name == "" {
+		name = "Uguu"
+	}
+	return fmt.Sprintf("%s 图片上传失败（HTTP %d），请稍后重试", name, err.status)
 }
 
 func retryableTemporaryUpload(err error) bool {

@@ -27,6 +27,7 @@ import (
 	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/prompts"
 	"infinite-canvas/backend/internal/provider/hanbao"
+	"infinite-canvas/backend/internal/provider/doubaobrowser"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skills"
 	localtask "infinite-canvas/backend/internal/task"
@@ -53,6 +54,8 @@ type Service struct {
 	runtimeErr               error
 	localResourceStorage     bool
 	generatedVideoOutputDir  string
+	doubaoBrowserOutputDir   string
+	doubaoArchiveMu          sync.Mutex
 	pluginRuntime            *pluginRuntime
 	pluginRuntimeErr         error
 	workerID                 string
@@ -84,8 +87,12 @@ type Service struct {
 	beefAPI                  *beefapi.Service
 	hanbao                   *hanbao.Service
 	hanbaoOnce               sync.Once
+	doubaoBrowser            *doubaobrowser.Service
+	doubaoBrowserOnce        sync.Once
 	temporaryImagesOnce      sync.Once
 	temporaryImages          temporaryImageUploader
+	nonoImagesOnce           sync.Once
+	nonoImages               temporaryImageUploader
 	temporaryMediaOnce       sync.Once
 	temporaryMedia           temporaryMediaUploader
 	eggfansAssetLocks        sync.Map
@@ -241,6 +248,11 @@ func (s *Service) hydrateTaskProviderRequestID(task *model.Task) {
 	if task.ProviderRequestID == "" {
 		if providerRequestID, err := s.repo.LatestProviderRequestIDForTask(task.ID); err == nil {
 			task.ProviderRequestID = providerRequestID
+		}
+	}
+	if task.ProviderRequestID == "" {
+		if attempt, err := s.repo.LatestRouteAttempt(task.ID); err == nil && attempt != nil {
+			task.ProviderRequestID = strings.TrimSpace(attempt.ProviderRequestID)
 		}
 	}
 }

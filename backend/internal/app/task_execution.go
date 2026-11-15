@@ -22,6 +22,9 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 		return nil, nil, err
 	}
 	task.InputJSON = decryptedInput
+	if result, recovered, err := s.recoverDoubaoBrowserArchive(task); recovered {
+		return result, nil, err
+	}
 	ctx = withTaskExecutionID(ctx, task.ID)
 	ctx = withProviderAnalytics(ctx, s, task)
 	runtime, _ := generation.RuntimeFromContext(ctx)

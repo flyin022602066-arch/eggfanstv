@@ -1742,7 +1742,7 @@ func (r *Repository) ProjectAssetShotReferenceCount(projectID string, assetID st
 	err := r.db.Table("shot_asset_references").
 		Joins("JOIN shots ON shots.id = shot_asset_references.shot_id").
 		Joins("JOIN asset_versions ON asset_versions.id = shot_asset_references.asset_version_id").
-		Where("shots.project_id = ? AND asset_versions.asset_id = ?", projectID, assetID).
+		Where("shots.project_id = ? AND asset_versions.asset_id = ? AND shot_asset_references.status <> ?", projectID, assetID, "excluded").
 		Count(&count).Error
 	return count, err
 }
@@ -1759,7 +1759,7 @@ func (r *Repository) AssetReferenceCount(assetID string) (int64, error) {
 		return 0, err
 	}
 	var shotLinks int64
-	err := r.db.Table("shot_asset_references").Joins("JOIN asset_versions ON asset_versions.id = shot_asset_references.asset_version_id").Where("asset_versions.asset_id = ?", assetID).Count(&shotLinks).Error
+	err := r.db.Table("shot_asset_references").Joins("JOIN asset_versions ON asset_versions.id = shot_asset_references.asset_version_id").Where("asset_versions.asset_id = ? AND shot_asset_references.status <> ?", assetID, "excluded").Count(&shotLinks).Error
 	return projectLinks + shotLinks, err
 }
 
@@ -1779,7 +1779,7 @@ func (r *Repository) ProjectAssetUsageRoles(projectID string, assetID string) ([
 		Distinct("shot_asset_references.role").
 		Joins("JOIN shots ON shots.id = shot_asset_references.shot_id").
 		Joins("JOIN asset_versions ON asset_versions.id = shot_asset_references.asset_version_id").
-		Where("shots.project_id = ? AND asset_versions.asset_id = ?", projectID, assetID).
+		Where("shots.project_id = ? AND asset_versions.asset_id = ? AND shot_asset_references.status <> ?", projectID, assetID, "excluded").
 		Order("shot_asset_references.role asc").
 		Pluck("shot_asset_references.role", &shotRoles).Error; err != nil {
 		return nil, err

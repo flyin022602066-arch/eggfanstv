@@ -262,15 +262,22 @@ func (s *Service) LinkShotAsset(userID string, projectID string, shotID string, 
 	if !validShotAssetRole(role) {
 		return model.ShotAssetReference{}, kernel.BadAuthRequest("不支持的镜头素材用途")
 	}
+	source := strings.TrimSpace(req.SelectionSource)
+	if source == "" {
+		source = "manual"
+	}
+	if source != "manual" && source != "auto" && source != "rule" {
+		return model.ShotAssetReference{}, kernel.BadAuthRequest("不支持的镜头资产选择来源")
+	}
 	now := time.Now()
-	reference := model.ShotAssetReference{ID: kernel.NewID(), ShotID: shotID, AssetVersionID: versionID, Role: role, Status: "linked", CreatedAt: now}
+	reference := model.ShotAssetReference{ID: kernel.NewID(), ShotID: shotID, AssetVersionID: versionID, Role: role, Status: "linked", SelectionSource: source, CreatedAt: now}
 	if err := s.repo.UpsertShotAssetReferenceActive(userID, projectID, &reference, now); err != nil {
 		return model.ShotAssetReference{}, mapProjectWriteError(err)
 	}
 	return reference, nil
 }
 
-func (s *Service) UnlinkShotAsset(userID string, projectID string, shotID string, referenceID string) error {
+func (s *Service) UnlinkShotAsset(userID string, projectID string, shotID string, referenceID string, exclude ...bool) error {
 	if _, err := s.Active(userID, projectID); err != nil {
 		return err
 	}
@@ -281,7 +288,7 @@ func (s *Service) UnlinkShotAsset(userID string, projectID string, shotID string
 	if referenceID == "" {
 		return kernel.BadAuthRequest("镜头资产引用不能为空")
 	}
-	deleted, err := s.repo.DeleteShotAssetReferenceActive(userID, projectID, shotID, referenceID, time.Now())
+	deleted, err := s.repo.DeleteShotAssetReferenceActive(userID, projectID, shotID, referenceID, time.Now(), len(exclude) > 0 && exclude[0])
 	if err != nil {
 		return mapProjectWriteError(err)
 	}
@@ -296,7 +303,10 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 		return nil, err
 	}
 	sourceTaskID := strings.TrimSpace(req.SourceTaskID)
-	if len(req.Candidates) > 100 || (len(req.Candidates) == 0 && sourceTaskID == "") {
+	if len(req.Candidates) == 0 && sourceTaskID != "" {
+		return nil, kernel.BadAuthRequest("本次未识别到任何角色、场景或道具，未写入资产；已有资产和草稿保持不变")
+	}
+	if len(req.Candidates) > 100 || len(req.Candidates) == 0 {
 		return nil, kernel.BadAuthRequest("资产候选数量必须在 1 到 100 之间")
 	}
 	source := strings.TrimSpace(req.Source)

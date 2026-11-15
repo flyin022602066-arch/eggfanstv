@@ -12,6 +12,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"infinite-canvas/backend/internal/provider/hanbao"
 )
 
 // FailureCategory 是生成失败的稳定机器可读类目。HTTP 状态只作兜底，不能单独当原因。
@@ -122,7 +124,7 @@ var (
 	promptEchoPattern          = regexp.MustCompile(`(?is)(?:\b(?:prompt|input|query)|提示词|输入内容)["']?\s*[=:：].*`)
 	signedQueryPattern         = regexp.MustCompile(`(?i)(?:[?&](?:signature|x-amz-signature|x-oss-signature|token|key)=)[^\s&]+`)
 	safeIDPattern              = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$`)
-	providerCodePattern        = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:-]*$`)
+	providerCodePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 	unsafeIDPattern            = regexp.MustCompile(`(?i)secret|token|password|apikey|api-key|bearer|sk-`)
 	durationRangePattern       = regexp.MustCompile(`(?i)\bduration\s+(?:must\s+be|should\s+be|is\s+required\s+to\s+be)\s+(?:between\s+([0-9]+(?:\.[0-9]+)?)\s*(?:seconds?|secs?|s)?\s+and\s+([0-9]+(?:\.[0-9]+)?)|in\s+(?:the\s+)?range\s*\[?([0-9]+(?:\.[0-9]+)?)\s*[,–-]\s*([0-9]+(?:\.[0-9]+)?)\]?)\s*(?:seconds?|secs?|s)\b`)
 	widthRangePattern          = regexp.MustCompile(`(?i)\bwidth\s+(?:must\s+be|should\s+be)\s+between\s+(\d+)\s*(?:px|pixels?)?\s+and\s+(\d+)\s*(?:px|pixels?)`)
@@ -306,6 +308,9 @@ func (f Failure) BlocksAutomaticRetry() bool {
 	if f.Uncertain {
 		return true
 	}
+	if f.Category == CategoryAsyncFailed && strings.HasPrefix(f.Reason, "憨包") && hanbao.ConfirmedCanvasFailure(f.Reason) {
+		return false
+	}
 	switch f.Category {
 	case CategoryThrottled, CategoryConcurrency, CategoryProviderUnavailable, CategoryCancelled:
 		return false
@@ -455,11 +460,11 @@ func ClassifyError(err error) Failure {
 		failure := ClassifyError(continuation.Err)
 		if continuation.Invalid {
 			failure.Category = CategoryMalformedResponse
-			failure.Reason = "章节资产已自动续接一次，但结果仍不完整或断点不一致"
+			failure.Reason = continuation.attemptSummary() + "，但结果仍不完整或断点不一致"
 		} else {
-			failure.Reason = "章节资产已自动续接一次，但请求未完成：" + failure.Reason
+			failure.Reason = continuation.attemptSummary() + "，但请求未完成：" + failure.Reason
 		}
-		failure.Action = "未回填半成品，请查看任务中已接收的文本和失败详情后再决定是否重试"
+		failure.Action = "已保留收到的文本，未回填半成品；请查看原任务的输出和失败详情，不要连续重复提取"
 		return normalizeFailure(failure)
 	}
 	var circuit CircuitOpenError
@@ -531,6 +536,11 @@ func ClassifyText(raw string) Failure {
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		return normalizeFailure(failure)
+	}
+	if strings.HasPrefix(text, "憨包") && hanbao.ConfirmedCanvasFailure(text) {
+		ending := "：这条先跳过，可稍后重试或换个账号"
+		reason, _, _ := strings.Cut(text, ending)
+		return normalizeFailure(Failure{Category: CategoryAsyncFailed, Reason: sanitizeProviderText(reason + ending), Action: "组件已确认生成失败；可检查参考素材，稍后重试或选择其他可用账号"})
 	}
 	if persisted, ok := persistedMissingPrivateRoute(text); ok {
 		return persisted

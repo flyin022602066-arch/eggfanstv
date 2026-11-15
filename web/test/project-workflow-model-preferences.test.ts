@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { normalizeProjectWorkflowModels } from "../src/lib/project-workflow-model-preferences";
+import { normalizeProjectWorkflowModels, normalizeProjectWorkflowVideoRatios } from "../src/lib/project-workflow-model-preferences";
 import { groupModelsByDisplayName, groupModelsIndividually, resolveActiveWorkflowModel, resolveWorkflowModelPreference } from "../src/lib/model-selection";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, selectableModelsByCapability, type AiConfig } from "../src/stores/use-config-store";
 
@@ -13,6 +13,14 @@ test("workflow model preferences retain independent projects and production stag
     expect(restored.projectWorkflowModels).toEqual(preferences);
     expect(restored.videoModel).toBe(normalizedDefaults.videoModel);
     expect(restored.imageModel).toBe(normalizedDefaults.imageModel);
+});
+
+test("workflow video ratios persist independently of project defaults and image sizes", () => {
+    const preferences = { first: "16:9", second: "9:16" };
+    const restored = normalizeConfigSnapshot({ config: { ...defaultConfig, size: "1:1", projectWorkflowVideoRatios: JSON.parse(JSON.stringify(preferences)) } }).config;
+    expect(restored.projectWorkflowVideoRatios).toEqual(preferences);
+    expect(restored.size).toBe("1:1");
+    expect(normalizeProjectWorkflowVideoRatios({ first: " 16:9 ", second: null, third: [], "": "9:16" })).toEqual({ first: "16:9" });
 });
 
 test("unavailable remembered models survive catalog normalization instead of being replaced", () => {

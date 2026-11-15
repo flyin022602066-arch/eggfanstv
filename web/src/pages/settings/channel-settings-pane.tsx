@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
 import { HanbaoAccountManager } from "./hanbao-account-manager";
+import { DoubaoBrowserManager } from "./doubao-browser-manager";
+import { isDoubaoBrowserChannel } from "@/lib/doubao-browser";
 import { isHanbaoChannel } from "@/lib/hanbao";
 import { VolcAssetLibrarySettings } from "./volc-asset-library-settings";
 import { EggfansPrivateAssetsButton } from "@/components/eggfans-private-assets-modal";
@@ -46,6 +48,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
     const [loadingChannelIds, setLoadingChannelIds] = useState<string[]>([]);
     const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
     const [hanbaoOpen, setHanbaoOpen] = useState(false);
+    const [doubaoBrowserOpen, setDoubaoBrowserOpen] = useState(false);
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [serviceEditor, setServiceEditor] = useState<ModelChannel | null | undefined>(undefined);
     const [beefConnection, setBeefConnection] = useState<BeefAPIConnectionSummary | null>(null);
@@ -199,13 +202,20 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
         setNewChannelId(null);
     };
 
-    const deleteChannel = (id: string) => {
-        const channel = config.channels.find((item) => item.id === id);
+    const deleteChannel = async (id: string) => {
+        const latest = useConfigStore.getState().config;
+        const channel = latest.channels.find((item) => item.id === id);
         if (channel?.scope === "system") {
             message.warning("系统渠道由管理员维护");
             return;
         }
-        updateChannels(config.channels.filter((item) => item.id !== id));
+        updateChannels(latest.channels.filter((item) => item.id !== id), latest);
+        try {
+            await persistCatalog();
+            message.success("渠道已删除");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "删除渠道未保存，请重试");
+        }
     };
 
     const setChannelLoading = (id: string, loading: boolean) => {
@@ -371,7 +381,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                             <ChannelStatus channel={channel} persistence={persistence} connection={builtinBeefAPI ? beefConnection : null} />
                                         </div>
                                         {builtinSD2Catalog ? <p className="mt-1 text-xs text-foreground/55">内置 SD2 视频模型，无需联网拉取；点击编辑填写该渠道的 API Key。参考图在生成时自动上传至 Uguu，临时链接约 3 小时有效。</p> : null}
-                                        {fixedModelCatalog ? <p className="mt-1 text-xs text-foreground/55">{isHanbaoChannel(channel) ? "内置 3 个 Seedance 视频模型；通过账号管理登录并选择生成账号，飞狐接码仅用于此渠道。" : "固定使用内置模型 seedance-2.5，无需拉取模型列表。"}</p> : null}
+                                        {fixedModelCatalog ? <p className="mt-1 text-xs text-foreground/55">{isDoubaoBrowserChannel(channel) ? "独立浏览器渠道 · 100 个环境 · 自动预留 2 个空闲 · 支持一键清理网站数据。" : isHanbaoChannel(channel) ? "内置 3 个 Seedance 视频模型；通过账号管理登录并选择生成账号，飞狐接码仅用于此渠道。" : "固定使用内置模型 seedance-2.5，无需拉取模型列表。"}</p> : null}
                                     </div>
                                     <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto sm:shrink-0">
                                         <EggfansPrivateAssetsButton channel={channel} />
@@ -404,14 +414,15 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                             icon={<Pencil className="size-3.5" />}
                                             onClick={() => {
                                                 if (isHanbaoChannel(channel)) { setHanbaoOpen(true); return; }
+                                                if (isDoubaoBrowserChannel(channel)) { setDoubaoBrowserOpen(true); return; }
                                                 if (!builtinBeefAPI && !packagedWindows) { setServiceEditor(channel); return; }
                                                 setNewChannelId(null);
                                                 setEditingChannelId(channel.id);
                                             }}
                                         >
-                                            {isHanbaoChannel(channel) ? "账号管理" : "编辑"}
+                                            {isHanbaoChannel(channel) || isDoubaoBrowserChannel(channel) ? "账号管理" : "编辑"}
                                         </Button>
-                                        {!builtinBeefAPI && !isHanbaoChannel(channel) ? (
+                                        {!builtinBeefAPI && !isHanbaoChannel(channel) && !isDoubaoBrowserChannel(channel) ? (
                                             <Popconfirm title="删除个人模型渠道？" description="该渠道关联的模型选择会同时移除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => deleteChannel(channel.id)}>
                                                 <Tooltip title="删除渠道">
                                                     <Button
@@ -572,6 +583,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
             )}
             {serviceEditor !== undefined && <ModelServiceEditor initial={serviceEditor || undefined} onClose={() => setServiceEditor(undefined)} onSave={saveService} />}
             {hanbaoOpen ? <HanbaoAccountManager onClose={() => setHanbaoOpen(false)} /> : null}
+            {doubaoBrowserOpen ? <DoubaoBrowserManager onClose={() => setDoubaoBrowserOpen(false)} /> : null}
         </Form>
     );
 }
@@ -587,7 +599,8 @@ function FixedChannelUrl({ label, value }: { label: string; value: string }) {
 
 export function applyFetchedChannelModelCatalog(channel: ModelChannel, result: ChannelModelFetchResult): ModelChannel {
     const profiles = mergeFetchedChannelModelProfiles(channel, result.catalog);
-    if (channel.id === "beefapi" || channel.id === "jiasu-video" || channel.interfaceType === "jiasu-video") return { ...channel, models: uniqueModels(result.models), modelProfiles: profiles, ...(channel.id === "jiasu-video" || channel.interfaceType === "jiasu-video" ? { presetVersion: Math.max(channel.presetVersion || 0, 3) } : {}) };
+    if (channel.interfaceType === "nono-video") return { ...channel, models: uniqueModels(result.models), modelProfiles: profiles };
+    if (channel.id === "beefapi" || channel.id === "jiasu-video" || channel.interfaceType === "jiasu-video" || channel.interfaceType === "kanhai-video") return { ...channel, models: uniqueModels(result.models), modelProfiles: profiles, ...(channel.id === "jiasu-video" || channel.interfaceType === "jiasu-video" ? { presetVersion: Math.max(channel.presetVersion || 0, 3) } : {}) };
     const existing = new Map((channel.modelProfiles || []).map((profile) => [profile.model, profile]));
     // Refresh updates the catalog without silently enabling new models or removing manual ones.
     return {
@@ -699,6 +712,7 @@ export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig, 
 
 export function modelConfigChannelStatusLabel(channel: ModelChannel, persistence: ModelConfigPersistenceState, connection?: BeefAPIConnectionSummary | null) {
     if (isHanbaoChannel(channel)) return "本地账号 · 请在账号管理中确认登录";
+    if (isDoubaoBrowserChannel(channel)) return "本地浏览器池 · 100 个环境 / 预留 2 个空闲";
     if (isBuiltinBeefAPIChannel(channel)) {
         if (connection?.state === "connected") return beefAPIConnectionLabel(connection);
         if (connection?.state && connection.state !== "disconnected") return beefAPIConnectionLabel(connection);
@@ -793,7 +807,9 @@ export function modelConfigChannelPresentation(channel: ModelChannel) {
     };
 }
 
-function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
+export function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
+    const channelIds = new Set(channels.map((channel) => channel.id));
+    const deletedChannelIds = [...new Set([...(config.deletedChannelIds || []), ...config.channels.filter((channel) => channel.scope !== "system" && !channelIds.has(channel.id)).map((channel) => channel.id)])].filter((id) => !channelIds.has(id));
     const models = modelOptionsFromChannels(channels);
     const imageModels = filterModelsByCapability(models, "image", channels);
     const videoModels = filterModelsByCapability(models, "video", channels);
@@ -802,6 +818,7 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
     return {
         ...config,
         channels,
+        deletedChannelIds,
         models,
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
@@ -837,6 +854,7 @@ function channelConnectionMode(channel: ModelChannel): UserChannelConnection {
 
 function channelConnectionError(channel: ModelChannel, connection?: BeefAPIConnectionSummary | null) {
     if (isHanbaoChannel(channel)) return "";
+    if (isDoubaoBrowserChannel(channel)) return "";
     const baseUrl = channel.baseUrl.trim();
     if (!baseUrl) return "请填写 Base URL";
     try {
@@ -860,6 +878,7 @@ function channelConnectionSignature(channel: ModelChannel) {
 
 function channelProtocolLabel(channel: ModelChannel) {
     if (isHanbaoChannel(channel)) return "Windows 本地账号";
+    if (isDoubaoBrowserChannel(channel)) return "本地豆包浏览器";
     return channelConnectionMode(channel) === "gemini" ? "Gemini 原生" : "OpenAI 兼容";
 }
 

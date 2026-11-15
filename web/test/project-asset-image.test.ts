@@ -5,7 +5,8 @@ import { createModelChannel, defaultConfig, encodeChannelModel, normalizeConfigS
 import type { ProjectAsset, Project } from "../src/services/api/projects";
 import type { GenerationTask } from "../src/services/api/task-center";
 import { normalizeProjectAssetImagePresets } from "../src/lib/project-asset-image-preferences";
-import { submitProjectAssetImageBatch, submitProjectAssetImages } from "../src/pages/projects/detail/project-asset-image-generation";
+import { submitProjectAssetImage, submitProjectAssetImageBatch, submitProjectAssetImages } from "../src/pages/projects/detail/project-asset-image-generation";
+import type { submitBackendGenerationTask } from "../src/services/api/generation-task";
 import type { CharacterReferenceVersion } from "../src/services/api/project-character-references";
 
 test("asset image generation respects project image model and skips text defaults", () => {
@@ -21,7 +22,7 @@ test("category presets survive config round-trip and keep independent models", (
     const channel = createModelChannel({ id: "images", name: "fixture", baseUrl: "https://example.invalid", apiKey: "private-test-key", interfaceType: "openai-image", models: ["gpt-image-2", "gpt-image-1"] });
     const characterModel = encodeChannelModel(channel.id, "gpt-image-2");
     const sceneModel = encodeChannelModel(channel.id, "gpt-image-1");
-    const presets = { character: { model: characterModel, size: "3:2", quality: "high", extraPrompt: "统一服装材质" }, environment: { model: sceneModel, size: "1536x1024", quality: "medium", extraPrompt: "远景，无人物" } };
+    const presets = { character: { model: characterModel, size: "3:2", quality: "high", extraPrompt: "统一服装材质", extraPromptScope: "category" as const }, environment: { model: sceneModel, size: "1536x1024", quality: "medium", extraPrompt: "远景，无人物", extraPromptScope: "category" as const } };
     const snapshot = JSON.parse(JSON.stringify({ config: { ...defaultConfig, channels: [channel], imageModel: characterModel, projectAssetImagePresets: presets } }));
     const config = normalizeConfigSnapshot(snapshot).config;
     const project = { id: "project", aspectRatio: "16:9", defaultImageModel: characterModel } as Project;
@@ -42,6 +43,20 @@ test("unavailable saved model blocks generation instead of borrowing another cat
     expect(preset.model).toBe("deleted-channel::image");
     expect(() => projectAssetImageConfig(config, preset)).toThrow("已保存的图片模型不可用");
     expect(normalizeProjectAssetImagePresets({ character: { model: null, size: 12, extraPrompt: null, apiKey: "discard" }, prop: [] })).toEqual({ character: { model: "", size: "", quality: "", extraPrompt: "" } });
+});
+
+test("legacy unscoped supplements never apply to other assets or batch generation", () => {
+    const project = { id: "project" } as Project;
+    for (const category of ["character", "environment", "prop"] as const) {
+        const saved = { model: "saved-image-model", size: "16:9", quality: "high", extraPrompt: "右眼上额头处有一条清晰的疤痕" };
+        const config = normalizeConfigSnapshot({ config: { ...defaultConfig, projectAssetImagePresets: { [category]: saved } } }).config;
+        const preset = resolveProjectAssetImagePreset(config, project, category);
+        expect(preset.extraPrompt).toBe("");
+        expect(preset.model).toBe(saved.model);
+        expect(preset.size).toBe(saved.size);
+        expect(preset.quality).toBe(saved.quality);
+        expect(config.projectAssetImagePresets?.[category]?.extraPrompt).toBe(saved.extraPrompt);
+    }
 });
 
 test("batch plans all assets across folders, skips active/image assets, and deduplicates", () => {
@@ -75,14 +90,16 @@ test("batch records partial submission failures, continues, and submits each ass
     const assets = ["a", "b", "c"].map((id) => ({ id, title: id }) as ProjectAsset);
     const called: string[] = [], progress: number[] = [];
     let concurrent = 0;
+    let peak = 0;
     const result = await submitProjectAssetImageBatch(assets, async (asset) => {
-        expect(concurrent++).toBe(0);
+        peak = Math.max(peak, ++concurrent);
         called.push(asset.id);
         await Promise.resolve();
         concurrent--;
         if (asset.id === "b") throw new Error("渠道未配置");
     }, (count) => progress.push(count));
     expect(called).toEqual(["a", "b", "c"]);
+    expect(peak).toBe(3);
     expect(progress).toEqual([1, 2, 3]);
     expect(result.submittedIds).toEqual(["a", "c"]);
     expect(result.failures.map((failure) => [failure.asset.id, failure.message])).toEqual([["b", "渠道未配置"]]);
@@ -105,7 +122,7 @@ test("batch waits for the base, skips only its variants after failure, and count
         calls.push(asset.character?.versionId || asset.id);
         return { id: "base-task", status: "queued" } as GenerationTask;
     }, (count) => progress.push(count), { versions, wait: async () => { calls.push("wait-base"); return { id: "base-task", status: "failed" } as GenerationTask; } });
-    expect(calls).toEqual(["daily", "wait-base", "other"]);
+    expect(calls).toEqual(["daily", "other", "wait-base"]);
     expect(progress).toEqual([1, 2, 3, 4]);
     expect(result.submittedIds).toEqual(["hero", "other"]);
     expect(result.failures.map((failure) => failure.asset.character?.versionId)).toEqual(["injured", "winter"]);
@@ -145,4 +162,39 @@ test("character turnaround prompt override does not re-append the old multi-view
     const variables = characterTurnaroundVariables("角色", { role: "主角", multiViewPrompt: "旧的三视图提示词" }, "新的三视图提示词");
     expect(variables.角色设定).toContain("新的三视图提示词");
     expect(variables.角色设定).not.toContain("旧的三视图提示词");
+});
+
+test("scene sheets explicitly preserve connected angles and narrative detail without tiny grids", () => {
+    const asset = { id: "palace", title: "沙丘平台正殿", category: "environment", definitionJson: JSON.stringify({ description: "龙榻前十步连接殿门，左侧有木案", prompt: "原有秦代木构设计" }) } as ProjectAsset;
+    const prompt = projectAssetImagePrompt(asset);
+    for (const required of ["主全景", "补充角度", "关键局部", "同一空间", "不强制九宫格", "龙榻前十步连接殿门", "原有秦代木构设计"]) expect(prompt).toContain(required);
+});
+
+test("prop sheets prioritize identity and useful structure instead of generic objects or forced grids", () => {
+    const asset = { id: "medicine", title: "回元注射剂", category: "prop", definitionJson: JSON.stringify({ description: "淡金色药液，透明管体，可拆封装" }) } as ProjectAsset;
+    const prompt = projectAssetImagePrompt(asset);
+    for (const required of ["完整主体", "轮廓", "关键结构", "局部", "简单道具", "不凭空", "淡金色药液"]) expect(prompt).toContain(required);
+});
+
+test("character design keeps narrative identity and visible signatures in the submitted definition", () => {
+    const variables = characterTurnaroundVariables("陈尧", { role: "跨越时空救治嬴政的军医", appearance: "青年，狭长眼，直眉", clothing: "深色实用夹克", personality: "忠诚恳切" }, "保留深灰配色");
+    for (const required of ["跨越时空救治嬴政的军医", "狭长眼", "深色实用夹克", "保留深灰配色", "角色视觉辨识设计", "2—3个", "基础版"]) expect(variables.角色设定).toContain(required);
+});
+
+test("image task submission preserves design sheets, edited prompts and provider parameters", async () => {
+    const channel = createModelChannel({ id: "design-test", name: "fixture", baseUrl: "https://example.invalid", apiKey: "fixture-only", interfaceType: "openai-image", models: ["gpt-image-2"] });
+    const model = encodeChannelModel(channel.id, "gpt-image-2");
+    const config = { ...defaultConfig, channels: [channel], model, imageModel: model, size: "1536x1024", quality: "high" };
+    const asset = { id: "palace", title: "正殿", category: "environment", mediaType: "text", primaryVersionId: "palace-v1", definitionJson: JSON.stringify({ description: "秦式木构正殿" }) } as ProjectAsset;
+    const submissions: Parameters<typeof submitBackendGenerationTask>[0][] = [];
+    const dependencies = { submitTask: async (options: Parameters<typeof submitBackendGenerationTask>[0]) => { submissions.push(options); return {} as GenerationTask; } };
+    const referenceImage = { id: "source", name: "空间参考", storageKey: "resource:source", dataUrl: "", type: "image/png" };
+    await submitProjectAssetImage({ id: "p" } as Project, { asset, config, prompt: projectAssetImagePrompt(asset), referenceImage }, dependencies);
+    expect(submissions[0]?.prompt).toContain("主全景");
+    expect(submissions[0]?.prompt).toContain("秦式木构正殿");
+    expect(submissions[0]?.config).toBe(config);
+    expect(submissions[0]?.referenceImages).toEqual([referenceImage]);
+    expect(submissions[0]?.metadata).toMatchObject({ assetId: "palace", assetVersionId: "palace-v1" });
+    await submitProjectAssetImage({ id: "p" } as Project, { asset, config, prompt: "用户明确只要单张全景，不要拼接" }, dependencies);
+    expect(submissions[1]?.prompt).toBe("用户明确只要单张全景，不要拼接");
 });

@@ -19,7 +19,7 @@ import { apiBaseURL } from "@/services/api/request";
 import { uploadImage } from "@/services/image-storage";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
-import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
+import { canOpenCanvasNodePromptPanel, canvasMediaNodeOrigin, canvasMediaNodeRole, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasAppearanceBaseTheme, canvasAppearanceForTheme, DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, resolveCanvasAppearance, writeCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
@@ -51,6 +51,7 @@ import { CanvasFileDropOverlay } from "@/components/canvas/canvas-file-drop-over
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNodePromptPanel } from "@/components/canvas/canvas-node-prompt-panel";
+import { CanvasReferenceTemplateModal } from "@/components/canvas/canvas-reference-template-modal";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { useCanvasCreateCommands } from "@/components/canvas/use-canvas-create-commands";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
@@ -340,6 +341,7 @@ function InfiniteCanvasPage() {
         resetForClearCanvas,
     } = useCanvasProjectDialogs();
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
+    const [referenceLibraryNodeId, setReferenceLibraryNodeId] = useState<string | null>(null);
     const [arkPrivateAssetUploadNodeId, setArkPrivateAssetUploadNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -2205,7 +2207,9 @@ function InfiniteCanvasPage() {
         [closeConnectionCreateMenu],
     );
 
-    const { applyReferenceTemplate, removeReferenceTemplate } = useCanvasReferenceTemplates({ projectId, assets, nodesRef, connectionsRef, setNodes, setConnections, enabled: projectLoaded && !readOnly && !versions.preview });
+    const { applyReferenceTemplate, removeReferenceTemplate } = useCanvasReferenceTemplates({ projectId, assets, nodesRef, connectionsRef, setNodes, setConnections, enabled: projectLoaded && !readOnly && !versions.preview, onApplied: (nodeId) => { setSelectedNodeIds(new Set([nodeId])); setDialogNodeId(nodeId); } });
+    const referenceLibraryNode = referenceLibraryNodeId ? nodeById.get(referenceLibraryNodeId) : undefined;
+    useEffect(() => { setReferenceLibraryNodeId(null); }, [projectId, readOnly, versions.preview]);
     const renderCanvasNodePanel = useCallback(
         (panelNode: CanvasNodeData) => {
             if (panelNode.type === CanvasNodeType.Script || panelNode.type === CanvasNodeType.Drawing) return null;
@@ -2247,7 +2251,7 @@ function InfiniteCanvasPage() {
                     }}
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
-                    onGenerate={handleGenerateNode}
+                    onGenerate={(nodeId, mode, prompt) => handleGenerateNode(nodeId, mode, prompt, mode === "video" ? { retryIntent: "manual" } : undefined)}
                     onApplyReferenceTemplate={applyReferenceTemplate}
                     onRemoveReferenceTemplate={removeReferenceTemplate}
                     onRemoveReference={handleRemoveNodeReference}
@@ -3061,6 +3065,7 @@ function InfiniteCanvasPage() {
                                 setEmotionNodeId((current) => (current === node.id ? null : node.id));
                             }}
                             onPortraitTexture={openPortraitTextureEditor}
+                            onReferenceLibrary={(node) => { setDialogNodeId(null); setReferenceLibraryNodeId(node.id); }}
                             onCrop={(node) => node.type === CanvasNodeType.Video ? openVideoCrop(node) : setCropNodeId(node.id)}
                             onSplit={(node, params) => void splitImageNode(node, params)}
                             onUpscale={(node) => setUpscaleNodeId(node.id)}
@@ -3091,6 +3096,14 @@ function InfiniteCanvasPage() {
                             onToggleLocked={(node) => toggleNodeLocked(node.id)}
                             onDelete={(node) => deleteNodes(new Set([node.id]))}
                         />
+
+                        {referenceLibraryNode && !readOnly && !versions.preview ? <CanvasReferenceTemplateModal
+                            open
+                            targetKey={projectId + ':' + referenceLibraryNode.id}
+                            sourceNotice={canvasMediaNodeRole(referenceLibraryNode) !== 'generator' && canvasMediaNodeOrigin(referenceLibraryNode) !== 'generated'}
+                            onClose={() => setReferenceLibraryNodeId(null)}
+                            onApply={async (template, signal) => { await applyReferenceTemplate(referenceLibraryNode.id, template, signal); setReferenceLibraryNodeId(null); }}
+                        /> : null}
 
 {isMiniMapOpen && !focusMode ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} canvasContainerRef={containerRef} onViewportPreviewChange={previewViewport} onViewportChange={handleViewportChange} /> : null}
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	localasset "infinite-canvas/backend/internal/asset"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 	localtask "infinite-canvas/backend/internal/task"
@@ -82,6 +83,7 @@ func (s *Service) attachTaskSummaryDeliveries(tasks []model.Task, summaries []Ta
 		if !ok {
 			continue
 		}
+		task = generation.NormalizeHanbaoTaskFailure(task)
 		taskLoadErr := loadErr
 		if taskLoadErr == nil {
 			taskLoadErr = decodeErrs[task.ID]

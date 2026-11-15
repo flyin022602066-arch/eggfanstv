@@ -510,6 +510,10 @@ export function unlinkProjectAsset(projectId: string, assetId: string, signal?: 
     return http.delete<{ id: string }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { signal, expectedScope });
 }
 
+export function mergeProjectProp(projectId: string, assetId: string, input: { targetAssetId: string; expectedRevision: number }, expectedScope?: CapturedUserScope) {
+    return http.post<{ asset: ProjectAsset; mergedShots: number }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/merge-prop`, input, { expectedScope });
+}
+
 export function updateProjectAssetCategory(projectId: string, assetId: string, category: AssetCategory, signal?: AbortSignal, expectedScope?: CapturedUserScope) {
     return http.patch<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { category }, { signal, expectedScope });
 }
@@ -598,12 +602,12 @@ export function replaceProjectUnitShots(
     }, { expectedScope: options?.expectedScope });
 }
 
-export function linkShotAsset(projectId: string, shotId: string, input: { assetVersionId: string; role: ShotAssetReference["role"] }) {
+export function linkShotAsset(projectId: string, shotId: string, input: { assetVersionId: string; role: ShotAssetReference["role"]; selectionSource?: "manual" | "auto" | "rule" }) {
     return http.post<{ reference: ShotAssetReference }>(`/projects/${encodeURIComponent(projectId)}/shots/${encodeURIComponent(shotId)}/assets`, input);
 }
 
-export function unlinkShotAsset(projectId: string, shotId: string, referenceId: string) {
-    return http.delete<{ unlinked: boolean }>(`/projects/${encodeURIComponent(projectId)}/shots/${encodeURIComponent(shotId)}/assets/${encodeURIComponent(referenceId)}`);
+export function unlinkShotAsset(projectId: string, shotId: string, referenceId: string, options?: { exclude?: boolean }) {
+    return http.delete<{ unlinked: boolean }>(`/projects/${encodeURIComponent(projectId)}/shots/${encodeURIComponent(shotId)}/assets/${encodeURIComponent(referenceId)}${options?.exclude ? "?exclude=true" : ""}`);
 }
 
 export function createShotRevision(projectId: string, shotId: string, input: ShotRevisionInput) {

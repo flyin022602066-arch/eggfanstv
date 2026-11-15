@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import type { SeedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
 import { Switch } from "@/components/ui/base/switch";
+import { DOUBAO_BROWSER_PROTOCOL } from "@/lib/doubao-browser";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceRatioOptions } from "@/lib/seedance-video";
@@ -8,6 +9,7 @@ import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { isEggfansSeedanceProtocol, normalizeEggfansReferenceMode } from "@/lib/eggfans-seedance";
 import { faceMaskGridOptions, isGridFaceMaskMode, isJiasuSdModel, jiasuModelSupportsServerFace, normalizeJiasuFaceMaskMode } from "@/lib/jiasu-face-mask";
 import { isEggfansSd2DModel, isTowoSd25Model, normalizeSd2FaceMaskMode } from "@/lib/eggfans-sd2-face-mask";
+import { normalizeDoubaoBrowserFaceMaskMode } from "@/lib/doubao-browser";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, videoDimensionsForRatioAndResolution, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
 import { hasAutomaticVideoAudio, isSeedance25Model, modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, type VideoCapabilityConfig } from "@/lib/model-capabilities";
@@ -25,7 +27,7 @@ const sizeOptions = [
 type VideoSettingsPanelProps = {
     taskConstraints?: SeedanceSettingsConstraints;
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoArkPrivateAssetUpload" | "videoEggfansReferenceMode" | "videoNativeFace" | "videoJiasuFaceMode" | "videoJiasuFaceMask" | "videoSd2FaceMask", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoArkPrivateAssetUpload" | "videoEggfansReferenceMode" | "videoNativeFace" | "videoJiasuFaceMode" | "videoJiasuFaceMask" | "videoSd2FaceMask" | "videoHanbaoFaceMask" | "videoDoubaoBrowserFaceMask", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -37,7 +39,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     if (interfaceType === "volcengine-jimeng-video") {
         return <JiMengVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
-    if (isSeedanceVideoConfig(config) && interfaceType !== "towo-sd25-video") {
+    if (isSeedanceVideoConfig(config) && interfaceType !== "towo-sd25-video" && interfaceType !== "hanbao-video" && interfaceType !== DOUBAO_BROWSER_PROTOCOL) {
         return <SeedanceVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} taskConstraints={taskConstraints} />;
     }
     // 阿里系中转网关：图生视频时**输出比例跟随首帧参考图**（官方文档 + 2026-10-12 实测：
@@ -99,6 +101,8 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {isJiasu ? <JiasuVideoReferenceSettings config={config} theme={theme} onConfigChange={onConfigChange} /> : null}
                 {isEggfansSd2DModel(isEggfansSd2 ? "eggfans-sd2-video" : undefined, config.model) ? <SettingGroup title="本地参考图处理" color={theme.node.muted}><SwitchRow label="自动人脸遮罩" checked={normalizeSd2FaceMaskMode(config.videoSd2FaceMask) !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoSd2FaceMask", enabled ? "grid" : "off")} /><FaceMaskDensityControl mode={normalizeSd2FaceMaskMode(config.videoSd2FaceMask)} theme={theme} onChange={(value) => onConfigChange("videoSd2FaceMask", value)} /><div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>在节点“人脸遮罩”中预览或框选，处理后再上传。本地遮罩与服务器“过人脸”开关独立。</div></SettingGroup> : null}
                 {isTowoSd25 ? <TowoVideoReferenceSettings config={config} theme={theme} onConfigChange={onConfigChange} /> : null}
+                {interfaceType === "hanbao-video" ? <HanbaoVideoReferenceSettings config={config} theme={theme} onConfigChange={onConfigChange} /> : null}
+                {interfaceType === DOUBAO_BROWSER_PROTOCOL ? <DoubaoBrowserVideoReferenceSettings config={config} theme={theme} onConfigChange={onConfigChange} /> : null}
                 <SettingGroup title="秒数" color={theme.node.muted}>
 					<VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
                 </SettingGroup>
@@ -106,6 +110,22 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
             </div>
         </ImageSettingsTheme>
     );
+}
+
+export function DoubaoBrowserVideoReferenceSettings({ config, onConfigChange, theme }: Pick<VideoSettingsPanelProps, "config" | "onConfigChange" | "theme">) {
+    if (resolveModelRequestConfig(config, config.model).interfaceType !== DOUBAO_BROWSER_PROTOCOL) return null;
+    const mode = normalizeDoubaoBrowserFaceMaskMode(config.videoDoubaoBrowserFaceMask);
+    return <SettingGroup title="本地参考图处理" color={theme.node.muted}>
+        <SwitchRow label="自动人脸遮罩" checked={mode !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoDoubaoBrowserFaceMask", enabled ? "grid" : "off")} />
+        {mode !== "off" ? <div role="group" aria-label="人脸处理方式" className="grid grid-cols-2 gap-1.5">
+            <OptionPill selected={isGridFaceMaskMode(mode)} theme={theme} onClick={() => onConfigChange("videoDoubaoBrowserFaceMask", "grid")}>半透明网格</OptionPill>
+            <OptionPill selected={mode === "mosaic"} theme={theme} onClick={() => onConfigChange("videoDoubaoBrowserFaceMask", "mosaic")}>马赛克</OptionPill>
+            <OptionPill selected={mode === "blur"} theme={theme} onClick={() => onConfigChange("videoDoubaoBrowserFaceMask", "blur")}>强模糊</OptionPill>
+            <OptionPill selected={mode === "solid"} theme={theme} onClick={() => onConfigChange("videoDoubaoBrowserFaceMask", "solid")}>实色遮挡</OptionPill>
+        </div> : null}
+        <FaceMaskDensityControl mode={mode} theme={theme} onChange={(value) => onConfigChange("videoDoubaoBrowserFaceMask", value)} />
+        <div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>保留原图，仅处理每张参考图中检测或手动框选的人脸；强模糊或实色遮挡会削弱身份细节。画布可逐图预览、补框，不保证通过上游审核；本设置仅用于豆包浏览器渠道。</div>
+    </SettingGroup>;
 }
 
 export function JiasuVideoReferenceSettings({ config, onConfigChange, theme }: Pick<VideoSettingsPanelProps, "config" | "onConfigChange" | "theme">) {
@@ -130,6 +150,20 @@ export function TowoVideoReferenceSettings({ config, onConfigChange, theme }: Pi
         <SwitchRow label="自动人脸遮罩" checked={normalizeSd2FaceMaskMode(config.videoSd2FaceMask) !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoSd2FaceMask", enabled ? "grid" : "off")} />
         <FaceMaskDensityControl mode={normalizeSd2FaceMaskMode(config.videoSd2FaceMask)} theme={theme} onChange={(value) => onConfigChange("videoSd2FaceMask", value)} />
         <div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>Towo 不发送 native_face；生成前会处理参考图并上传 Uguu，再提交最新 HTTPS 链接。</div>
+    </SettingGroup>;
+}
+
+export function HanbaoVideoReferenceSettings({ config, onConfigChange, theme }: Pick<VideoSettingsPanelProps, "config" | "onConfigChange" | "theme">) {
+    if (resolveModelRequestConfig(config, config.model).interfaceType !== "hanbao-video") return null;
+    const mode = normalizeSd2FaceMaskMode(config.videoHanbaoFaceMask);
+    return <SettingGroup title="人脸处理" color={theme.node.muted}>
+        <SwitchRow label="自动人脸遮罩" checked={mode !== "off"} theme={theme} onChange={(enabled) => onConfigChange("videoHanbaoFaceMask", enabled ? "grid" : "off")} />
+        {mode !== "off" ? <div role="group" aria-label="人脸处理方式" className="grid grid-cols-2 gap-1.5">
+            <OptionPill selected={isGridFaceMaskMode(mode)} theme={theme} onClick={() => onConfigChange("videoHanbaoFaceMask", "grid")}>半透明网格</OptionPill>
+            <OptionPill selected={mode === "mosaic"} theme={theme} onClick={() => onConfigChange("videoHanbaoFaceMask", "mosaic")}>马赛克</OptionPill>
+        </div> : null}
+        <FaceMaskDensityControl mode={mode} theme={theme} onChange={(value) => onConfigChange("videoHanbaoFaceMask", value)} />
+        <div className="text-[var(--fs-tiny)] leading-4" style={{ color: theme.node.muted }}>生成前在本地处理参考图，保留原图；画布节点支持预览和手动框选。</div>
     </SettingGroup>;
 }
 

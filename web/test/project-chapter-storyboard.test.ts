@@ -6,6 +6,7 @@ import {
     chapterStoryboardReplaceImpact,
     storyboardRowsToProjectShots,
 } from "@/pages/projects/detail/chapter-storyboard-production";
+import * as storyboardProduction from "@/pages/projects/detail/chapter-storyboard-production";
 import type { ProjectDetail } from "@/services/api/projects";
 import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
 import type { StoryboardRow } from "@/types/canvas";
@@ -29,9 +30,64 @@ describe("章节分镜写入分镜制作", () => {
         const detail = projectDetail();
         const versions: CharacterReferenceVersion[] = [{ ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" }];
         const wrong = { characterName: "林默", characterAssetId: "character-1", characterVersionId: "foreign-version" };
-        expect(() => storyboardRowsToProjectShots([{ ...storyboardRow(), characters: [wrong] }], detail, versions)).toThrow("不属于该角色");
+        expect(() => storyboardRowsToProjectShots([{ ...storyboardRow(), characters: [wrong] }], detail, versions)).toThrow("该版本不存在或已被移除");
         const valid = { ...wrong, characterVersionId: "asset-version-1" };
         expect(() => storyboardRowsToProjectShots([{ ...storyboardRow(), characters: [valid, valid] }], detail, versions)).toThrow("拆镜头");
+    });
+
+    test("无效造型错误准确指出镜头、角色及两个身份 ID", () => {
+        const detail = projectDetail();
+        const versions = [{ ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" }];
+        const rows = [storyboardRow(), { ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: "wrong-version" }] }];
+        expect(() => storyboardRowsToProjectShots(rows, detail, versions)).toThrow(/镜头02.*林默.*character-1.*wrong-version/u);
+    });
+
+    test("模型多写一位版本 ID 时只核对该镜头，不猜选或改动原结果", () => {
+        const detail = projectDetail();
+        const versionId = "a2e9090ddce2259c0aecc239cb7c76c2";
+        const wrongId = "a2e9090ddce22259c0aecc239cb7c76c2";
+        const versions = [{ ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", versionId, updatedAt: "" }];
+        const rows = [{ ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: versionId }] }, { ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: wrongId }] }];
+        const review = storyboardProduction.reviewStoryboardCharacterReferences(rows, detail, versions);
+        expect(review.issues).toHaveLength(1);
+        expect(review.issues[0]).toMatchObject({ key: "1:0", shotLabel: "镜头02", characterName: "林默", assetId: "character-1", versionId: wrongId });
+        expect(review.issues[0]!.candidates.map((version) => version.versionId)).toContain(versionId);
+        const fixed = storyboardProduction.reviewStoryboardCharacterReferences(rows, detail, versions, { "1:0": versionId });
+        expect(fixed.issues).toHaveLength(0);
+        expect(fixed.rows[1]!.characters[0]!.characterVersionId).toBe(versionId);
+        expect(rows[1]!.characters[0]!.characterVersionId).toBe(wrongId);
+        expect(storyboardRowsToProjectShots(fixed.rows, detail, versions)[1]!.assetVersionIds).toContain(versionId);
+    });
+
+    test("核对列表收集所有错误并禁止选入其他角色的版本", () => {
+        const detail = projectDetail();
+        const own = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" };
+        const foreign = { ...own, assetId: "other-character", title: "张天昊", versionId: "foreign-version" };
+        const row = { ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: foreign.versionId }] };
+        const review = storyboardProduction.reviewStoryboardCharacterReferences([row, row], detail, [own, foreign], { "0:0": foreign.versionId });
+        expect(review.issues).toHaveLength(2);
+        expect(review.issues[0]!.reason).toContain("张天昊");
+        expect(review.issues.every((issue) => issue.candidates.every((version) => version.assetId === "character-1"))).toBe(true);
+        expect(() => storyboardRowsToProjectShots([row], detail, [own, foreign])).toThrow(/镜头01.*林默.*张天昊.*不属于该角色/u);
+    });
+
+    test("没有可用版本时仍保留原分镜并列出待核对引用", () => {
+        const detail = projectDetail();
+        const row = { ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: "removed-version" }] };
+        const review = storyboardProduction.reviewStoryboardCharacterReferences([row], detail, [], { "0:0": "other-version" });
+        expect(review.issues).toHaveLength(1);
+        expect(review.issues[0]!.candidates).toHaveLength(0);
+        expect(review.rows).toEqual([row]);
+    });
+
+    test("正确历史造型不被核对选项替换，只有无效引用可修正", () => {
+        const detail = projectDetail();
+        const current = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" };
+        const historical = { ...current, versionId: "historical-version", version: 2 };
+        const row = { ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: historical.versionId }] };
+        const review = storyboardProduction.reviewStoryboardCharacterReferences([row], detail, [current, historical], { "0:0": current.versionId });
+        expect(review.issues).toHaveLength(0);
+        expect(review.rows[0]!.characters[0]!.characterVersionId).toBe(historical.versionId);
     });
 
     test("模型写错场景 ID 时按本项目唯一场景名称回填，不阻断整章分镜", () => {

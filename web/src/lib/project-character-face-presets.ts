@@ -2,7 +2,7 @@ import type { ReferenceImage } from "@/types/image";
 
 export const CHARACTER_FACE_ROLES = ["male", "female"] as const;
 export type CharacterFaceRole = typeof CHARACTER_FACE_ROLES[number];
-export type CharacterFacePreset = { resourceId: string; fileName?: string; assetIds: string[] };
+export type CharacterFacePreset = { resourceId: string; fileName?: string; assetIds: string[]; useAsIdentity?: boolean };
 export type CharacterFacePresets = Partial<Record<CharacterFaceRole, CharacterFacePreset>>;
 export const characterFaceRoleLabels: Record<CharacterFaceRole, string> = { male: "男主", female: "女主" };
 
@@ -17,12 +17,13 @@ export function parseCharacterFacePresets(raw?: string): CharacterFacePresets {
         if (!CHARACTER_FACE_ROLES.includes(role as CharacterFaceRole) || !item || typeof item !== "object") throw new Error("主角人脸预设格式无效，请重新设置");
         const preset = item as CharacterFacePreset;
         if (typeof preset.resourceId !== "string" || !preset.resourceId.trim() || !Array.isArray(preset.assetIds) || preset.assetIds.some((assetId) => typeof assetId !== "string" || !assetId.trim())) throw new Error("主角人脸参考图或绑定角色无效，请重新设置");
+        if (preset.useAsIdentity !== undefined && typeof preset.useAsIdentity !== "boolean") throw new Error("主角人脸身份设置无效，请重新设置");
         const assetIds = [...new Set(preset.assetIds.map((assetId) => assetId.trim()))];
         for (const assetId of assetIds) {
             if (bound.has(assetId)) throw new Error("同一角色不能同时绑定男主和女主的人脸");
             bound.add(assetId);
         }
-        result[role as CharacterFaceRole] = { resourceId: preset.resourceId.trim(), fileName: typeof preset.fileName === "string" ? preset.fileName : undefined, assetIds };
+        result[role as CharacterFaceRole] = { resourceId: preset.resourceId.trim(), fileName: typeof preset.fileName === "string" ? preset.fileName : undefined, assetIds, ...(preset.useAsIdentity !== undefined ? { useAsIdentity: preset.useAsIdentity } : {}) };
     }
     return result;
 }
@@ -34,6 +35,19 @@ export function characterFacePresetForAsset(raw: string | undefined, assetId: st
         if (preset?.assetIds.includes(assetId)) return { ...preset, role };
     }
     return undefined;
+}
+
+export function characterFacePresetBindingIssue(raw: string | undefined, characterIds: string[]) {
+    const presets = parseCharacterFacePresets(raw);
+    const available = new Set(characterIds);
+    const issues = CHARACTER_FACE_ROLES.flatMap((role) => {
+        const preset = presets[role];
+        if (!preset) return [];
+        if (!preset.assetIds.length) return [`${characterFaceRoleLabels[role]}参考图已上传但未绑定角色`];
+        if (preset.assetIds.some((assetId) => !available.has(assetId))) return [`${characterFaceRoleLabels[role]}参考图仍绑定已移除的角色`];
+        return [];
+    });
+    return issues.length ? `${issues.join("；")}。请在“主角人脸预设”中选择对应角色并保存；不使用的参考图请清除，避免无参考生图。` : "";
 }
 
 export function characterFaceReference(preset: CharacterFacePreset & { role: CharacterFaceRole }): ReferenceImage {

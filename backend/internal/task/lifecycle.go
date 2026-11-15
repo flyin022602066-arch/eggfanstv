@@ -27,6 +27,7 @@ func (s *Service) Retry(userID, id string) (*model.Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	*task = generation.NormalizeHanbaoTaskFailure(*task)
 	if task.CreationSubmissionID != nil {
 		return nil, kernel.NewAppError(kernel.CodeConflict, CreationRetryConflictMessage)
 	}

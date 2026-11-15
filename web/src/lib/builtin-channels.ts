@@ -15,7 +15,7 @@
  * 行为约定（由 `use-config-store.ts` 的 `mergeBuiltinChannelSeeds` 实现）：
  * - 已存在同 id 渠道（使用者填过 Key、改过名字）→ 保留使用者的一切设置，只补缺失模型；
  * - 不存在 → 追加一条，`enabled: true`、`pinned: true`（在渠道列表里靠前）；
- * - 使用者删掉这条渠道 → 下次读取配置时会重新出现（这就是「内置」的语义）。
+ * - 使用者删掉这条渠道 → 保存删除标记，下次读取配置不再补回。
  *
  * ⚠️ 这个文件会随安装包一起分发到使用者机器上，
  * **只允许放地址、模型名这类非敏感信息**，任何密钥 / 令牌都不要写进来。
@@ -23,6 +23,7 @@
 
 /** 与 `use-config-store.ts` 的 `ApiCallFormat` 保持一致；此处独立声明以避免循环依赖。 */
 import { HANBAO_MODELS, HANBAO_MODEL_NAMES, HANBAO_PROTOCOL } from "./hanbao";
+import { DOUBAO_BROWSER_MODELS, DOUBAO_BROWSER_MODEL_NAMES, DOUBAO_BROWSER_PROTOCOL } from "./doubao-browser";
 type BuiltinChannelApiFormat = "openai" | "gemini" | "claude";
 
 export type BuiltinChannelSeed = {
@@ -41,10 +42,12 @@ export function isChannelVisibleInPackagedSettings(channelId: string, packagedWi
 }
 
 export function isFixedModelCatalogChannel(channelId: string): boolean {
-    return channelId === "towo-sd25-video" || channelId === "hanbao";
+    return channelId === "towo-sd25-video" || channelId === "hanbao" || channelId === "doubao-browser";
 }
 
 export const BUILTIN_CHANNEL_SEEDS: BuiltinChannelSeed[] = [
+    { id: "doubao-browser", name: "豆包浏览器", baseUrl: "https://www.doubao.com", apiFormat: "openai", models: DOUBAO_BROWSER_MODELS, interfaceType: DOUBAO_BROWSER_PROTOCOL,
+        modelProfiles: DOUBAO_BROWSER_MODELS.map(model => ({ model, displayName: DOUBAO_BROWSER_MODEL_NAMES[model], protocol: DOUBAO_BROWSER_PROTOCOL, capability: "video" })) },
     { id: "hanbao", name: "憨包", baseUrl: "https://www.doubao.com", apiFormat: "openai", models: HANBAO_MODELS, interfaceType: HANBAO_PROTOCOL,
         modelProfiles: HANBAO_MODELS.map((model) => ({ model, displayName: HANBAO_MODEL_NAMES[model], protocol: HANBAO_PROTOCOL, capability: "video" })) },
     {

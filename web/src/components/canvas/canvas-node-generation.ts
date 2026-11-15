@@ -79,7 +79,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         if (!image) continue;
         let index = referenceImages.findIndex(value => value.id === image.id);
         if (index < 0) { index = referenceImages.length; referenceImages.push(image); }
-        instructions.push(`@${imageReferenceLabel(index)}（${REFERENCE_TEMPLATE_LABELS[item.role]}参考）：${templateReferenceInstructions(item.role)}${item.angle ? ` 视角：${item.angle}。` : ''}${item.instruction ? ` ${item.instruction}` : ''}`);
+        instructions.push(`@${imageReferenceLabel(index)}（${REFERENCE_TEMPLATE_LABELS[item.role]}参考）：${templateReferenceInstructions(item.role, item.mediaId)}${item.angle ? ` 视角：${item.angle}。` : ''}${item.instruction ? ` ${item.instruction}` : ''}`);
     }
     return { ...context, referenceImages, imageCount: referenceImages.length, prompt: instructions.length ? `${context.prompt}\n\n参考模板用途：\n${instructions.join('\n')}` : context.prompt };
 }

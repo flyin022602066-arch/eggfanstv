@@ -53,11 +53,14 @@ func (s *Service) noteVideoReferencePreparation(ctx context.Context, stage strin
 	return nil
 }
 
-type appReferencePreparationPort struct{ service *Service }
+type appReferencePreparationPort struct {
+	service       *Service
+	imageFallback bool
+}
 
 func requiresCustomPublicMediaPreparation(interfaceType string) bool {
 	switch strings.TrimSpace(interfaceType) {
-	case "jiasu-video", "eggfans-sd2-video", "towo-sd25-video":
+	case "jiasu-video", "eggfans-sd2-video", "towo-sd25-video", "nono-video":
 		return true
 	default:
 		return false
@@ -75,6 +78,11 @@ func (p appReferencePreparationPort) Prepare(ctx context.Context, userID string,
 		return false, nil
 	}
 	switch {
+	case input.Config.InterfaceType == "nono-video":
+		runtime, _ := generation.RuntimeFromContext(ctx)
+		runtime.References = appReferencePreparationPort{service: p.service, imageFallback: true}
+		ctx = generation.WithRuntime(ctx, runtime)
+		return true, generation.HydrateMedia(ctx, userID, input, generation.MediaHydrationPolicyFor(ctx, *input))
 	case input.Config.InterfaceType == "mints-seedance-video":
 		return true, p.service.prepareMintsAssetReferences(ctx, userID, input)
 	case isEggfansSeedanceProtocol(input.Config.InterfaceType):
@@ -98,6 +106,10 @@ func (p appReferencePreparationPort) Upload(ctx context.Context, userID string, 
 	if p.service == nil || media == nil {
 		return errors.New("参考素材上传端口未接入")
 	}
+	host := p.service.imageHost()
+	if p.imageFallback {
+		host = p.service.nonoImageHost()
+	}
 	if strings.HasPrefix(media.StorageKey, "resource:") {
 		resource, err := p.service.Resource(userID, strings.TrimPrefix(media.StorageKey, "resource:"))
 		if err != nil {
@@ -108,7 +120,7 @@ func (p appReferencePreparationPort) Upload(ctx context.Context, userID string, 
 		}
 		var publicURL string
 		if resourceLooksLikeImage(resource, media) {
-			publicURL, err = p.service.uploadTemporaryResourceImage(ctx, userID, resource)
+			publicURL, err = p.service.uploadTemporaryResourceImageWithHost(ctx, userID, resource, host)
 		} else {
 			publicURL, err = p.service.uploadTemporaryResourceMedia(ctx, userID, resource)
 		}
@@ -121,22 +133,21 @@ func (p appReferencePreparationPort) Upload(ctx context.Context, userID string, 
 	}
 	if strings.HasPrefix(firstNonEmpty(media.DataURL, media.URL), "data:") {
 		if strings.HasPrefix(firstNonEmpty(media.MimeType, media.Type, media.DataURL, media.URL), "image/") || strings.HasPrefix(firstNonEmpty(media.DataURL, media.URL), "data:image/") {
-			return p.service.uploadTemporaryInlineImage(ctx, userID, media)
+			return p.service.uploadTemporaryInlineImageWithHost(ctx, userID, media, host)
 		}
 		return p.service.uploadTemporaryInlineMedia(ctx, userID, media)
 	}
 	if !isPublicMediaURL(media.URL) {
 		return BadAuthRequest("当前渠道只接受公网 URL，请连接原始本地素材重新准备")
 	}
-	if outbound.IsUguuURL(media.URL) {
-		host := p.service.imageHost()
+	if outbound.IsUguuURL(media.URL) || p.imageFallback && outbound.IsBackupImageURL(media.URL) {
 		available, err := host.URLAvailable(ctx, media.URL)
 		if err != nil {
 			return err
 		}
 		if !available {
 			host.InvalidateURL(media.URL)
-			return BadAuthRequest("Uguu 参考链接已失效，当前素材没有可读取的本地原始文件，请重新上传原始素材后再生成")
+			return BadAuthRequest("临时参考链接已失效或暂不可用，当前素材没有可读取的本地原始文件，请重新上传原始素材后再生成")
 		}
 	}
 	return nil

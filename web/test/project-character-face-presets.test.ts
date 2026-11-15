@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { characterFacePresetForAsset, parseCharacterFacePresets } from "../src/lib/project-character-face-presets";
+import { characterFacePresetBindingIssue, characterFacePresetForAsset, parseCharacterFacePresets } from "../src/lib/project-character-face-presets";
 import { generateCharacterTurnaround } from "../src/pages/projects/detail/project-character-media";
 import { prepareBackendGenerationTask, type submitBackendGenerationTask } from "../src/services/api/generation-task";
 import { createModelChannel, defaultConfig, encodeChannelModel } from "../src/stores/use-config-store";
@@ -15,7 +15,7 @@ const config = { ...defaultConfig, channels: [channel], model, imageModel: model
 const rawPresets = JSON.stringify({ male: { resourceId: "male-face", assetIds: ["hero", "hero-costume"] }, female: { resourceId: "female-face", assetIds: ["heroine"] } });
 const character = { projectId: "project", assetId: "hero", versionId: "v1", name: "男主甲", definition: { role: "东汉医者", clothing: "青色麻布长袍", multiViewPrompt: "保留药囊" }, config };
 type Submission = Parameters<typeof submitBackendGenerationTask>[0];
-const loadCatalog = async () => ({ versions: ["hero", "heroine"].map((assetId) => ({ assetId, versionId: "v1", version: 1, definition: character.definition, representations: [] } as unknown as CharacterReferenceVersion)), revision: 1 });
+const loadCatalog = async () => ({ versions: ["hero", "hero-costume", "heroine"].map((assetId) => ({ assetId, versionId: "v1", version: 1, definition: character.definition, representations: [] } as unknown as CharacterReferenceVersion)), revision: 1 });
 
 test("male and female presets bind by explicit character ID and survive JSON reload", () => {
     const saved = JSON.stringify(parseCharacterFacePresets(rawPresets));
@@ -69,6 +69,34 @@ test("each batch character uses its own face and fetches latest saved project re
 test("unreadable preset source prevents task submission", async () => {
     let calls = 0;
     await expect(generateCharacterTurnaround(character, { loadCatalog, loadProject: async () => { throw new Error("本地项目读取失败"); }, submitTask: async () => { calls++; return {} as GenerationTask; } })).rejects.toThrow("本地项目读取失败");
+    expect(calls).toBe(0);
+});
+
+test("uploaded faces without character bindings never silently submit text-to-image", async () => {
+    let calls = 0;
+    const unbound = JSON.stringify({ male: { resourceId: "male-face", assetIds: [] }, female: { resourceId: "female-face", assetIds: [] } });
+    await expect(generateCharacterTurnaround(character, {
+        loadCatalog,
+        loadProject: async () => ({ project: { id: "project", characterFacePresetsJson: unbound } } as ProjectCore),
+        submitTask: async () => { calls++; return {} as GenerationTask; },
+    })).rejects.toThrow("未绑定");
+    expect(calls).toBe(0);
+});
+
+test("face binding diagnostics distinguish drafts, removed characters and valid supporting roles", () => {
+    expect(characterFacePresetBindingIssue(rawPresets, ["hero", "hero-costume", "heroine", "support"])).toBe("");
+    expect(characterFacePresetBindingIssue(undefined, ["hero"])).toBe("");
+    expect(characterFacePresetBindingIssue(JSON.stringify({ male: { resourceId: "face", assetIds: [] } }), ["hero"])).toContain("男主");
+    expect(characterFacePresetBindingIssue(JSON.stringify({ female: { resourceId: "face", assetIds: ["removed"] } }), ["hero"])).toContain("已移除");
+});
+
+test("stale face bindings are reported before submitting any unrelated character", async () => {
+    let calls = 0;
+    await expect(generateCharacterTurnaround(character, {
+        loadCatalog,
+        loadProject: async () => ({ project: { id: "project", characterFacePresetsJson: JSON.stringify({ male: { resourceId: "male-face", assetIds: ["removed"] } }) } } as ProjectCore),
+        submitTask: async () => { calls++; return {} as GenerationTask; },
+    })).rejects.toThrow("已移除");
     expect(calls).toBe(0);
 });
 

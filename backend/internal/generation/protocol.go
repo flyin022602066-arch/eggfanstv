@@ -72,6 +72,13 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 			key = uuid.NewString()
 		}
 		request.Extra["idempotencyKey"] = key
+		if input.Config.InterfaceType == "kanhai-video" && input.Config.Model == "xianfeng-seedance-2.5" && len(request.Videos)+len(request.Audios) > 0 {
+			files, err := kanhaiReferenceFiles(request)
+			if err != nil {
+				return nil, err
+			}
+			request.Extra["kanhaiFiles"] = files
+		}
 		spec, err := adapter.BuildCreate(ctx, protocol.RequestContext{BaseURL: input.Config.BaseURL, Request: request})
 		if err != nil {
 			return nil, err

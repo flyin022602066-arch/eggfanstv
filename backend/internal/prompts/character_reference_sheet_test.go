@@ -51,6 +51,15 @@ func TestCharacterReferenceSheetRulesSurviveSavedPrompts(t *testing.T) {
 						t.Errorf("%s prompt missing %q", operation, required)
 					}
 				}
+				if !strings.Contains(compiled.Content, characterVisualDesignRule) {
+					t.Errorf("%s lost protected visual design under %s customization", operation, mode)
+				}
+				if operation == OperationChapterAssetsExtract && !strings.Contains(compiled.Content, scenePropVisualDesignRule) {
+					t.Error("scene and prop design must survive saved prompts and customizations")
+				}
+				if operation != OperationCharacterTurnaround && !strings.Contains(compiled.Content, "人物设定与序章") {
+					t.Error("explicit character definitions must survive saved prompts and customizations")
+				}
 				if mode != "default" && !strings.Contains(compiled.Content, "保留银色腰带") {
 					t.Errorf("%s lost supplementary character details", operation)
 				}
@@ -65,6 +74,13 @@ func TestCharacterReferenceSheetRulesSurviveSavedPrompts(t *testing.T) {
 				}
 				if operation != OperationCharacterTurnaround && !strings.Contains(compiled.Content, "说话人不等于对白中被提及的人") {
 					t.Errorf("%s lost protected character visibility rules", operation)
+				}
+				if operation != OperationCharacterTurnaround {
+					for _, required := range []string{"name、clothing、props", "physique", "无随身道具时 props 明确写空字符串", "不把第一套的服装装备混入共用身份描述", "不得只改名称而复制旧造型"} {
+						if !strings.Contains(compiled.Content, required) {
+							t.Errorf("%s lost per-look definition rule %q under %s customization", operation, required, mode)
+						}
+					}
 				}
 				if operation == OperationCharacterTurnaround && !strings.Contains(compiled.Content, "青色长袍") {
 					t.Error("turnaround lost confirmed character definition")

@@ -36,6 +36,7 @@ func RunVideoTask(ctx context.Context, input Input) (map[string]interface{}, err
 
 func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
 	if input.Config.InterfaceType == "hanbao-video" { return RunHanbaoVideoTask(ctx, input, pollPolicy) }
+	if input.Config.InterfaceType == "doubao-browser-video" { return RunDoubaoBrowserVideoTask(ctx, input, pollPolicy) }
 	// BeefAPI exposes its flat /v1/videos contract. Route it before
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.

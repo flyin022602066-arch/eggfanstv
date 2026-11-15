@@ -102,6 +102,12 @@ func LoadChannelModelCatalog(ctx context.Context, fetcher CatalogFetcher, baseUR
 	if err != nil {
 		return nil, err
 	}
+	if IsKanhaiBaseURL(baseURL) {
+		return ParseKanhaiVideoCatalog(data)
+	}
+	if IsNonoBaseURL(baseURL) {
+		return ParseNonoVideoCatalog(data)
+	}
 	catalog, err := ParseChannelModelCatalog(data, apiFormat)
 	if err != nil {
 		return nil, err

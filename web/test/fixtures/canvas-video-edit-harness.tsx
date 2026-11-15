@@ -1,14 +1,17 @@
 import { App } from "antd";
 import { useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel } from "@/components/canvas/canvas-node-prompt-panel";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
+import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useCanvasGenerationExecutor } from "@/pages/canvas/use-canvas-generation-executor";
+import { canvasGenerationTaskNodes } from "@/pages/canvas/canvas-generation-failure";
 import { useCanvasSelectionController } from "@/pages/canvas/use-canvas-selection-controller";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
@@ -44,7 +47,11 @@ function Harness() {
         setSelectedNodeIds: setSelected, setSelectedConnectionId: noop, setDialogNodeId, setRunningNodeId,
         startGenerationRequest: (_target, _origin, _running, controller) => controller || new AbortController(),
         finishGenerationRequest: noop,
-        bindGenerationTask: (nodeId, task) => setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, taskId: task.id, taskStatus: task.status } } : node)),
+        bindGenerationTask: (nodeId, task) => {
+            const next = canvasGenerationTaskNodes(nodesRef.current, nodeId, task);
+            nodesRef.current = next;
+            setNodes(next);
+        },
         applyGenerationTaskResult: async (nodeId, task) => {
             const result = JSON.parse(task.resultJson || "{}");
             setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: "success", content: result.video.url, taskId: task.id, taskStatus: task.status } } : node));
@@ -68,10 +75,10 @@ function Harness() {
             {nodes.map((node) => <CanvasNode key={node.id} data={node} scale={viewport.k} isSelected={selected.has(node.id)} mediaActive={activeMediaId === node.id} isRelated={false} isFocusRelated={false} isConnectionTarget={false} showImageInfo={false} onMouseDown={selection.handleNodeMouseDown} onHoverStart={noop} onHoverEnd={noop} onConnectStart={noop} onResize={noop} onContentChange={noop} onContextMenu={noop} onMediaPlayRequest={setActiveMediaId} />)}
         </InfiniteCanvas>
         {dialogNode && !selection.isNodeDragging ? <div style={{ position: "absolute", left: 660, top: 65, width: 480 }}>
-            <CanvasNodePromptPanel projectId="fixture" node={dialogNode} isRunning={runningNodeId === dialogNode.id}
+            <CanvasNodePromptPanel projectId="fixture" node={dialogNode} isRunning={isCanvasNodeGenerating(dialogNode, runningNodeId)}
                 onPromptChange={(nodeId, prompt) => setNodes((current) => current.map((node) => node.id === nodeId ? writeCanvasNodePrompt(node, prompt) : node))}
                 onConfigChange={(nodeId, patch) => setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node))}
-                onGenerate={generation} onClose={() => setDialogNodeId(null)} />
+                onGenerate={(nodeId, mode, prompt) => generation(nodeId, mode, prompt, mode === "video" ? { retryIntent: "manual" } : undefined)} onClose={() => setDialogNodeId(null)} />
         </div> : null}
     </div>;
 }
@@ -79,8 +86,10 @@ function Harness() {
 export function mountVideoEditHarness(host: HTMLElement) {
     const model = "dola-sd-2.5";
     const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [createModelChannel({ id: "jiasu-video", name: "佳速视频", baseUrl: "https://fixture.invalid", apiKey: "synthetic-key", interfaceType: "jiasu-video", models: [model], modelProfiles: [{ model, capability: "video", protocol: "jiasu-video", capabilityConfig: defaultModelCapabilityConfig("jiasu-video", model) }] })], model: "jiasu-video::dola-sd-2.5", videoModel: "jiasu-video::dola-sd-2.5", videoSeconds: "30", size: "16:9", vquality: "720p" } }).config;
-    useConfigStore.setState({ config });
+    const isBrowserChannel = new URLSearchParams(location.search).get("channel") === "doubao-browser";
+    const browserConfig = normalizeConfigSnapshot().config;
+    useConfigStore.setState({ config: isBrowserChannel ? { ...browserConfig, channels: browserConfig.channels.filter(channel => channel.id === "doubao-browser"), model: "doubao-browser::seedance_v2.0", videoModel: "doubao-browser::seedance_v2.0", videoSeconds: "15", size: "9:16" } : config });
     useUserStore.setState({ storageMode: "local" });
     useCanvasThemeStore.setState({ active: true });
-    createRoot(host).render(<App><Harness /></App>);
+    createRoot(host).render(<QueryClientProvider client={new QueryClient()}><App><Harness /></App></QueryClientProvider>);
 }

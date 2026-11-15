@@ -139,7 +139,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		ok(c, gin.H{"cleared": cleared})
 	})
-    registerSunoMediaRoute(r, svc)
+	registerSunoMediaRoute(r, svc)
 	r.POST("/resources", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -165,7 +165,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		width, _ := strconv.Atoi(c.PostForm("width"))
 		height, _ := strconv.Atoi(c.PostForm("height"))
 		durationMs, _ := strconv.ParseInt(c.PostForm("durationMs"), 10, 64)
-		resource, err := requestAssetPort(c, svc).UploadLocalResource(user.ID, file, c.PostForm("kind"), width, height, durationMs, c.GetHeader("X-Idempotency-Key"))
+		resource, err := requestAssetPort(c, svc).UploadLocalResource(user.ID, file, c.PostForm("kind"), width, height, durationMs, c.GetHeader("X-Idempotency-Key"), c.PostForm("sourceResourceId"))
 		if err != nil {
 			failService(c, err)
 			return

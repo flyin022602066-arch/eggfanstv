@@ -79,3 +79,80 @@ func TestLookKeySurvivesIsolatedDefinition(t *testing.T) {
 		}
 	}
 }
+
+func TestVisualDesignAnchorsSurviveWardrobeIsolation(t *testing.T) {
+	definition := map[string]any{
+		"name": "陈尧", "role": "军医",
+		"appearance": "美术补全·非原文事实：狭长眼、平直浓眉", "physique": "清瘦，肩背挺直",
+		"looks": []Look{{Name: "常服", Clothing: "深灰夹克，窄立领"}, {Name: "防护", Clothing: "白色防护外套"}},
+	}
+	looks, err := Extract(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, look := range looks {
+		isolated := Definition(definition, look)
+		if isolated["appearance"] != definition["appearance"] || isolated["physique"] != definition["physique"] {
+			t.Fatal("wardrobe isolation lost stable visual design anchors")
+		}
+		for _, field := range []string{"consistencyPrompt", "multiViewPrompt"} {
+			prompt := text(isolated[field])
+			for _, required := range []string{"狭长眼", "平直浓眉", "肩背挺直", look.Clothing} {
+				if !strings.Contains(prompt, required) {
+					t.Errorf("%s lost visual anchor %q", field, required)
+				}
+			}
+		}
+	}
+}
+
+func TestStructuredLooksKeepTheirOwnEquipmentAndBody(t *testing.T) {
+	definition := map[string]any{
+		"appearance": "暗金甲壳巨兽", "physique": "沉重的四足体型", "clothing": "背负合金架", "props": "背部合金架、胸前旧箍",
+		"looks": []map[string]any{
+			{"name": "负重", "clothing": "背负合金架", "props": "背部合金架、胸前旧箍"},
+			{"name": "卸除束缚", "clothing": "合金架与前箍已完全卸除", "props": "", "physique": "卸载后轻快的四足体型"},
+			{"name": "新护具", "clothing": "换上新护具", "props": "蓝色护肩"},
+		},
+	}
+	looks, err := Extract(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, expected := range []string{"背部合金架、胸前旧箍", "", "蓝色护肩"} {
+		isolated := Definition(definition, looks[index])
+		if isolated["props"] != expected {
+			t.Errorf("look %d props=%v, want %q", index, isolated["props"], expected)
+		}
+		if index == 1 {
+			if isolated["physique"] != "卸载后轻快的四足体型" {
+				t.Errorf("later body design lost: %v", isolated["physique"])
+			}
+			for _, field := range []string{"consistencyPrompt", "multiViewPrompt"} {
+				if strings.Contains(text(isolated[field]), "背部合金架、胸前旧箍") {
+					t.Errorf("%s restored removed equipment", field)
+				}
+			}
+		}
+	}
+	if definition["props"] != "背部合金架、胸前旧箍" {
+		t.Fatal("base definition was mutated")
+	}
+}
+
+func TestMissingEquipmentDoesNotCopyAnotherLook(t *testing.T) {
+	definition := map[string]any{
+		"clothing": "黑甲", "props": "头盔、胸甲",
+		"looks": []map[string]any{{"name": "战斗", "clothing": "黑甲"}, {"name": "常服", "clothing": "换成白衬衫"}},
+	}
+	looks, err := Extract(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Definition(definition, looks[0])["props"] != "头盔、胸甲" {
+		t.Fatal("first look lost its equipment")
+	}
+	if got := Definition(definition, looks[1])["props"]; got != "" {
+		t.Fatalf("later look copied old equipment: %v", got)
+	}
+}

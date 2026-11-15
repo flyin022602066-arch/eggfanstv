@@ -306,6 +306,12 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	}
 	observation.Dispatched = true
+	reportImageStage := func(stage string) {
+		if hasRuntime && runtime.Call.TaskType == "canvas_image" && runtime.Stages != nil {
+			_ = runtime.Stages.SetStage(req.Context(), stage)
+		}
+	}
+	reportImageStage("正在发送图片请求，等待上游响应")
 	resp, err := client.Do(req)
 	if err != nil {
 		if usesGenerationCircuit {
@@ -323,6 +329,8 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
 	}
 	mimeType := resp.Header.Get("Content-Type")
+	imageResponse := hasRuntime && runtime.Call.TaskType == "canvas_image" && resp.StatusCode >= 200 && resp.StatusCode < 300
+	lastImageStageAt := time.Time{}
 	var buffered bytes.Buffer
 	reader := io.LimitReader(resp.Body, responseLimit+1)
 	chunk := make([]byte, 32<<10)
@@ -330,6 +338,10 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		readCount, readErr := reader.Read(chunk)
 		observation.ReceivedBytes += int64(readCount)
 		if readCount > 0 {
+			if imageResponse && (lastImageStageAt.IsZero() || time.Since(lastImageStageAt) >= 3*time.Second) {
+				reportImageStage(fmt.Sprintf("正在接收图片结果（已接收 %.2f MB）", float64(observation.ReceivedBytes)/(1024*1024)))
+				lastImageStageAt = time.Now()
+			}
 			if int64(buffered.Len()+readCount) > responseLimit {
 				observation.Outcome = "response_limit"
 				return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
@@ -366,6 +378,9 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		return nil, "", httpErr
 	}
 	observation.StatusCode = resp.StatusCode
+	if imageResponse {
+		reportImageStage("图片结果接收完成，正在解析与保存")
+	}
 	if usesGenerationCircuit {
 		_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, false)
 	}

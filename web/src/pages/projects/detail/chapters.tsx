@@ -84,7 +84,7 @@ import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@
 import { formatCount, formatTime, statusLabel, type ProjectDetailViewProps } from "./shared";
 import { chapterStoryboardAssets, chapterStoryboardCharacters, chapterStoryboardReplaceImpact, storyboardRowsToProjectShots } from "./chapter-storyboard-production";
 import { getCharacterReferenceCatalog } from "@/services/api/project-character-references";
-import { chapterAssetsFromGenerationTask, chapterStoryboardApprovalSnapshot, chapterStoryboardFromGenerationTask, chapterStoryboardRecoveryDecision, chapterTaskIdentity, extractChapterAssets, generateChapterStoryboard } from "./project-chapter-ai";
+import { EmptyChapterAssetExtractionError, requireChapterAssetExtraction, chapterAssetsFromGenerationTask, chapterStoryboardApprovalSnapshot, chapterStoryboardFromGenerationTask, chapterStoryboardRecoveryDecision, chapterTaskIdentity, extractChapterAssets, generateChapterStoryboard } from "./project-chapter-ai";
 import { ProjectSystemPresentationSettings } from "./project-system-presentation-settings";
 import { ChapterSkillStatus, type ChapterSkillAttempt } from "./chapter-skill-status";
 import { ChapterStoryboardRecoveryReview } from "./chapter-storyboard-recovery-review";
@@ -199,7 +199,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
     const storyboardOperation = selectedUnit ? chapterOperations[chapterOperationKey(selectedUnit.id, "storyboard")] || serverChapterOperations.get(chapterOperationKey(selectedUnit.id, "storyboard")) : undefined;
     const pendingStoryboardRecovery = selectedUnit ? pendingStoryboardRecoveries[selectedUnit.id] : undefined;
     const selectedAssetTask = chapterTasksQuery.data?.find((task) => { const identity = chapterTaskIdentity(task); return identity?.chapterId === selectedUnit?.id && identity.kind === "characters"; });
-    const charactersGenerated = Boolean(selectedUnit && (completedChapterOperations[chapterOperationKey(selectedUnit.id, "characters")] || detail.assetCandidates.some((candidate) => candidate.unitId === selectedUnit.id) || detail.assets.some((asset) => asset.unitIds?.includes(selectedUnit.id))));
+    const charactersGenerated = Boolean(selectedUnit && !assetExtractionErrors[selectedUnit.id] && (completedChapterOperations[chapterOperationKey(selectedUnit.id, "characters")] || detail.assetCandidates.some((candidate) => candidate.unitId === selectedUnit.id) || detail.assets.some((asset) => asset.unitIds?.includes(selectedUnit.id))));
     const storyboardGenerated = Boolean(selectedUnit && storyboardImpact.shotCount > 0);
     const visibleUnits = useMemo(() => {
         if (!deferredSearchQuery) return orderedUnits;
@@ -431,6 +431,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         setCompletedChapterOperations((current) => ({ ...current, [chapterOperationKey(unitId, kind)]: true }));
     };
     const storeExtractedAssets = async (unitId: string, assets: Awaited<ReturnType<typeof extractChapterAssets>>, write: { sourceTaskId: string; expectedScope: CapturedUserScope }) => {
+        requireChapterAssetExtraction(assets);
         // 去重由服务端按分类、名称及别名统一完成，避免使用页面分页快照漏判。
         const candidates = [
             ...assets.characters.map((asset) => ({ unitId, name: asset.name, category: "character" as const, details: { ...asset } })),
@@ -718,7 +719,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                 const { receipts } = await listChapterApplyReceipts(detail.project.id, pending.map((item) => item.task.id), { expectedScope });
                 const appliedTaskIds = new Set(receipts.filter((receipt) => receipt.applied).map((receipt) => receipt.taskId));
                 for (const { task, chapterId: taskChapterId, kind } of pending) {
-                    if (chapterStoryboardRecoveryDecision({ alreadyApplied: appliedTaskIds.has(task.id) }).action === "skip") {
+                    if (kind !== "characters" && chapterStoryboardRecoveryDecision({ alreadyApplied: appliedTaskIds.has(task.id) }).action === "skip") {
                         recoveredTaskIdsRef.current.add(task.id);
                         markChapterOperationCompleted(taskChapterId, kind);
                         continue;
@@ -726,9 +727,19 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                     const completedTask = await queryGenerationTask(task.id, { expectedScope });
                     if (kind === "characters") {
                         try {
-                            await storeExtractedAssets(taskChapterId, { ...chapterAssetsFromGenerationTask(completedTask), taskId: completedTask.id }, { sourceTaskId: completedTask.id, expectedScope });
+                            const assets = chapterAssetsFromGenerationTask(completedTask);
+                            if (appliedTaskIds.has(task.id)) {
+                                recoveredTaskIdsRef.current.add(task.id);
+                                markChapterOperationCompleted(taskChapterId, kind);
+                                continue;
+                            }
+                            await storeExtractedAssets(taskChapterId, { ...assets, taskId: completedTask.id }, { sourceTaskId: completedTask.id, expectedScope });
                         } catch (error) {
                             setAssetExtractionErrors((current) => ({ ...current, [taskChapterId]: error instanceof Error ? error.message : "章节资产写入失败" }));
+                            if (error instanceof EmptyChapterAssetExtractionError) {
+                                recoveredTaskIdsRef.current.add(task.id);
+                                continue;
+                            }
                             throw error;
                         }
                         message.success("已恢复刷新前完成的章节资产提取结果");
@@ -899,7 +910,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                                 </Callout>
                             </div>
                         ) : null}
-                        {storyboardPromptReviews[selectedUnit.id]?.length ? <Callout tone="warning" title="30 秒分镜脚本建议">分镜已原样保存，建议核对提示词字数与镜头结构，不会自动重新生成。<details><summary>查看 {storyboardPromptReviews[selectedUnit.id].length} 段检查建议</summary><div className="max-h-36 space-y-1 overflow-y-auto">{storyboardPromptReviews[selectedUnit.id].map((review) => <p key={review}>{review}</p>)}</div></details></Callout> : null}
+                        {storyboardPromptReviews[selectedUnit.id]?.length ? <Callout tone="warning" title="分镜时长与脚本核对">分镜已原样保存，请核对所选技能时长、镜头结构与导演稿；不会直接压缩内容或自动重新生成。<details><summary>查看 {storyboardPromptReviews[selectedUnit.id].length} 段检查建议</summary><div className="max-h-36 space-y-1 overflow-y-auto">{storyboardPromptReviews[selectedUnit.id].map((review) => <p key={review}>{review}</p>)}</div></details></Callout> : null}
                         <div className="shrink-0 px-4 py-2"><ChapterSkillStatus projectId={detail.project.id} chapterId={selectedUnit.id} attempt={chapterSkillAttempts[selectedUnit.id]} hasStoryboard={storyboardGenerated} /></div>
                         <EditorToolbar editor={editor} />
                         <div className="project-chapter-editor-scroll thin-scrollbar min-h-0 flex-1 overflow-y-auto bg-foreground/[.012]">

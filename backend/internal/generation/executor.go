@@ -11,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/provider/workflow"
 	"infinite-canvas/backend/internal/provider/hanbao"
+	"infinite-canvas/backend/internal/provider/doubaobrowser"
 )
 
 // Execute owns paid-generation orchestration: prompt templates, config,
@@ -229,6 +230,11 @@ func applyCanvasTextStreaming(taskType string, input *Input) {
 }
 
 func validatePreparedInput(ctx context.Context, input Input) error {
+	if input.Config.InterfaceType == doubaobrowser.Protocol {
+		runtime, _ := RuntimeFromContext(ctx)
+		if input.Mode != "video" || runtime.DoubaoBrowser == nil || !doubaobrowser.IsModel(input.Config.Model) { return errors.New("豆包浏览器本地视频渠道尚未就绪") }
+		return nil
+	}
 	if input.Config.InterfaceType == hanbao.Protocol {
 		runtime, _ := RuntimeFromContext(ctx)
 		if input.Mode != "video" || runtime.Hanbao == nil || !hanbao.SupportedModel(input.Config.Model) { return errors.New("憨包本地视频渠道尚未就绪") }

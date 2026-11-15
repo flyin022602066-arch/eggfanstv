@@ -13,9 +13,13 @@ func (s *Service) persistTaskGeneratedMediaResult(task model.Task, result map[st
 	if strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.UserID) == "" {
 		return nil, fmt.Errorf("生成结果缺少任务身份")
 	}
-	return s.generatedMediaIngestor().IngestResult(task.UserID, result, taskdelivery.IngestOptions{
+	stored, err := s.generatedMediaIngestor().IngestResult(task.UserID, result, taskdelivery.IngestOptions{
 		EnforceQuota: true, IdentityPrefix: task.ID + ":inline",
 	})
+	if err == nil {
+		err = s.archiveDoubaoBrowserResult(task, stored)
+	}
+	return stored, err
 }
 
 func (s *Service) persistGeneratedMediaResult(userID string, result map[string]interface{}) (map[string]interface{}, error) {

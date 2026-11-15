@@ -6,7 +6,8 @@ export function temporaryImageLink(resource: Pick<RemoteResource, "temporaryImag
     const expiresAt = Date.parse(resource.temporaryImageExpiresAt || "");
     try {
         const parsed = new URL(resource.temporaryImageUrl);
-        if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash || (parsed.port && parsed.port !== "443") || !(parsed.hostname === "uguu.se" || parsed.hostname.endsWith(".uguu.se"))) return { status: "invalid" as const };
+        const backup = !parsed.search && (parsed.hostname === "u.pone.rs" && parsed.pathname !== "/" || parsed.hostname === "leopard.hosting.pecon.us" && /^\/dl\/[^/]+\/[^/]+$/.test(parsed.pathname));
+        if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash || (parsed.port && parsed.port !== "443") || !(parsed.hostname === "uguu.se" || parsed.hostname.endsWith(".uguu.se") || backup)) return { status: "invalid" as const };
     } catch {
         return { status: "invalid" as const };
     }

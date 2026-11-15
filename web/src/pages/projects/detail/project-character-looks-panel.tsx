@@ -8,6 +8,7 @@ import { assetLibraryQueryKey, assetPickerQueryKey } from "@/components/assets/a
 import { activeCharacterLookKeys, characterLookGroups, characterLookKey } from "@/lib/character-look-management";
 import { characterLookDraft, characterReferenceImage, missingCharacterLookImages, referenceVersionDescription } from "@/lib/character-look-selection";
 import { characterIdentitySource } from "@/lib/character-identity-reference";
+import { characterAssetType } from "@/lib/character-asset-type";
 import { hasCombinedCharacterLooks } from "@/lib/character-reference-generation";
 import { captureUserScope, assertUserScope } from "@/lib/user-scope-guard";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey } from "@/services/api/resources";
@@ -46,10 +47,11 @@ export function ProjectCharacterLooksPanel({ project, asset, currentVersionId, o
     const groups = characterLookGroups(versions, focusedVersionId);
     const busyKeys = activeCharacterLookKeys(tasks.data || [], versions);
     const missing = missingCharacterLookImages(versions).filter((version) => !busyKeys.has(characterLookKey(version, versions)));
-    const baseVersion = versions.slice().sort((left, right) => left.version - right.version).find((version) => !hasCombinedCharacterLooks(version.definition));
+    const group = characterAssetType(asset.title, asset.character?.definition || {}) === "group";
+    const baseVersion = versions.slice().sort((left, right) => left.version - right.version).find((version) => group || !hasCombinedCharacterLooks(version.definition));
     let baseImage: ReturnType<typeof characterReferenceImage> | undefined;
     let identityError = "";
-    try { if (baseVersion) baseImage = characterIdentitySource(versions, asset.id, baseVersion.versionId).image; }
+    try { if (baseVersion) baseImage = group ? characterReferenceImage(baseVersion) : characterIdentitySource(versions, asset.id, baseVersion.versionId).image; }
     catch (error) { identityError = error instanceof Error ? error.message : "基础形象读取失败"; }
     const refresh = async () => {
         await queryClient.invalidateQueries({ queryKey: ["project", project.id] });
@@ -57,7 +59,7 @@ export function ProjectCharacterLooksPanel({ project, asset, currentVersionId, o
         await Promise.all([queryClient.invalidateQueries({ queryKey: assetLibraryQueryKey(scope) }), queryClient.invalidateQueries({ queryKey: assetPickerQueryKey(scope) })]);
         await onSaved();
     };
-    const splitSource = versions.find((version) => hasCombinedCharacterLooks(version.definition));
+    const splitSource = group ? undefined : versions.find((version) => hasCombinedCharacterLooks(version.definition));
     const split = useMutation({ mutationFn: () => { if (!splitSource) throw new Error("未找到需要拆分的旧设定"); return extractCharacterLooks(project.id, splitSource, captureUserScope()); }, onSuccess: async (result) => { await refresh(); message.success(result.versions.length ? `已拆成 ${result.versions.length} 套独立造型` : "这些造型已存在，不重复创建"); }, onError: (error) => setOperationError(error.message) });
     const generationTargets = batchGenerating ? missing : generating ? [generating] : [];
     const generate = useMutation({ mutationFn: async (input: ProjectAssetImageSubmission) => {
@@ -74,7 +76,7 @@ export function ProjectCharacterLooksPanel({ project, asset, currentVersionId, o
     return <section className="character-look-panel" aria-label={`${asset.title}造型管理`}>
         <div className="character-identity-summary">
             <div className="character-identity-face">{baseImage ? <CachedResourceImage eager storageKey={resourceStorageKey(baseImage.resourceId)} alt={`${asset.title}基础人脸参考`} /> : <UserRound className="size-8" />}</div>
-            <div className="character-identity-copy"><strong><ShieldCheck className="size-4" />基础身份参考</strong><p>{baseImage ? "后续造型沿用此人脸，服装与形态按各自设定编辑。" : "先完成基础形象，再基于同一人脸生成其他造型。"}</p><span>基础人脸与默认出镜造型分别管理</span></div>
+            <div className="character-identity-copy"><strong><ShieldCheck className="size-4" />{group ? "群体演员参考" : "基础身份参考"}</strong><p>{group ? "多人同框、不同面孔；统一身份服饰与画风，不使用单人三视图或锁脸。" : baseImage ? "后续造型沿用此人脸，服装与形态按各自设定编辑。" : "先完成基础形象，再基于同一人脸生成其他造型。"}</p><span>{group ? "分镜按剧情决定人数，不复制同一张脸" : "基础人脸与默认出镜造型分别管理"}</span></div>
             <details className="character-identity-details"><summary>角色基本设定</summary><p>{baseVersion ? referenceVersionDescription({ ...baseVersion, referenceProfile: undefined }) : String(asset.character?.definition.appearance || "尚未填写")}</p></details>
         </div>
         <div className="character-looks-toolbar"><div><h3>角色造型 <span>{groups.length}</span></h3><p role="status">{groups.filter((group) => group.confirmed).length} 套已确认 · {pendingCount} 套待确认 · {groups.filter((group) => !characterReferenceImage(group.current)).length} 套待补图</p></div><div className="character-looks-actions">

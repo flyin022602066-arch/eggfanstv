@@ -720,6 +720,29 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		ok(c, gin.H{"id": c.Param("assetId")})
 	})
+	r.POST("/projects/:id/assets/:assetId/merge-prop", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+		var req app.MergeProjectPropRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.MergeProjectProp(user.ID, c.Param("id"), c.Param("assetId"), req)
+		if err != nil {
+			if app.IsProjectNotFound(err) {
+				fail(c, http.StatusNotFound, err)
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
 	r.PATCH("/projects/:id/assets/:assetId", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -930,7 +953,7 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.UnlinkShotAsset(user.ID, c.Param("id"), c.Param("shotId"), c.Param("referenceId")); err != nil {
+		if err := svc.UnlinkShotAsset(user.ID, c.Param("id"), c.Param("shotId"), c.Param("referenceId"), c.Query("exclude") == "true"); err != nil {
 			failService(c, err)
 			return
 		}

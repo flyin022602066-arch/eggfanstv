@@ -41,6 +41,38 @@ test("local validation reason is visible and is not attributed to the provider",
     expect(html).not.toContain("上游 HTTP 响应");
 });
 
+test("Hanbao runtime uncertainty stays distinct from a confirmed upstream failure", () => {
+    const context: GenerationFailureContext = { stage: "submission_unknown", failureDiagnostics: { source: "local_runtime", summary: "憨包text2video（code=3）：组件返回拒绝原因", executionResult: "pending" } };
+    const html = renderToStaticMarkup(<GenerationFailureNotice explanation={explainGenerationError("提交结果尚未确认", context)} context={context} />);
+    expect(html).toContain("本地憨包组件");
+    expect(html).toContain("组件返回拒绝原因");
+    expect(html).toContain("code=3");
+    expect(html).toContain("等待回查");
+    expect(html).not.toContain("上游业务响应");
+});
+
+test("confirmed Hanbao canvas failure offers manual retry and keeps its actual reason", () => {
+    const reason = "憨包text2video：画布连续 1 次生成失败（生成失败，请重试）：这条先跳过，可稍后重试或换个账号";
+    const explanation = explainGenerationError(reason);
+    expect(explanation.category).toBe("async_failed");
+    expect(explanation.uncertain).toBe(false);
+    const structured = explainGenerationError({ code: "async_failed", message: reason });
+    expect(structured.reason).toContain("画布连续 1 次生成失败");
+    expect(structured.blockAutomaticRetry).toBe(false);
+    expect(explainGenerationError(explanation.message).message).toBe(explanation.message);
+    const html = renderToStaticMarkup(<GenerationFailureNotice explanation={explanation} onRetry={() => {}} />);
+    expect(html).toContain("画布连续 1 次生成失败");
+    expect(html).toContain("重新生成");
+});
+
+test("Hanbao without a receipt explains why recovery is unavailable", () => {
+    const context: GenerationFailureContext = { model: "hanbao::seedance_v2.5", stage: "submission_unknown" };
+    const html = renderToStaticMarkup(<GenerationFailureNotice explanation={explainGenerationError("提交结果尚未确认", context)} context={context} />);
+    expect(html).toContain("未取得完整任务号");
+    expect(html).toContain("憨包账号管理");
+    expect(html).not.toContain("请先查询原任务状态");
+});
+
 test("compact canvas failures provide a collapsed scrollable log without exposing secrets", () => {
     const context: GenerationFailureContext = { failureDiagnostics: { source: "upstream_response", summary: "bad reference https://example.test/private.png?token=private-token Authorization: Bearer PRIVATE_CREDENTIAL" } };
     const html = renderToStaticMarkup(<GenerationFailureNotice compact explanation={explainGenerationError("生成失败")} context={context} />);

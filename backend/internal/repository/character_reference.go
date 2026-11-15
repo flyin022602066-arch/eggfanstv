@@ -362,6 +362,9 @@ func (r *Repository) SaveCharacterReferenceChoices(userID, projectID, unitID str
 				return err
 			}
 			for _, old := range existing {
+				if old.Status == "excluded" && ref.SelectionSource != "manual" {
+					return ErrShotAssetExcluded
+				}
 				if old.SelectionLocked && ref.SelectionSource != "manual" {
 					return ErrCharacterReferenceLocked
 				}

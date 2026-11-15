@@ -16,6 +16,7 @@ import { ProjectAssetImageSettingsModal } from "./project-asset-image-settings-m
 import { ProjectAssetImageBatchModal } from "./project-asset-image-batch-modal";
 import { ProjectCharacterFacePresetsModal } from "./project-character-face-presets-modal";
 import { ProjectPropCreateModal } from "./project-prop-create-modal";
+import { ProjectPropMergeModal } from "./project-prop-merge-modal";
 import { submitProjectAssetImages } from "./project-asset-image-generation";
 import { PROJECT_ASSET_IMAGE_CATEGORIES, projectAssetImageCategoryLabels, type ProjectAssetImageCategory } from "@/lib/project-asset-image-preferences";
 import { AssetLibraryCard, AssetLibraryCardMedia } from "@/components/assets/asset-library-card";
@@ -62,11 +63,14 @@ import { downloadOwnedOrBrowserMedia, reportOwnedMediaSave } from "@/services/de
 import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 
 import { ProjectCharacterWorkspace } from "./project-character-workspace";
+import { ProjectAssetImageTasks } from "./project-asset-image-tasks";
 import { characterCandidateReview } from "@/lib/character-candidate-review";
 import { getCharacterReferenceCatalog } from "@/services/api/project-character-references";
 import { ProjectCharacterImagePreview } from "./project-character-image-preview";
 import { linkSelectedProjectAssets } from "./project-asset-linking";
 import { categoryLabels, categoryLabel, mediaLabel, StatusPill, formatTime, textValue, type ProjectDetailViewProps } from "./shared";
+
+import { characterAssetType, type CharacterAssetType } from "@/lib/character-asset-type";
 
 const categories = ["all", ...ASSET_CATEGORIES];
 const ALL_FOLDERS = "__all_folders__";
@@ -74,11 +78,11 @@ const pickerCategoryLabels = { all: "全部素材", ...categoryLabels };
 const characterFields = [
     ["role", "剧情定位与人物关系"], ["aliases", "别名"], ["appearance", "稳定外貌"], ["physique", "身高、体型与体态"],
     ["clothing", "默认服装造型"], ["personality", "性格与表演基线"], ["props", "固定道具"],
-    ["consistencyPrompt", "跨镜头一致性约束"], ["multiViewPrompt", "头部特写与身体三视图补充约束"],
+    ["consistencyPrompt", "跨镜头一致性约束"], ["multiViewPrompt", "角色设定图补充约束（单人三视图／群体同框）"],
     ["voiceLanguage", "语言与口音"], ["voiceAge", "声音年龄感"], ["voiceTimbre", "音色气质"],
 ] as const;
 
-type CharacterForm = { name: string } & Record<(typeof characterFields)[number][0], string>;
+type CharacterForm = { name: string; characterType: CharacterAssetType } & Record<(typeof characterFields)[number][0], string>;
 
 export default function ProjectAssetsView({ detail, refreshProject }: ProjectDetailViewProps) {
     const { message, modal } = App.useApp();
@@ -101,6 +105,8 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     const [folderName, setFolderName] = useState("");
     const [addOpen, setAddOpen] = useState(false);
     const [propCreateOpen, setPropCreateOpen] = useState(false);
+    const [mergeProp, setMergeProp] = useState<ProjectAsset | null>(null);
+    useEffect(() => { setMergeProp(null); }, [detail.project.id]);
     const [editorAsset, setEditorAsset] = useState<ProjectAsset | "new" | null>(null);
     const [imageAsset, setImageAsset] = useState<ProjectAsset | null>(null);
     const [projectImageAsset, setProjectImageAsset] = useState<ProjectAsset | null>(null);
@@ -108,8 +114,9 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     const [voiceAsset, setVoiceAsset] = useState<ProjectAsset | null>(null);
     const [previewAsset, setPreviewAsset] = useState<ProjectAsset | null>(null);
     const [actionError, setActionError] = useState("");
+    const [mergeNotice, setMergeNotice] = useState("");
     const [downloadError, setDownloadError] = useState("");
-    useEffect(() => { setActionError(""); setDownloadError(""); }, [detail.project.id]);
+    useEffect(() => { setActionError(""); setDownloadError(""); setMergeNotice(""); }, [detail.project.id]);
     useEffect(() => { setDownloadError(""); }, [previewAsset?.id]);
     const [generateAsset, setGenerateAsset] = useState<ProjectAsset | null>(null);
     const [imageSettingsCategory, setImageSettingsCategory] = useState<ProjectAssetImageCategory | null>(null);
@@ -122,10 +129,13 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     const queryClient = useQueryClient();
     const imageTasksQuery = useQuery({
         queryKey: ["project", detail.project.id, "asset-image-tasks"],
-        queryFn: () => listGenerationTasks(100, { projectId: detail.project.id }),
-        refetchInterval: (query) => query.state.data?.some((task) => /^(project-asset-image|character-turnaround):/.test(task.clientContext?.nodeId || "") && ["queued", "running"].includes(task.status)) ? 2_000 : false,
+        queryFn: ({ signal }) => listGenerationTasks(100, { projectId: detail.project.id }, undefined, signal),
+        refetchOnMount: "always",
+        refetchOnWindowFocus: "always",
+        refetchOnReconnect: "always",
+        refetchInterval: (query) => query.state.status === "error" ? 5_000 : query.state.data?.some((task) => /^(project-asset-image|character-turnaround):/.test(task.clientContext?.nodeId || "") && (["queued", "running"].includes(task.status) || ["PENDING_MATERIALIZATION", "MATERIALIZING"].includes(task.resultState || ""))) ? 2_000 : 15_000,
     });
-    const imageTaskSignature = (imageTasksQuery.data || []).filter((task) => /^(project-asset-image|character-turnaround):/.test(task.clientContext?.nodeId || "")).map((task) => `${task.id}:${task.status}`).sort().join(";");
+    const imageTaskSignature = (imageTasksQuery.data || []).filter((task) => /^(project-asset-image|character-turnaround):/.test(task.clientContext?.nodeId || "")).map((task) => `${task.id}:${task.status}:${task.resultState}`).sort().join(";");
     useEffect(() => {
         void queryClient.invalidateQueries({ queryKey: ["project", detail.project.id, "assets"] });
         void queryClient.invalidateQueries({ queryKey: ["project", detail.project.id, "core"] });
@@ -460,7 +470,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     const openCharacterEditor = (asset: ProjectAsset | "new") => {
         setEditorAsset(asset);
         const definition = asset === "new" ? {} : asset.character?.definition || {};
-        form.setFieldsValue({ name: asset === "new" ? "" : asset.title, ...Object.fromEntries(characterFields.map(([key]) => [key, fieldValue(definition[key])])) } as CharacterForm);
+        form.setFieldsValue({ name: asset === "new" ? "" : asset.title, characterType: characterAssetType(asset === "new" ? "" : asset.title, definition), ...Object.fromEntries(characterFields.map(([key]) => [key, fieldValue(definition[key])])) } as CharacterForm);
     };
     const openImages = (asset: ProjectAsset) => setImageAsset(asset);
     const openProjectImage = (asset: ProjectAsset) => setProjectImageAsset(asset);
@@ -541,6 +551,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                 </div>
             </header>
             {actionError ? <Alert className="mb-4" type="error" showIcon title="资产操作未完成" description={actionError} closable onClose={() => setActionError("")} /> : null}
+            {mergeNotice ? <Alert className="mb-4" type="success" showIcon title={mergeNotice} closable onClose={() => setMergeNotice("")} /> : null}
             <section className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-surface-active p-3" aria-label="按集数查看资产">
                 <label className="text-xs font-medium" htmlFor="project-asset-unit">集数筛选</label>
                 <Select id="project-asset-unit" aria-label="资产集数" className="min-w-0 w-full sm:w-80" value={unitId} showSearch optionFilterProp="label" onChange={selectUnit} options={[
@@ -556,6 +567,10 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                 {PROJECT_ASSET_IMAGE_CATEGORIES.map((value) => <Button key={value} icon={<Sparkles className="size-3.5" />} onClick={() => setBatchCategory(value)}>一键批量生成{projectAssetImageCategoryLabels[value]}图</Button>)}
                 <span className="text-xs text-foreground/45">范围：{scopeLabel} · 默认仅补缺图</span>
             </div>
+            <ProjectAssetImageTasks key={detail.project.id} projectId={detail.project.id} assets={assets} tasks={imageTasksQuery.data || []} fetching={imageTasksQuery.isFetching} updatedAt={imageTasksQuery.dataUpdatedAt} error={imageTasksQuery.isError ? imageTasksQuery.error.message : undefined} onRefresh={() => imageTasksQuery.refetch()} onRecovered={async () => {
+                await Promise.all([imageTasksQuery.refetch(), queryClient.invalidateQueries({ queryKey: ["project", detail.project.id] }), queryClient.invalidateQueries({ queryKey: assetLibraryQueryKey(captureUserScope()) }), queryClient.invalidateQueries({ queryKey: assetPickerQueryKey(captureUserScope()) })]);
+                await refreshProject();
+            }} />
             <div className="project-assets-layout mt-3 grid gap-3">
                 <nav className="space-y-0.5 pr-2" aria-label="素材目录与资产分类">
                     <div className="mb-1 flex h-8 items-center justify-between px-2 text-[var(--fs-tiny)] font-medium text-foreground/42"><span>素材目录</span><button type="button" className="rounded p-1 hover:bg-surface-hover" aria-label="新建根目录文件夹" onClick={() => openFolderEditor(undefined, "")}><FolderPlus className="size-3.5" /></button></div>
@@ -593,7 +608,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                                             <span className="grid size-12 shrink-0 place-items-center rounded-md bg-foreground/[.045] text-foreground/25">{isCharacter ? <UserRound className="size-5" /> : <Box className="size-5" />}</span>
                                             <div className="min-w-0 flex-1">
                                                 <div className="truncate text-xs font-semibold">{candidate.name}</div>
-                                                <div className="mt-1 truncate text-[var(--fs-tiny)] text-foreground/42" title={unitLabels.get(candidate.unitId || "")}>待确认{categoryLabel(candidate.category)} · {unitLabels.get(candidate.unitId || "") || (candidate.shotId ? "来自镜头分析" : "未关联集数")}</div>
+                                                <div className="mt-1 truncate text-[var(--fs-tiny)] text-foreground/42" title={unitLabels.get(candidate.unitId || "")}>待确认{review?.characterType === "group" ? "群体演员" : categoryLabel(candidate.category)} · {unitLabels.get(candidate.unitId || "") || (candidate.shotId ? "来自镜头分析" : "未关联集数")}</div>
                                                 {review ? <div className="mt-1 whitespace-pre-line break-words text-[var(--fs-tiny)] text-foreground/60">{review.description}</div> : null}
                                                 <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1">
                                                     <Button type="text" size="small" icon={<Check className="size-3.5" />} loading={confirming} disabled={review?.ambiguous || Boolean(confirmingCandidateId) && !confirming} onClick={() => confirmMutation.mutate({ candidateId: candidate.id })}>{review?.label || "确认新增"}</Button>
@@ -618,7 +633,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                                 {group.category === "character" ? <ProjectCharacterWorkspace project={detail.project} assets={group.assets} chapterLabels={unitLabels} folderItems={folderMoveItems} removingId={unlinkMutation.isPending ? unlinkMutation.variables : undefined} onCreate={() => openCharacterEditor("new")} onEdit={openCharacterEditor} onVoice={openVoice} onPreview={setPreviewAsset} onMove={(asset, nextFolderId) => moveMutation.mutate({ id: asset.id, nextFolderId })} onRemove={(asset) => unlinkMutation.mutateAsync(asset.id)} onSaved={async () => { await assetsQuery.refetch(); await refreshProject(); }} /> : <div className="project-assets-grid assets-library-grid">{group.assets.map((asset) => {
                                     const labels = units.filter((unit) => asset.unitIds?.includes(unit.id)).map((unit) => unitLabels.get(unit.id)!);
                                     return <div key={asset.id} className="project-asset-entry min-w-0" data-project-asset-id={asset.id}>
-                                        <MediaAssetCard onGenerate={() => setGenerateAsset(asset)} generating={generatingAssetIds.has(asset.id)} asset={asset} personalAsset={personalAssets.find((item) => item.id === asset.id)} folderItems={folderMoveItems} onOpen={() => setPreviewAsset(asset)} onReplaceImage={() => openProjectImage(asset)} onMove={(nextFolderId) => moveMutation.mutate({ id: asset.id, nextFolderId })} onCategoryChange={(next) => categoryMutation.mutate({ id: asset.id, next })} onVersion={() => versionMutation.mutate(asset.id)} onRemove={() => unlinkMutation.mutate(asset.id)} loading={(moveMutation.isPending && moveMutation.variables?.id === asset.id) || (categoryMutation.isPending && categoryMutation.variables?.id === asset.id) || (versionMutation.isPending && versionMutation.variables === asset.id) || (unlinkMutation.isPending && unlinkMutation.variables === asset.id) || (replaceImageMutation.isPending && replaceImageMutation.variables?.asset.id === asset.id)} />
+                                        <MediaAssetCard onMerge={asset.category === "prop" ? () => setMergeProp(asset) : undefined} onGenerate={() => setGenerateAsset(asset)} generating={generatingAssetIds.has(asset.id)} asset={asset} personalAsset={personalAssets.find((item) => item.id === asset.id)} folderItems={folderMoveItems} onOpen={() => setPreviewAsset(asset)} onReplaceImage={() => openProjectImage(asset)} onMove={(nextFolderId) => moveMutation.mutate({ id: asset.id, nextFolderId })} onCategoryChange={(next) => categoryMutation.mutate({ id: asset.id, next })} onVersion={() => versionMutation.mutate(asset.id)} onRemove={() => unlinkMutation.mutate(asset.id)} loading={(moveMutation.isPending && moveMutation.variables?.id === asset.id) || (categoryMutation.isPending && categoryMutation.variables?.id === asset.id) || (versionMutation.isPending && versionMutation.variables === asset.id) || (unlinkMutation.isPending && unlinkMutation.variables === asset.id) || (replaceImageMutation.isPending && replaceImageMutation.variables?.asset.id === asset.id)} />
                                         <Tooltip title={labels.length ? labels.join("；") : "尚无章节提取来源或镜头绑定，可在未关联集数中查看"}>
                                             <div className="mt-2 truncate text-[var(--fs-tiny)] text-foreground/48" aria-label={`关联集数：${labels.join("；") || "未关联集数"}`}>{labels.length ? `${labels[0]}${labels.length > 1 ? ` · 共 ${labels.length} 集` : ""}` : "未关联集数"}</div>
                                         </Tooltip>
@@ -652,10 +667,11 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
             <ProjectAssetPreviewModal downloadError={downloadError} generating={Boolean(previewAsset && generatingAssetIds.has(previewAsset.id))} onGenerate={() => { if (!previewAsset) return; setGenerateAsset(previewAsset); setPreviewAsset(null); }} asset={previewAsset} personalAsset={previewAsset ? personalAssets.find((item) => item.id === previewAsset.id) : undefined} onClose={() => setPreviewAsset(null)} onDownload={() => previewAsset && downloadPreviewAsset(previewAsset)} onReplaceImage={() => { if (!previewAsset) return; setPreviewAsset(null); if (previewAsset.category === "character") openImages(previewAsset); else if (previewAsset.category === "environment" || previewAsset.category === "prop") openProjectImage(previewAsset); }} />
             <CharacterEditorModal open={Boolean(editorAsset)} editing={editorAsset !== "new"} form={form} loading={saveCharacter.isPending} onClose={() => setEditorAsset(null)} onSave={() => form.validateFields().then((values) => saveCharacter.mutate(values))} />
             {propCreateOpen ? <ProjectPropCreateModal detail={detail} unitId={unitId} onClose={() => setPropCreateOpen(false)} onSaved={async () => { refreshProject(); }} /> : null}
+            {mergeProp ? <ProjectPropMergeModal key={`${detail.project.id}:${mergeProp.id}`} projectId={detail.project.id} source={mergeProp} onClose={() => setMergeProp(null)} onSaved={(mergedShots) => { setActionError(""); setMergeNotice(`已合并道具，同步了 ${mergedShots} 个镜头`); setPreviewAsset(null); refreshProject(); }} /> : null}
             {generateAsset ? <ProjectAssetImageModal key={generateAsset.id} asset={generateAsset} project={detail.project} submitting={generateMutation.isPending} onClose={() => setGenerateAsset(null)} onGenerate={(input) => generateMutation.mutate(input)} onFaceSettings={() => { setGenerateAsset(null); setFacePresetsOpen(true); }} /> : null}
             {facePresetsOpen ? <ProjectCharacterFacePresetsModal projectId={detail.project.id} onClose={() => setFacePresetsOpen(false)} onSaved={async () => { await refreshProject(); }} /> : null}
             {imageSettingsCategory ? <ProjectAssetImageSettingsModal project={detail.project} initialCategory={imageSettingsCategory} onClose={() => setImageSettingsCategory(null)} /> : null}
-            {batchCategory ? <ProjectAssetImageBatchModal key={`${batchCategory}:${unitId}`} project={detail.project} category={batchCategory} unitId={unitId} scopeLabel={scopeLabel} onClose={() => setBatchCategory(null)} onSettings={() => { setImageSettingsCategory(batchCategory); setBatchCategory(null); }} onTasksChanged={async () => { await imageTasksQuery.refetch(); await refreshProject(); }} /> : null}
+            {batchCategory ? <ProjectAssetImageBatchModal key={`${batchCategory}:${unitId}`} project={detail.project} category={batchCategory} unitId={unitId} scopeLabel={scopeLabel} onClose={() => setBatchCategory(null)} onSettings={() => { setImageSettingsCategory(batchCategory); setBatchCategory(null); }} onFaceSettings={() => { setBatchCategory(null); setFacePresetsOpen(true); }} onTasksChanged={async () => { await imageTasksQuery.refetch(); await refreshProject(); }} /> : null}
             <Modal className="workspace-modal workspace-modal-compact" title={folderEditor?.folder ? "重命名文件夹" : "新建文件夹"} open={Boolean(folderEditor)} okText={folderEditor?.folder ? "保存" : "创建"} cancelText="取消" okButtonProps={{ loading: createFolderMutation.isPending || renameFolderMutation.isPending }} onCancel={() => { setFolderEditor(null); setFolderName(""); }} onOk={saveFolder}>
                 <div className="grid gap-2"><span className="text-[var(--fs-label)] text-foreground/48">位置：{folderEditor ? projectAssetFolderParentLabel(assetFolders, folderEditor.parentId) : ""}</span><Input autoFocus maxLength={60} value={folderName} placeholder="输入文件夹名称" onChange={(event) => setFolderName(event.target.value)} onPressEnter={saveFolder} /></div>
             </Modal>
@@ -920,15 +936,39 @@ function CharacterEditorModal({ open, editing, form, loading, onClose, onSave }:
     const input = (key: CharacterFormKey) => <Form.Item name={key} label={field(key)[1]}><Input /></Form.Item>;
     return <Modal className="workspace-modal workspace-modal-wide library-modal" title={null} open={open} forceRender okText={editing ? "保存角色设定" : "创建角色卡"} cancelText="取消" okButtonProps={{ loading }} onCancel={onClose} onOk={onSave} styles={{ body: { paddingTop: 0 } }}>
         <div className="mb-1 pb-4"><div className="text-[var(--fs-label)] font-medium text-foreground/52">角色设定</div><h2 className="mt-1 text-xl font-semibold">{editing ? "调整角色设定" : "建立一张角色卡"}</h2></div>
-        <Form form={form} layout="vertical" requiredMark={false} className="pt-2"><Form.Item name="name" label="角色名称" rules={[{ required: true, message: "请输入角色名称" }]}><Input size="large" placeholder="例如：林默" /></Form.Item><Tabs items={[{ key: "identity", label: "身份与外观", forceRender: true, children: <div className="grid gap-x-5 sm:grid-cols-2">{input("role")}{input("aliases")}{textArea("appearance", 4)}{input("physique")}{input("clothing")}{input("props")}{textArea("consistencyPrompt", 4)}{textArea("multiViewPrompt", 3)}</div> }, { key: "performance", label: "表演与声音", forceRender: true, children: <div className="grid gap-x-5 sm:grid-cols-2">{textArea("personality", 4)}{input("voiceLanguage")}{input("voiceAge")}{input("voiceTimbre")}</div> }]} /></Form>
+        <Form form={form} layout="vertical" requiredMark={false} className="pt-2"><Form.Item name="name" label="角色名称" rules={[{ required: true, message: "请输入角色名称" }]}><Input size="large" placeholder="例如：林默" /></Form.Item><Form.Item name="characterType" label="角色类型" extra="群体演员生成多人差异化选角图，不使用单人三视图或主角锁脸；具名、独立行动或对白的人物请单独建卡。"><Select aria-label="角色类型" options={[{ value: "individual", label: "单人角色" }, { value: "group", label: "群体演员（不同面孔）" }]} /></Form.Item><Tabs items={[{ key: "identity", label: "身份与外观", forceRender: true, children: <div className="grid gap-x-5 sm:grid-cols-2">{input("role")}{input("aliases")}{textArea("appearance", 4)}{input("physique")}{input("clothing")}{input("props")}{textArea("consistencyPrompt", 4)}{textArea("multiViewPrompt", 3)}</div> }, { key: "performance", label: "表演与声音", forceRender: true, children: <div className="grid gap-x-5 sm:grid-cols-2">{textArea("personality", 4)}{input("voiceLanguage")}{input("voiceAge")}{input("voiceTimbre")}</div> }]} /></Form>
     </Modal>;
 }
 
 type CharacterFormKey = (typeof characterFields)[number][0];
 
-function MediaAssetCard({ asset, personalAsset, onGenerate, generating, folderItems, onOpen, onReplaceImage, onMove, onCategoryChange, onVersion, onRemove, loading }: { asset: ProjectAsset; personalAsset?: Asset; onGenerate: () => void; generating: boolean; folderItems: Array<{ key: string; label: string }>; onOpen: () => void; onReplaceImage: () => void; onMove: (folderId: string) => void; onCategoryChange: (category: AssetCategory) => void; onVersion: () => void; onRemove: () => void; loading: boolean }) {
+function MediaAssetCard({ asset, personalAsset, onMerge, onGenerate, generating, folderItems, onOpen, onReplaceImage, onMove, onCategoryChange, onVersion, onRemove, loading }: { asset: ProjectAsset; personalAsset?: Asset; onMerge?: () => void; onGenerate: () => void; generating: boolean; folderItems: Array<{ key: string; label: string }>; onOpen: () => void; onReplaceImage: () => void; onMove: (folderId: string) => void; onCategoryChange: (category: AssetCategory) => void; onVersion: () => void; onRemove: () => void; loading: boolean }) {
     const canReplaceImage = asset.category === "environment" || asset.category === "prop";
-    return <AssetLibraryCard className="project-asset-library-card"><AssetLibraryCardMedia className="relative aspect-[4/3] overflow-hidden bg-foreground/[.05]"><button type="button" className="project-asset-media-button" onClick={onOpen} aria-label={`查看资产：${asset.title}`}><ProjectAssetMedia asset={asset} personalAsset={personalAsset} /><div className="absolute inset-x-2 top-2 flex items-center justify-between"><StatusPill status={asset.status} /><span className="rounded bg-black/50 px-1.5 py-0.5 text-[var(--fs-micro)] text-white">{mediaLabel(asset.mediaType)}</span></div></button></AssetLibraryCardMedia><div className="p-2.5"><button type="button" className="project-asset-title-button" onClick={onOpen}><span className="min-w-0 truncate text-xs font-medium">{asset.title}</span><span className="shrink-0 text-[var(--fs-micro)] text-foreground/38">{formatTime(asset.updatedAt)}</span></button><div className="mt-1 flex items-center gap-1.5 text-[var(--fs-tiny)] text-foreground/42"><Dropdown trigger={["click"]} menu={{ selectedKeys: [asset.category], items: Object.entries(categoryLabels).filter(([value]) => value !== "character").map(([value, label]) => ({ key: value, label })), onClick: ({ key }) => onCategoryChange(normalizeAssetCategory(key)) }}><button type="button" disabled={loading} className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[var(--fs-tiny)] text-foreground/50 hover:bg-surface-hover"><span>{categoryLabel(asset.category)}</span><ChevronDown className="size-3" /></button></Dropdown><span>·</span><span>v{Math.max(1, asset.versionCount)}</span><Link2 className="ml-auto size-3.5 shrink-0 text-foreground/42" /></div><div className="mt-2 flex min-w-0 flex-col gap-2 pt-1">{canGenerateProjectAssetImage(asset) ? <Button size="small" className="w-full" icon={<Sparkles className="size-3.5" />} disabled={loading} loading={generating} onClick={onGenerate} title="编辑当前资产的提示词和生图设置">{asset.mediaType === "image" ? "编辑提示词并重绘" : asset.category === "environment" ? "生成场景图" : "生成道具图"}</Button> : <span className="text-[var(--fs-micro)] text-foreground/38">{mediaLabel(asset.mediaType)}</span>}<div className="flex min-w-0 flex-wrap items-center gap-1">{canReplaceImage ? <Button type="text" size="small" icon={<ImageIcon className="size-3.5" />} loading={loading} onClick={onReplaceImage} title="替换图片" aria-label={`替换 ${asset.title} 图片`} /> : null}<Dropdown trigger={["click"]} menu={{ selectedKeys: [asset.folderId || ""], items: folderItems, onClick: ({ key }) => onMove(key) }}><Button type="text" size="small" icon={<MoveRight className="size-3.5" />} loading={loading} title="移动到文件夹" aria-label={`移动 ${asset.title}`} /></Dropdown><Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={onVersion} title="创建新版本" aria-label={`为 ${asset.title} 创建版本`} /><Popconfirm title="移出项目资产？" okText="移出" cancelText="取消" onConfirm={onRemove}><Button type="text" danger size="small" className="ml-auto shrink-0" title="移出项目资产" icon={<Trash2 className="size-3.5" />} loading={loading} aria-label={`移出 ${asset.title}`} /></Popconfirm></div></div></div></AssetLibraryCard>;
+    return <AssetLibraryCard className="project-asset-library-card">
+        <AssetLibraryCardMedia className="relative aspect-[4/3] overflow-hidden bg-foreground/[.05]">
+            <button type="button" className="project-asset-media-button" onClick={onOpen} aria-label={`查看资产：${asset.title}`}>
+                <ProjectAssetMedia asset={asset} personalAsset={personalAsset} />
+                <div className="absolute inset-x-2 top-2 flex items-center justify-between"><StatusPill status={asset.status} /><span className="rounded bg-black/50 px-1.5 py-0.5 text-[var(--fs-micro)] text-white">{mediaLabel(asset.mediaType)}</span></div>
+            </button>
+        </AssetLibraryCardMedia>
+        <div className="p-2.5">
+            <button type="button" className="project-asset-title-button" onClick={onOpen}><span className="min-w-0 truncate text-xs font-medium">{asset.title}</span><span className="shrink-0 text-[var(--fs-micro)] text-foreground/38">{formatTime(asset.updatedAt)}</span></button>
+            <div className="mt-1 flex items-center gap-1.5 text-[var(--fs-tiny)] text-foreground/42">
+                <Dropdown trigger={["click"]} menu={{ selectedKeys: [asset.category], items: Object.entries(categoryLabels).filter(([value]) => value !== "character").map(([value, label]) => ({ key: value, label })), onClick: ({ key }) => onCategoryChange(normalizeAssetCategory(key)) }}><button type="button" disabled={loading} className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[var(--fs-tiny)] text-foreground/50 hover:bg-surface-hover"><span>{categoryLabel(asset.category)}</span><ChevronDown className="size-3" /></button></Dropdown>
+                <span>·</span><span>v{Math.max(1, asset.versionCount)}</span><Link2 className="ml-auto size-3.5 shrink-0 text-foreground/42" />
+            </div>
+            <div className="mt-2 flex min-w-0 flex-col gap-2 pt-1">
+                {canGenerateProjectAssetImage(asset) ? <Button size="small" className="w-full" icon={<Sparkles className="size-3.5" />} disabled={loading} loading={generating} onClick={onGenerate} title="编辑当前资产的提示词和生图设置">{asset.mediaType === "image" ? "编辑提示词并重绘" : asset.category === "environment" ? "生成场景图" : "生成道具图"}</Button> : <span className="text-[var(--fs-micro)] text-foreground/38">{mediaLabel(asset.mediaType)}</span>}
+                {onMerge ? <Button size="small" icon={<Link2 className="size-3.5" />} disabled={loading || generating} onClick={onMerge} title="合并到其他道具" aria-label={`合并 ${asset.title}`}>合并到其他道具</Button> : null}
+                <div className="flex min-w-0 flex-wrap items-center gap-1">
+                    {canReplaceImage ? <Button type="text" size="small" icon={<ImageIcon className="size-3.5" />} loading={loading} onClick={onReplaceImage} title="替换图片" aria-label={`替换 ${asset.title} 图片`} /> : null}
+                    <Dropdown trigger={["click"]} menu={{ selectedKeys: [asset.folderId || ""], items: folderItems, onClick: ({ key }) => onMove(key) }}><Button type="text" size="small" icon={<MoveRight className="size-3.5" />} loading={loading} title="移动到文件夹" aria-label={`移动 ${asset.title}`} /></Dropdown>
+                    <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={onVersion} title="创建新版本" aria-label={`为 ${asset.title} 创建版本`} />
+                    <Popconfirm title="移出项目资产？" okText="移出" cancelText="取消" onConfirm={onRemove}><Button type="text" danger size="small" className="ml-auto shrink-0" title="移出项目资产" icon={<Trash2 className="size-3.5" />} loading={loading} aria-label={`移出 ${asset.title}`} /></Popconfirm>
+                </div>
+            </div>
+        </div>
+    </AssetLibraryCard>;
 }
 
 function ProjectAssetMedia({ asset, personalAsset }: { asset: ProjectAsset; personalAsset?: Asset }) {
@@ -975,6 +1015,7 @@ function ProjectAssetPreviewModal({ asset, personalAsset: storedPersonalAsset, d
 function characterDefinition(values: CharacterForm) {
     const definition: Record<string, unknown> = Object.fromEntries(characterFields.map(([key]) => [key, values[key]?.trim() || (key === "aliases" ? [] : "")]));
     definition.aliases = values.aliases?.split(/[，,]/).map((item) => item.trim()).filter(Boolean) || [];
+    definition.characterType = values.characterType;
     return definition;
 }
 

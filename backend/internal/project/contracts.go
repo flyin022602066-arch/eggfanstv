@@ -155,6 +155,16 @@ type UpdateProjectAssetRequest struct {
 	FolderID *string `json:"folderId"`
 }
 
+type MergeProjectPropRequest struct {
+	TargetAssetID    string `json:"targetAssetId"`
+	ExpectedRevision int64  `json:"expectedRevision"`
+}
+
+type MergeProjectPropResult struct {
+	Asset       AssetSummary `json:"asset"`
+	MergedShots int          `json:"mergedShots"`
+}
+
 type CreateAssetVersionRequest struct {
 	Prompt         string `json:"prompt"`
 	DefinitionJSON string `json:"definitionJson"`
@@ -316,8 +326,9 @@ type ReplaceProjectUnitShotInput struct {
 }
 
 type LinkShotAssetRequest struct {
-	AssetVersionID string `json:"assetVersionId"`
-	Role           string `json:"role"`
+	AssetVersionID  string `json:"assetVersionId"`
+	Role            string `json:"role"`
+	SelectionSource string `json:"selectionSource"`
 }
 
 type AssetCandidateInput struct {

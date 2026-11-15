@@ -12,6 +12,10 @@ test("preserves all structured looks through chapter parsing and confirmation pa
 test("rejects malformed looks instead of silently dropping outfits", () => {
     for (const looks of [[], [{name: "居家"}], [{name: "重复", clothing: "黑裙"}, {name: "重复", clothing: "白裙"}]]) expect(() => parseCharacterBreakdown(JSON.stringify({characters: [{...character, looks}]}))).toThrow();
 });
+test("preserves independent equipment, explicit removal and body changes in every look", () => {
+    const looks = [{ name: "负重", clothing: "背负合金架", props: "合金架、旧箍", physique: "负重四足体态" }, { name: "卸载", clothing: "合金架与旧箍已完全卸除", props: "", physique: "轻快四足体态" }];
+    expect(parseCharacterBreakdown(JSON.stringify({ characters: [{ ...character, props: "合金架、旧箍", looks }] }))[0]?.looks).toEqual(looks);
+});
 test("requires splitting mixed outfits before generating a single reference", () => {
     expect(() => characterTurnaroundVariables("云舒", {...character, clothing: "造型1（居家）：黑裙；造型2（出门）：白衣"})).toThrow("拆分");
     expect(() => characterTurnaroundVariables("云舒", {...character, looks: [{name: "居家", clothing: "黑裙"}, {name: "出门", clothing: "白衣"}]})).toThrow("拆分");

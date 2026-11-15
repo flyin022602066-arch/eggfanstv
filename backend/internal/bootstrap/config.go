@@ -18,6 +18,7 @@ type Config struct {
 	Profile                 Profile
 	DataDir                 string
 	GeneratedVideoOutputDir string
+	DoubaoBrowserOutputDir  string
 	DatabaseDriver          string
 	DatabaseURL             string
 	ListenAddr              string
@@ -50,6 +51,9 @@ func (c Config) withDefaults() Config {
 			root = filepath.Dir(filepath.Dir(root))
 		}
 		c.GeneratedVideoOutputDir = filepath.Join(root, "output", "videos")
+	}
+	if c.DoubaoBrowserOutputDir == "" && c.GeneratedVideoOutputDir != "" {
+		c.DoubaoBrowserOutputDir = filepath.Dir(c.GeneratedVideoOutputDir)
 	}
 	return c
 }

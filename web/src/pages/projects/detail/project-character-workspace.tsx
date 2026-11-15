@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button, Dropdown, Popconfirm } from "antd";
+import { characterAssetType } from "@/lib/character-asset-type";
 import { MoveRight, Pencil, Plus, Trash2, UserRound, Volume2 } from "lucide-react";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { characterLookGroups } from "@/lib/character-look-management";
@@ -24,6 +25,7 @@ export function ProjectCharacterWorkspace({ project, assets, chapterLabels, fold
             return <button type="button" key={asset.id} className="character-asset-list-item" aria-pressed={selected.id === asset.id} onClick={() => setSelectedId(asset.id)}>{image ? <CachedResourceImage storageKey={resourceStorageKey(image.resourceId)} alt={asset.title} /> : <span className="character-asset-list-avatar"><UserRound className="size-5" /></span>}<span><strong title={asset.title}>{asset.title}</strong><small>{groups.length || asset.characterLookCount || 1} 套造型{pending ? ` · ${pending} 待确认` : ""}</small></span></button>;
         })}</nav>
         <div className="character-asset-detail"><div className="character-asset-detail-heading"><div><h3>{selected.title}</h3><p title={chapters.join("；")}>{chapters.join(" · ") || "未关联集数"}</p></div><div className="character-looks-actions">
+            {characterAssetType(selected.title, selected.character?.definition || {}) === "group" ? <span className="text-xs text-foreground/55">群体演员 · 不同面孔</span> : null}
             <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => onEdit(selected)}>编辑角色</Button>
             <Button size="small" icon={<Volume2 className="size-3.5" />} onClick={() => onVoice(selected)}>声音</Button>
             <Button size="small" aria-label={`查看角色卡：${selected.title}`} onClick={() => onPreview(selected)}>预览与下载</Button>

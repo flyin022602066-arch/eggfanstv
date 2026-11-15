@@ -1,12 +1,13 @@
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { assetCategoryLabel, normalizeAssetCategory } from "@/lib/asset-category";
-import { normalizeProjectAssetMentions, pruneUnboundGeneratedCharacterReferences, unresolvedProjectAssetMentions, type ProjectAssetMentionAsset } from "@/lib/project-asset-mentions";
+import { normalizeProjectAssetMentions, pruneExcludedProjectAssetReferences, pruneUnboundGeneratedCharacterReferences, unresolvedProjectAssetMentions, type ProjectAssetMentionAsset } from "@/lib/project-asset-mentions";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey } from "@/services/api/resources";
 import type { ProjectAsset, ProjectDetail, ShotAssetReference } from "@/services/api/projects";
 import type { AssetCategory } from "@/stores/use-asset-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio } from "@/types/media";
 import { characterReferenceImage, characterReferenceNeedsReview } from "@/lib/character-look-selection";
+import { characterAssetType, groupCharacterVideoRule, type CharacterAssetType } from "@/lib/character-asset-type";
 
 export type ShotAssetReferenceContext = {
     boundAssetIds?: string[];
@@ -19,6 +20,7 @@ export type ShotAssetReferenceContext = {
     selectionIssues?: string[];
     characterReferenceSnapshot?: Array<{ assetId: string; versionId: string; resourceId: string; lookId?: string; lookName?: string; reason?: string; locked: boolean }>;
     assetCatalog?: Array<{ id: string; title: string; category?: string }>;
+    excludedAssetIds?: string[];
 };
 
 export type ShotPromptAssetReference = {
@@ -30,6 +32,7 @@ export type ShotPromptAssetReference = {
     voiceDescription?: string;
     dialogue?: string;
     lookDescription?: string;
+    characterType?: CharacterAssetType;
 };
 
 export function buildShotAssetReferenceContext(detail: ProjectDetail, shotId: string): ShotAssetReferenceContext {
@@ -88,7 +91,7 @@ export function buildShotAssetReferenceContext(detail: ProjectDetail, shotId: st
             category: asset.category,
             imageIndex: index + 1,
             ...(audioIndex ? { audioIndex } : {}),
-            ...(asset.character ? { voiceDescription: characterVoiceDescription(asset, reference), lookDescription: [historical?.referenceProfile?.name, historical?.referenceProfile?.description].filter(Boolean).join("；") } : {}),
+            ...(asset.character ? { characterType: characterAssetType(asset.title, historical?.definition || asset.character.definition), voiceDescription: characterVoiceDescription(asset, reference), lookDescription: [historical?.referenceProfile?.name, historical?.referenceProfile?.description].filter(Boolean).join("；") } : {}),
         } satisfies ShotPromptAssetReference;
     });
 
@@ -117,6 +120,7 @@ export function buildShotAssetReferenceContext(detail: ProjectDetail, shotId: st
         assetReferences,
         resolvedCharacterVersions: entries.flatMap(({ asset, reference }) => asset.character ? [{ assetId: asset.id, versionId: reference.referencedVersion?.id || reference.assetVersionId || asset.character.versionId }] : []),
         assetCatalog: detail.assets.map((asset) => ({ id: asset.id, title: asset.title, category: asset.category })),
+        excludedAssetIds: [...new Set((detail.shotReferences || []).filter((reference) => reference.shotId === shotId && reference.status === "excluded" && reference.role === "reference").flatMap((reference) => boundAsset(reference)?.id || reference.referencedVersion?.assetId || []))],
     };
 }
 
@@ -126,7 +130,7 @@ export function resolveShotAssetMentionPrompt(prompt: string, context: ShotAsset
     const useAtMentions = options.interfaceType === "jiasu-video";
     const imageLabelByAssetId = new Map(context.mentionReferences.map((reference, index) => [reference.assetId, `${useAtMentions ? "@" : ""}图片${index + 1}`]));
     const assets = [...(context.assetCatalog || []), ...context.mentionReferences.flatMap((reference) => reference.assetId ? [{ id: reference.assetId, title: reference.title || reference.label }] : [])];
-    const normalized = pruneUnboundGeneratedCharacterReferences(normalizeProjectAssetMentions(prompt, assets), assets, context.mentionReferences.flatMap((reference) => reference.assetId ? [reference.assetId] : []));
+    const normalized = pruneUnboundGeneratedCharacterReferences(pruneExcludedProjectAssetReferences(normalizeProjectAssetMentions(prompt, assets), assets, context.excludedAssetIds), assets, context.mentionReferences.flatMap((reference) => reference.assetId ? [reference.assetId] : []));
     const unresolved = unresolvedProjectAssetMentions(normalized, assets, context.mentionReferences.flatMap((reference) => reference.assetId ? [reference.assetId] : []));
     if (unresolved.length) {
         const unresolvedDetails = unresolved.map(({ title, assetId }) => `${title}（资产 ID：${assetId}）`);
@@ -139,9 +143,9 @@ export function resolveShotAssetMentionPrompt(prompt: string, context: ShotAsset
     return [resolved.trim(), assetBlock, dialogueBlock].filter(Boolean).join("\n\n");
 }
 
-export function ensureShotAssetMentionPrompt(prompt: string, references: Array<Pick<CanvasResourceReference, "assetId" | "kind" | "label" | "title">>, catalog: ProjectAssetMentionAsset[] = [], boundAssetIds = references.flatMap((reference) => reference.assetId ? [reference.assetId] : [])) {
+export function ensureShotAssetMentionPrompt(prompt: string, references: Array<Pick<CanvasResourceReference, "assetId" | "kind" | "label" | "title">>, catalog: ProjectAssetMentionAsset[] = [], boundAssetIds = references.flatMap((reference) => reference.assetId ? [reference.assetId] : []), excludedAssetIds: string[] = []) {
     const assets = [...catalog, ...references.flatMap((reference) => reference.assetId ? [{ id: reference.assetId, title: reference.title || reference.label }] : [])];
-    const value = pruneUnboundGeneratedCharacterReferences(normalizeProjectAssetMentions(prompt, assets), assets, boundAssetIds).trim();
+    const value = pruneUnboundGeneratedCharacterReferences(pruneExcludedProjectAssetReferences(normalizeProjectAssetMentions(prompt, assets), assets, excludedAssetIds), assets, boundAssetIds).trim();
     if (!value) return "";
     const mentionedAssetIds = new Set(Array.from(value.matchAll(/@\[asset:([^\]]+)\]/g), (match) => match[1]));
     const missing = references.filter((reference): reference is typeof reference & { assetId: string } => Boolean(reference.assetId && !mentionedAssetIds.has(reference.assetId)));
@@ -163,11 +167,13 @@ export function compileShotAssetReferencePrompt(references: ShotPromptAssetRefer
         return [
             `- ${reference.title}：${media}`,
             reference.lookDescription ? `  本镜造型：${reference.lookDescription}` : "",
+            reference.category === "character" && (reference.characterType || characterAssetType(reference.title, {})) === "group" ? "  " + groupCharacterVideoRule(reference.title) : "",
             reference.voiceDescription ? `  声音画像：${reference.voiceDescription}` : "",
             reference.dialogue ? `  镜头台词：${reference.dialogue}` : "",
         ].filter(Boolean);
     });
-    return ["【资产参考】", "", ...lines].join("\n");
+    const designSheetRule = references.some((reference) => reference.category === "character" || reference.category === "environment" || reference.category === "prop") ? "参考图若为多视图设定图，仅提取本镜所需外观与空间，不复刻拼格、边框或重复主体，不新增人物或道具。" : "";
+    return ["【资产参考】", "", ...lines, ...(designSheetRule ? [designSheetRule] : [])].join("\n");
 }
 
 function projectAssetReferenceImage(asset: ProjectAsset, reference?: ShotAssetReference, closeUp = false): ReferenceImage | undefined {

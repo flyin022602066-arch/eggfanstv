@@ -17,6 +17,7 @@ const (
 
 type LinkProjectAssetRequest = localproject.LinkProjectAssetRequest
 type UpdateProjectAssetRequest = localproject.UpdateProjectAssetRequest
+type MergeProjectPropRequest = localproject.MergeProjectPropRequest
 type CreateAssetVersionRequest = localproject.CreateAssetVersionRequest
 type ProjectAssetFilter = localproject.ProjectAssetFilter
 type ConfirmProjectAssetCandidateRequest = localproject.ConfirmProjectAssetCandidateRequest
@@ -39,6 +40,10 @@ func (s *Service) LinkProjectAsset(userID string, projectID string, req LinkProj
 
 func (s *Service) UnlinkProjectAsset(userID string, projectID string, assetID string) error {
 	return s.projectDomain().UnlinkProjectAsset(userID, projectID, assetID)
+}
+
+func (s *Service) MergeProjectProp(userID, projectID, assetID string, req MergeProjectPropRequest) (localproject.MergeProjectPropResult, error) {
+	return s.projectDomain().MergeProjectProp(userID, projectID, assetID, req)
 }
 
 func (s *Service) UpdateProjectAsset(userID string, projectID string, assetID string, req UpdateProjectAssetRequest) (ProjectAssetSummary, error) {

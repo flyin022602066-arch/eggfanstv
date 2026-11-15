@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createReferenceTemplateRepository } from '../src/services/canvas-reference-templates';
+import { BUILTIN_REFERENCE_TEMPLATES } from '../src/lib/canvas/canvas-reference-builtins';
 import { setActiveUserScope } from '../src/lib/user-scope';
 import { captureUserScope } from '../src/lib/user-scope-guard';
+import { normalizeRuiCReferenceCatalog } from '../src/lib/canvas/canvas-reference-ruic';
 
 const png = () => new File([Uint8Array.from([137,80,78,71,13,10,26,10,0,1,2])], 'pose.png', { type: 'image/png' });
 const draft = { title: '站姿', role: 'pose' as const, tags: ['正面'] };
@@ -15,6 +17,59 @@ function fixture() {
 }
 afterEach(() => setActiveUserScope(null));
 describe('reference template repository', () => {
+    const ruicFace = () => normalizeRuiCReferenceCatalog('character', { images: [{ id: 'test-face', sec: 'face', hair: 'short', w: 1122, h: 1402, thumb: 'portrait/thumbs/test-face.webp', full_remote: 'https://ai-portrait-gallery.pages.dev/img/full/test-face.png' }] })[0];
+    test('RuiC selection imports original bytes only on apply and reuses the local full-size image', async () => {
+        const f = fixture();
+        const row = ruicFace();
+        let downloads = 0;
+        let uploaded: Blob | undefined;
+        const original = new Blob([png()], { type: 'image/png' });
+        const repository = createReferenceTemplateRepository({ ...f.deps, loadRuiC: async () => [row], readSource: async source => { expect(source.url).toEndWith('/img/full/test-face.png'); downloads++; return original; }, upload: async blob => { uploaded = blob; return { storageKey: 'resource:ruic-original', url: '/api/resources/ruic-original/file', width: 1122, height: 1402, mimeType: blob.type, bytes: blob.size }; } });
+        expect(await repository.listRuiC()).toHaveLength(1);
+        expect(downloads).toBe(0);
+        await repository.toggleFavorite(row.id);
+        expect((await repository.listRuiC())[0].favorite).toBe(true);
+        expect(await repository.list()).toHaveLength(0);
+        const [image] = await repository.materialize(row);
+        expect(uploaded).toBe(original);
+        expect(image.width).toBe(1122);
+        expect(image.height).toBe(1402);
+        await repository.materialize(row);
+        expect(downloads).toBe(1);
+        const copy = { ...row, id: 'my-face', source: undefined, title: '我的角色参考' };
+        await repository.save(copy);
+        expect((await repository.list())[0].title).toBe('我的角色参考');
+        await repository.remove(copy.id);
+        expect(await repository.list()).toHaveLength(0);
+        setActiveUserScope('ruic-other');
+        expect((await repository.listRuiC())[0].favorite).toBe(false);
+    });
+    test('source failures and canceled original downloads do not upload diagrams or thumbnails', async () => {
+        const f = fixture();
+        const row = ruicFace();
+        const failed = createReferenceTemplateRepository({ ...f.deps, readSource: async () => { throw new Error('original unavailable'); } });
+        await expect(failed.materialize(row)).rejects.toThrow('original unavailable');
+        const controller = new AbortController();
+        const canceled = createReferenceTemplateRepository({ ...f.deps, readSource: async () => { controller.abort(); return png(); } });
+        await expect(canceled.materialize(row, captureUserScope(), controller.signal)).rejects.toThrow();
+        expect(f.uploadCount).toBe(0);
+        expect(f.values.size).toBe(0);
+    });
+    test('builtins remain available without copying catalogs, preserve favorites and cannot be deleted as user files', async () => {
+        const f = fixture();
+        expect(await f.repository.listBuiltins()).toHaveLength(36);
+        expect(await f.repository.list()).toHaveLength(0);
+        const row = BUILTIN_REFERENCE_TEMPLATES[0];
+        await Promise.all([f.repository.toggleFavorite(row.id), f.repository.markUsed(row.id)]);
+        const reopened = createReferenceTemplateRepository(f.deps);
+        const saved = (await reopened.listBuiltins()).find(item => item.id === row.id)!;
+        expect(saved.favorite).toBe(true);
+        expect(saved.lastUsedAt).toBeDefined();
+        await expect(f.repository.remove(row.id)).rejects.toThrow('内置');
+        expect(f.uploadCount).toBe(0);
+        setActiveUserScope('another-user');
+        expect((await reopened.listBuiltins())[0].favorite).toBe(false);
+    });
     test('persists metadata and blobs across repository instances, without uploading on import', async () => {
         setActiveUserScope('a'); const f = fixture();
         const row = await f.repository.importImage(png(), draft);
@@ -23,6 +78,35 @@ describe('reference template repository', () => {
         expect((await reopened.imageBlob(row.items[0].mediaId)).size).toBe(png().size);
         expect(f.uploadCount).toBe(0);
         expect(f.values.size).toBe(2);
+    });
+    test('materializes builtin diagrams as reusable PNG resources and combines them without importing files', async () => {
+        const f = fixture();
+        let rendered = 0;
+        const repository = createReferenceTemplateRepository({ ...f.deps, renderBuiltin: async () => { rendered++; return png(); } });
+        const pose = BUILTIN_REFERENCE_TEMPLATES.find(row => row.kind === 'pose')!;
+        const face = BUILTIN_REFERENCE_TEMPLATES.find(row => row.kind === 'character')!;
+        const combo = { ...pose, id: 'builtin-combo', title: '姿势与面部结构', kind: 'combination' as const, items: [...pose.items, ...face.items] };
+        await repository.save(combo);
+        const first = await repository.materialize(combo);
+        expect(first).toHaveLength(2);
+        expect(first.every(image => image.mimeType === 'image/png')).toBe(true);
+        expect(rendered).toBe(2);
+        expect(f.uploadCount).toBe(2);
+        await repository.materialize(combo);
+        expect(rendered).toBe(2);
+        expect(f.uploadCount).toBe(2);
+        expect((await repository.imageBlob(pose.items[0].mediaId)).type).toBe('image/svg+xml');
+        await repository.remove(combo.id);
+        expect(await repository.list()).toHaveLength(0);
+        expect(await repository.listBuiltins()).toHaveLength(36);
+    });
+    test('builtin definitions are immutable while independent copies remain editable', async () => {
+        const f = fixture();
+        const builtin = BUILTIN_REFERENCE_TEMPLATES[0];
+        await expect(f.repository.save({ ...builtin, title: '覆盖内置' })).rejects.toThrow('另存');
+        await f.repository.save({ ...builtin, id: 'custom-copy', title: '我的设定' });
+        expect((await f.repository.list())[0].title).toBe('我的设定');
+        expect((await f.repository.listBuiltins())[0].title).toBe(builtin.title);
     });
     test('deduplicates image bytes, reuses uploaded resources and keeps project image after template removal', async () => {
         const f = fixture(); const a = await f.repository.importImage(png(), draft); const b = await f.repository.importImage(png(), { ...draft, title: '另一模板' });

@@ -48,6 +48,23 @@ test("library references establish the first identity and only supply clothing f
     expect(String((submissions[1]?.metadata?.promptTemplateVariables as Record<string, string>).角色设定)).toContain("不得替换基础版身份");
 });
 
+test("later looks explicitly replace removed accessories and rebuilt body parts while preserving the base face", async () => {
+    const base = version("base", 1, "early", "base-face");
+    base.definition = { appearance: "同一青年，胸背为生锈接口", clothing: "黑色背心，戴红色爆炸颈环", state: "早期清道夫" };
+    const later = version("combat", 2, "rebuilt");
+    later.definition = { appearance: "胸腔嵌入暗金核心，背部为合金脊椎", clothing: "黑色战损背心，爆炸颈环已去除", state: "已捏碎颈环，重铸脊椎" };
+    const { submissions, dependencies } = harness([base, later]);
+    await generateCharacterTurnaround({ ...input, definition: later.definition }, dependencies);
+    const request = submissions[0]!;
+    const variables = request.metadata!.promptTemplateVariables as Record<string, string>;
+    const changes = variables.角色设定.split("【本次造型编辑清单")[1]!;
+    for (const rule of ["爆炸颈环已去除", "暗金核心", "合金脊椎", "全部移除", "五官", "优先于参考图", "不得只改变标题"]) expect(changes).toContain(rule);
+    expect(changes).not.toContain("戴红色爆炸颈环");
+    expect(request.referenceImages?.map((image) => image.storageKey)).toEqual(["resource:base-face"]);
+    const prepared = await prepareBackendGenerationTask(request);
+    expect((prepared.input as { metadata: { promptTemplateVariables: Record<string, string> } }).metadata.promptTemplateVariables.角色设定).toBe(variables.角色设定);
+});
+
 test("expression sheets cannot establish the base identity and a legacy base survives later grouping", () => {
     const base = version("base", 1, "daily");
     const picture = version("base-image", 4, "daily", "base-face");
@@ -56,6 +73,64 @@ test("expression sheets cannot establish the base identity and a legacy base sur
     base.referenceProfile = undefined;
     const source = characterIdentitySource([version("combat", 3, "combat"), picture, expression, base], "hero", "combat");
     expect(source.image?.resourceId).toBe("base-face");
+});
+
+test("alternate image requests do not repeat copied base outfits and equipment as positive instructions", async () => {
+    const base = version("base", 1, "armored", "base-image");
+    base.definition = { appearance: "黑发方脸青年，穿黑甲戴头盔", physique: "挺拔", clothing: "黑甲", props: "头盔、胸甲", consistencyPrompt: "始终穿黑甲戴头盔", multiViewPrompt: "黑甲全身设定" };
+    const later = version("combat", 2, "unarmored");
+    later.definition = { ...base.definition, clothing: "卸除黑甲、头盔与胸甲，穿白衬衫", state: "无护甲" };
+    const { submissions, dependencies } = harness([base, later]);
+    await generateCharacterTurnaround({ ...input, definition: later.definition, promptOverride: "保留眼鼻口，左袖挽起" }, dependencies);
+    const request = submissions[0]!;
+    const setting = (request.metadata!.promptTemplateVariables as Record<string, string>).角色设定;
+    for (const stale of ["黑发方脸青年，穿黑甲戴头盔", "头盔、胸甲", "始终穿黑甲戴头盔", "黑甲全身设定"]) expect(setting).not.toContain(stale);
+    for (const required of ["卸除黑甲、头盔与胸甲，穿白衬衫", "无护甲", "左袖挽起", "本次造型编辑清单"]) expect(setting).toContain(required);
+    expect(request.referenceImages?.map((image) => image.storageKey)).toEqual(["resource:base-image"]);
+    expect(later.definition.props).toBe("头盔、胸甲");
+    const prepared = await prepareBackendGenerationTask(request);
+    expect((prepared.input as { metadata: { promptTemplateVariables: Record<string, string> } }).metadata.promptTemplateVariables.角色设定).toBe(setting);
+    later.definition = { ...later.definition, props: "铜怀表", consistencyPrompt: "白衬衫，保留左眼泪痣" };
+    await generateCharacterTurnaround({ ...input, definition: later.definition }, dependencies);
+    const edited = (submissions[1]!.metadata!.promptTemplateVariables as Record<string, string>).角色设定;
+    expect(edited).toContain("铜怀表");
+    expect(edited).toContain("保留左眼泪痣");
+});
+
+test("rebuilt look prompts cannot reintroduce inherited armor through shared appearance", async () => {
+    const base = version("base", 1, "armored", "base-image");
+    base.definition = { appearance: "黑发方脸青年，穿黑甲戴头盔", clothing: "黑甲", props: "头盔、胸甲" };
+    const later = version("combat", 2, "daily");
+    later.definition = { ...base.definition, clothing: "卸除护甲后穿白衬衫", props: "", consistencyPrompt: "当前造型常服：黑发方脸青年，穿黑甲戴头盔；卸除护甲后穿白衬衫", multiViewPrompt: "常服四视图：黑发方脸青年，穿黑甲戴头盔；白衬衫，左眼泪痣" };
+    const { submissions, dependencies } = harness([base, later]);
+    await generateCharacterTurnaround({ ...input, definition: later.definition }, dependencies);
+    const setting = (submissions[0]!.metadata!.promptTemplateVariables as Record<string, string>).角色设定;
+    expect(setting).not.toContain("穿黑甲戴头盔");
+    for (const required of ["卸除护甲后穿白衬衫", "左眼泪痣", "随身道具：无", "保留身体固有结构"]) expect(setting).toContain(required);
+    expect(submissions[0]!.config).toEqual({ ...config, count: "1" });
+});
+
+test("redrawing the base look keeps its own appearance and equipment", async () => {
+    const base = version("base", 1, "daily", "base-image");
+    base.definition = { appearance: "黑发方脸青年，穿黑甲戴头盔", clothing: "黑甲", props: "头盔、胸甲", consistencyPrompt: "始终穿黑甲戴头盔", multiViewPrompt: "黑甲全身设定" };
+    const { submissions, dependencies } = harness([base]);
+    await generateCharacterTurnaround({ ...input, versionId: "base", definition: base.definition }, dependencies);
+    const setting = (submissions[0]!.metadata!.promptTemplateVariables as Record<string, string>).角色设定;
+    for (const required of [base.definition.appearance, base.definition.props, base.definition.consistencyPrompt, base.definition.multiViewPrompt]) expect(setting).toContain(String(required));
+    expect(setting).not.toContain("本次造型编辑清单");
+});
+
+test("removing copied equipment preserves explicit new descriptions that mention its traces", async () => {
+    const base = version("base", 1, "daily", "base-image");
+    base.definition = { appearance: "黑发青年", clothing: "青衣", props: "玉佩" };
+    const later = version("combat", 2, "after");
+    later.definition = { ...base.definition, clothing: "卸除玉佩，换成白衣", consistencyPrompt: "白衣衣襟留下玉佩印痕；玉佩；右袖卷起" };
+    const { submissions, dependencies } = harness([base, later]);
+    await generateCharacterTurnaround({ ...input, definition: later.definition }, dependencies);
+    const setting = (submissions[0]!.metadata!.promptTemplateVariables as Record<string, string>).角色设定;
+    expect(setting).toContain("白衣衣襟留下玉佩印痕");
+    expect(setting).toContain("右袖卷起");
+    expect(setting).not.toContain("；玉佩；");
 });
 
 test("splitting an old mixed definition establishes the first independent look, not the unusable mixed record", () => {
@@ -84,6 +159,26 @@ test("the first look can create its base image and later looks never override it
     dependencies.loadCatalog = async () => ({ versions: [version("combat", 5, "combat"), version("base-image", 3, "daily", "original-face"), version("base", 1, "daily")], revision: 2 });
     await generateCharacterTurnaround(input, dependencies);
     expect(submissions[1]?.referenceImages?.map((image) => image.storageKey)).toEqual(["resource:original-face"]);
+});
+
+test("explicit base rebuilding uses the saved face preset, not the previously generated wrong face", async () => {
+    const presets = JSON.stringify({ female: { resourceId: "saved-face", assetIds: ["hero"], useAsIdentity: true } });
+    const { submissions, dependencies } = harness([version("base", 1, "daily", "old-face"), version("combat", 2, "combat")], presets);
+    await generateCharacterTurnaround({ ...input, versionId: "base" }, dependencies);
+    const submitted = submissions[0]!;
+    expect(submitted.referenceImages?.map((image) => image.storageKey)).toEqual(["resource:saved-face"]);
+    expect(submitted.metadata?.characterFacePresetResourceId).toBe("saved-face");
+    expect(submitted.metadata?.characterIdentityResourceId).toBeUndefined();
+    expect(String((submitted.metadata?.promptTemplateVariables as Record<string, string>).角色设定)).toContain("面孔身份依据");
+    await generateCharacterTurnaround(input, dependencies);
+    expect(submissions[1]?.referenceImages?.map((image) => image.storageKey)).toEqual(["resource:saved-face"]);
+    expect(submissions).toHaveLength(2);
+});
+
+test("explicit face identity cannot mix in a second identity", async () => {
+    const bound = harness([version("base", 1, "daily", "old-face")], JSON.stringify({ male: { resourceId: "face", assetIds: ["hero"], useAsIdentity: true } }));
+    await expect(generateCharacterTurnaround({ ...input, versionId: "base", referenceImage: { id: "other", name: "other", type: "image/png", dataUrl: "", storageKey: "resource:other" } }, bound.dependencies)).rejects.toThrow("移除");
+    expect(bound.submissions).toHaveLength(0);
 });
 
 test("explicit hairstyle and head changes stay in the editing instruction without losing identity", async () => {
@@ -137,4 +232,38 @@ test("models explicitly lacking reference support cannot silently generate a new
     const unsupported = { ...config, channels: [{ ...channel, modelProfiles: [{ model: "gpt-image-2", capabilityConfig }] }] };
     await expect(generateCharacterTurnaround({ ...input, config: unsupported }, dependencies)).rejects.toThrow("不支持参考图");
     expect(submissions).toHaveLength(0);
+});
+
+test("character image requests carry stable peer design context without mixing other faces", async () => {
+    const peer = { ...version("emperor", 1, "robe", "peer-face"), assetId: "emperor", title: "嬴政", definition: { appearance: "消瘦长脸，深眼窝", clothing: "玄色宽袖帝王袍" } };
+    const { submissions, dependencies } = harness([version("base", 1, "daily"), peer, { ...peer, versionId: "emperor-later", version: 2, definition: { appearance: "后续伤态" } }]);
+    await generateCharacterTurnaround({ ...input, versionId: "base" }, dependencies);
+    const variables = submissions[0]?.metadata?.promptTemplateVariables as Record<string, string>;
+    expect(variables.同项目角色设计参考).toContain("消瘦长脸");
+    expect(variables.同项目角色设计参考).toContain("嬴政");
+    expect(variables.同项目角色设计参考).not.toContain("后续伤态");
+    expect(submissions[0]?.referenceImages).toEqual([]);
+    expect(variables.角色设定).toContain("角色视觉辨识设计");
+    const prepared = await prepareBackendGenerationTask(submissions[0]!);
+    const metadata = (prepared.input as { metadata: { promptTemplateVariables: Record<string, string> } }).metadata;
+    expect(metadata.promptTemplateVariables.同项目角色设计参考).toBe(variables.同项目角色设计参考);
+});
+
+test("group actor generations ignore single-face presets and historical single-face images", async () => {
+    const versions = [version("base", 1, "daily", "old-single-face"), version("combat", 2, "combat")].map((item) => ({ ...item, title: "工人与食客群像", definition: { ...item.definition, characterType: "group" } }));
+    const { submissions, dependencies } = harness(versions, JSON.stringify({ male: { resourceId: "hero-face", assetIds: ["hero"], useAsIdentity: true } }));
+    await generateCharacterTurnaround({ ...input, name: "工人与食客群像", definition: versions[1]!.definition }, dependencies);
+    expect(submissions[0]?.referenceImages).toEqual([]);
+    expect(submissions[0]?.metadata?.characterIdentityResourceId).toBeUndefined();
+    expect(submissions[0]?.metadata?.characterFacePresetResourceId).toBeUndefined();
+    const variables = submissions[0]?.metadata?.promptTemplateVariables as Record<string, string>;
+    expect(variables.角色类型).toBe("group");
+    expect(variables.角色设定).toContain("不同面孔");
+    expect(variables.角色设定).not.toContain("基础版身份继承");
+    await generateCharacterTurnaround({ ...input, name: "工人与食客群像", definition: versions[1]!.definition, referenceImage: { id: "library-group", name: "群演服饰", storageKey: "resource:group-clothing", dataUrl: "", type: "image/png" } }, dependencies);
+    expect(submissions[1]?.referenceImages?.map((image) => image.storageKey)).toEqual(["resource:group-clothing"]);
+    expect(String((submissions[1]?.metadata?.promptTemplateVariables as Record<string, string>).角色设定)).toContain("不把其中一个人的脸复制给其他成员");
+    const calls: string[] = [];
+    await submitCharacterLookImages(versions, versions, async (target) => { calls.push(target.versionId); return { status: "queued" } as GenerationTask; }, async () => { throw new Error("group must not wait for base face"); });
+    expect(calls).toEqual(["base", "combat"]);
 });

@@ -2,9 +2,43 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // Bun 直接执行 TypeScript 测试时需要保留扩展名；生产 tsconfig 不包含 test/。
-import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue } from "../src/lib/model-capabilities.ts";
+import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeModelCapabilityConfig, normalizeVideoValue, type ModelCapabilityConfig } from "../src/lib/model-capabilities.ts";
 import { modelCompatibilityError } from "../src/lib/model-selection.ts";
+import { canvasConnectionError } from "../src/lib/canvas/canvas-connection-policy.ts";
+import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas.ts";
 import type { AiConfig } from "../src/stores/use-config-store.ts";
+
+test("nullable capability option lists normalize to empty lists without changing populated options", () => {
+    const profile = defaultModelCapabilityConfig("newapi", "test-model");
+    profile.image!.size.values = null as unknown as string[];
+    profile.image!.quality.values = null as unknown as string[];
+    profile.video!.ratios = null as unknown as string[];
+    profile.video!.resolutions = null as unknown as string[];
+    profile.video!.operations = null as unknown as string[];
+    const normalized = normalizeModelCapabilityConfig(profile);
+    assert.deepEqual(normalized.image!.size.values, []);
+    assert.deepEqual(normalized.image!.quality.values, []);
+    assert.deepEqual(normalized.video!.ratios, []);
+    assert.deepEqual(normalized.video!.resolutions, []);
+    assert.deepEqual(normalized.video!.operations, []);
+    assert.equal(profile.video!.ratios, null);
+    const complete = defaultModelCapabilityConfig("newapi", "test-model");
+    assert.deepEqual(normalizeModelCapabilityConfig(complete), complete);
+});
+
+test("image connection quick-create checks tolerate null option lists from another configured model", () => {
+    const capabilityConfig = defaultModelCapabilityConfig("newapi", "test-model");
+    const serialized = JSON.parse(JSON.stringify(capabilityConfig)) as ModelCapabilityConfig;
+    serialized.video!.resolutions = null as unknown as string[];
+    const config = {
+        channels: [{ id: "test", models: ["test-model"], modelProfiles: [{ model: "test-model", capability: "image", protocol: "newapi", capabilityConfig: serialized }] }],
+    } as AiConfig;
+    const source: CanvasNodeData = { id: "source", type: CanvasNodeType.Image, title: "Uploaded image", position: { x: 0, y: 0 }, width: 720, height: 450 };
+    for (const type of [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Text]) {
+        const target = { ...source, id: "pending", type };
+        assert.equal(canvasConnectionError(config, [source, target], [], { fromNodeId: source.id, toNodeId: target.id }), "");
+    }
+});
 
 test("FullVideo full models accept one or two image references as well as mixed video references", () => {
     for (const name of ["sd-native-full-2.0", "sd-native-full-2.5", "原生不卡人脸-全参2.0", "原生不卡人脸-全参2.5"]) {

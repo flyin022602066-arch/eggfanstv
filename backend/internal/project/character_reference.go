@@ -410,6 +410,12 @@ func (s *Service) ValidateCharacterReferenceSubmission(userID string, req Charac
 				for _, imageID := range imageResourceIDs {
 					if imageID == rep.ResourceID {
 						validImage = true
+						break
+					}
+					processed, processedErr := s.repo.ResourceForUser(userID, imageID)
+					if processedErr == nil && readyImageResource(processed) && processed.SourceResourceID == rep.ResourceID {
+						validImage = true
+						break
 					}
 				}
 			}

@@ -51,12 +51,13 @@ type Service struct {
 	operation  chan struct{}
 	runner     Runner
 	// Tokens and SMS contents stay in this workspace process, never browser storage.
-	token        string
-	orders       map[string]Order
-	lastPoll     map[string]int64
-	client       HTTPClient
-	mutableGuard func() error
-	ordersLoaded bool
+	token           string
+	orders          map[string]Order
+	lastPoll        map[string]int64
+	client          HTTPClient
+	mutableGuard    func() error
+	ordersLoaded    bool
+	lastAutoAccount string
 }
 
 func New(dataDir string, guard ...func() error) *Service {

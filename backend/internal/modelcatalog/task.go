@@ -5,12 +5,20 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/provider/doubaobrowser"
 )
 
 // ValidateConfiguredTask applies stored channel capability to a task. Workflow
 // providers are handled by the caller. lookup may be nil when no channel is
 // selected; the function then validates against request-declared capability.
 func ValidateConfiguredTask(input TaskInput, lookup ChannelModelLookup) (TaskInput, error) {
+	if input.Config.InterfaceType == doubaobrowser.Protocol {
+		if input.Mode != "video" || input.Config.ChannelID != "" || !doubaobrowser.IsModel(input.Config.Model) {
+			return input, kernel.BadAuthRequest("豆包浏览器只支持本地内置视频模型")
+		}
+		profile := DefaultModelCapabilityConfigForModel(doubaobrowser.Protocol, input.Config.Model)
+		return input, validateVideoTask(profile.Video, input)
+	}
 	if input.Config.InterfaceType == "hanbao-video" {
 		if input.Mode != "video" || input.Config.ChannelID != "" {
 			return input, kernel.BadAuthRequest("憨包只支持本地视频任务")
@@ -25,6 +33,9 @@ func ValidateConfiguredTask(input TaskInput, lookup ChannelModelLookup) (TaskInp
 		return input, nil
 	}
 	if input.Mode == "audio" {
+		return input, nil
+	}
+	if input.Mode == "video" && input.Config.InterfaceType == "nono-video" && input.Config.ChannelID == "" {
 		return input, nil
 	}
 	channelID := strings.TrimSpace(input.Config.ChannelID)
@@ -82,7 +93,14 @@ func ValidateConfiguredTask(input TaskInput, lookup ChannelModelLookup) (TaskInp
 }
 
 func isHanbaoModel(name string) bool {
-	return name == "seedance_v2.5" || name == "seedance_v2.0_mini" || name == "seedance_v2.0"
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "seedance_v2.5", "seedance 2.5", "seedance-2.5", "seedance2.5",
+		"seedance_v2.0_mini", "seedance 2.0 mini", "seedance-2.0-mini", "seedance2.0 mini",
+		"seedance_v2.0", "seedance 2.0", "seedance-2.0", "seedance2.0", "seedance 2.0 fast":
+		return true
+	default:
+		return false
+	}
 }
 
 func ValidateWorkflowProviderPromptLength(input TaskInput) error {

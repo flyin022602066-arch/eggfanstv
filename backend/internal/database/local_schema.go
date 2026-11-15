@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 18
+const CurrentSchemaVersion int64 = 19
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -93,6 +93,7 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 16, name: "assistant-durable-session-binding", apply: migrateAssistantSessions},
 		{version: 17, name: "project-character-face-presets", apply: migrateCharacterFacePresets},
 		{version: 18, name: "project-character-look-references", apply: migrateCharacterLookReferences},
+		{version: 19, name: "resource-source-reference", apply: migrateResourceSourceReference},
 	}
 }
 
@@ -528,7 +529,12 @@ func requireReconciledSchema(db *gorm.DB) error {
 		}
 	}
 	if version >= 18 {
-		return requireCharacterLookReferences(db)
+		if err := requireCharacterLookReferences(db); err != nil {
+			return err
+		}
+	}
+	if version >= 19 {
+		return requireResourceSourceReference(db)
 	}
 	return nil
 }

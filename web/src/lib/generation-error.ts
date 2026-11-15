@@ -76,7 +76,7 @@ export type GenerationFailureContext = {
 };
 
 export type GenerationFailureDiagnostics = {
-    source: "local_validation" | "upstream_http" | "upstream_response" | "local_result" | "local_response" | "client_result" | "unknown";
+    source: "local_validation" | "upstream_http" | "upstream_response" | "local_result" | "local_response" | "local_runtime" | "client_result" | "unknown";
     version?: string;
     platform?: string;
     executionResult?: string;
@@ -132,6 +132,8 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     malformed_response: { reason: "模型服务返回了无法解析的内容", action: "请查看详情并核对原任务状态后，再决定是否重新生成" },
     unknown: { reason: "生成失败", action: "请查看详情后再决定是否重试" },
 };
+
+const HANBAO_CANVAS_FAILURE = /画布连续 [1-9][0-9]* 次生成失败（[^\r\n]*）：这条先跳过，可稍后重试或换个账号/;
 
 const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
     local_storage_failed: "local_storage",
@@ -276,10 +278,16 @@ type ExtractedFields = {
 
 export function explainGenerationError(error: unknown, context: GenerationFailureContext = {}): GenerationFailureExplanation {
     const classified = classifyUnknown(error, context);
-    const copy = explanationCopy(classified);
+    const copy = { ...explanationCopy(classified) };
+    if (context.model?.startsWith("hanbao::") && classified.category === "submission_uncertain") {
+        copy.action = context.providerRequestId
+            ? "可在任务详情点击“取回结果”查询原任务并下载视频，不会重新生成"
+            : "憨包组件未取得完整任务号，暂时无法自动查询或取回。请到设置 → 模型配置 → 憨包账号管理，打开生成账号核对网页记录；确认原任务失败后再重新生成";
+    }
     const message = joinSentences(copy.reason, copy.action, debugIdLine(classified.taskId || context.taskId, classified.requestId || context.providerRequestId));
     const moderation = isModerationCategory(classified.category);
     const uncertain = classified.uncertain || classified.category === "submission_uncertain" || classified.category === "download_failed" || (classified.category === "timeout" && classified.status === 524);
+    const confirmedHanbao = classified.category === "async_failed" && copy.reason.startsWith("憨包") && HANBAO_CANVAS_FAILURE.test(copy.reason);
     return {
         category: classified.category,
         summary: classified.category === "local_storage" ? copy.reason : sanitizeProviderText(error instanceof Error ? error.message : typeof error === "string" ? error : providerPayloadMessage(error)),
@@ -292,7 +300,7 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
         taskId: sanitizeDebugId(classified.taskId || context.taskId) || undefined,
         retryable: Boolean(classified.retryable) && !uncertain && !moderation,
         uncertain,
-        blockAutomaticRetry: uncertain || moderation || !["throttled", "concurrency", "provider_unavailable", "cancelled"].includes(classified.category),
+        blockAutomaticRetry: uncertain || moderation || (!confirmedHanbao && !["throttled", "concurrency", "provider_unavailable", "cancelled"].includes(classified.category)),
         moderation,
     };
 }
@@ -379,7 +387,7 @@ export function formatGenerationDiagnostics(explanation: GenerationFailureExplan
         `原因：${sanitizeProviderText(explanation.reason)}`,
         explanation.action ? `下一步：${sanitizeProviderText(explanation.action)}` : "",
         `类别：${explanation.category}`,
-        `错误来源：${explanation.category === "local_storage" ? "本地任务存储" : ({ local_validation: "本地参数校验", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
+        `错误来源：${explanation.category === "local_storage" ? "本地任务存储" : ({ local_validation: "本地参数校验", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", local_runtime: "本地憨包组件", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
         `错误摘要：${sanitizeProviderText(evidence?.summary || context.errorSummary || explanation.summary || "") || "未记录"}`,
         evidence && ["upstream_http", "upstream_response"].includes(evidence.source) && sanitizeProviderCode(evidence.providerCode || "") ? `上游代码：${sanitizeProviderCode(evidence.providerCode || "")}` : "",
         evidence?.httpStatus && Number.isInteger(evidence.httpStatus) && evidence.httpStatus >= 100 && evidence.httpStatus <= 599 ? `HTTP 状态：${evidence.httpStatus}` : "",
@@ -562,6 +570,10 @@ function persistedTransportFailure(text: string): Classified | undefined {
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
+    if (text.startsWith("憨包") && HANBAO_CANVAS_FAILURE.test(text)) {
+        const ending = "：这条先跳过，可稍后重试或换个账号";
+        return { category: "async_failed", reason: sanitizeProviderText(text.slice(0, text.indexOf(ending) + ending.length)), action: "组件已确认生成失败；可检查参考素材，稍后重试或选择其他可用账号", retryable: false };
+    }
     if (text === LOCAL_TASK_ADMISSION_FAILURE.reason || text.startsWith(`${LOCAL_TASK_ADMISSION_FAILURE.reason}。`)) {
         return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
     }
@@ -641,6 +653,9 @@ function genericProviderCode(code: string) {
 
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
+    if (classified.category === "async_failed" && fields.message.startsWith("憨包") && HANBAO_CANVAS_FAILURE.test(fields.message)) {
+        return { ...classified, ...classifyText(fields.message) };
+    }
     classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b/i)?.[1]);
     const taskConstraint = persistedTaskConstraintCopy(fields.message) || taskConstraintCopy(`${fields.code} ${fields.message}`);
     if (taskConstraint && ["unknown", "invalid_params"].includes(classified.category))
