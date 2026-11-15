@@ -373,8 +373,8 @@ export function getProjectOverview(projectId: string) {
     return http.get<ProjectOverview>(`/projects/${encodeURIComponent(projectId)}/overview`);
 }
 
-export function getProjectUnitWorkspace(projectId: string, unitId: string, signal?: AbortSignal) {
-    return http.get<ProjectUnitWorkspace>(`/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/workspace`, { signal, timeout: 30_000 });
+export function getProjectUnitWorkspace(projectId: string, unitId: string, signal?: AbortSignal, expectedScope?: CapturedUserScope) {
+    return http.get<ProjectUnitWorkspace>(`/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/workspace`, { signal, expectedScope, timeout: 30_000 });
 }
 
 export function listProjectCanvases(projectId: string, page = 1, pageSize = 40) {
@@ -394,8 +394,8 @@ export function listProjectAssetsPage(projectId: string, options: { page?: numbe
     } }).then((page) => ({ ...page, assets: page.assets.map(normalizeProjectAsset) }));
 }
 
-export function listProjectAssets(projectId: string) {
-    return http.get<{ assets: ProjectAsset[] }>(`/projects/${encodeURIComponent(projectId)}/assets`).then((result) => ({ assets: result.assets.map(normalizeProjectAsset) }));
+export function listProjectAssets(projectId: string, expectedScope?: CapturedUserScope) {
+    return http.get<{ assets: ProjectAsset[] }>(`/projects/${encodeURIComponent(projectId)}/assets`, { expectedScope }).then((result) => ({ assets: result.assets.map(normalizeProjectAsset) }));
 }
 
 export function listProjectAssetCandidates(projectId: string, options: { page?: number; pageSize?: number; unitId?: string; status?: string; category?: string; query?: string } = {}) {
@@ -641,8 +641,8 @@ export function listChapterApplyReceipts(projectId: string, taskIds: string[], o
     });
 }
 
-export function confirmProjectAssetCandidate(projectId: string, candidateId: string, assetId?: string) {
-    return http.post<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/asset-candidates/${encodeURIComponent(candidateId)}/confirm`, { assetId: assetId || "" });
+export function confirmProjectAssetCandidate(projectId: string, candidateId: string, assetId?: string, expectedScope?: CapturedUserScope) {
+    return http.post<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/asset-candidates/${encodeURIComponent(candidateId)}/confirm`, { assetId: assetId || "" }, { expectedScope });
 }
 
 export function updateWorkflowStep(projectId: string, stepId: string, input: { status: string; outputJson?: string; error?: string }) {

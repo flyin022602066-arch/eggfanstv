@@ -1,8 +1,23 @@
 import { expect, spyOn, test } from "bun:test";
-import { extractChapterAssets } from "../src/pages/projects/detail/project-chapter-ai";
+import { extractChapterAssets, reviewChapterAssets } from "../src/pages/projects/detail/project-chapter-ai";
 import * as canvasGeneration from "../src/lib/canvas/canvas-project-generation";
 import { useConfigStore } from "../src/stores/use-config-store";
 import { chapterAssetsFromGenerationTask, chapterStoryboardFromGenerationTask } from "../src/pages/projects/detail/project-chapter-ai";
+
+test("batch review submits its own task with the original chapter and first-pass inventory, allowing no omissions", async () => {
+    const run = spyOn(canvasGeneration, "runBackendCanvasGenerationTask").mockImplementation(async (input) => {
+        input.onTaskCreated?.({ id: "review-task", type: "canvas_text", status: "succeeded", prompt: "", attempts: 1, createdAt: "", updatedAt: "" });
+        return { text: JSON.stringify({ characters: [], scenes: [], props: [] }) };
+    });
+    try {
+        const inventory = { characters: [], scenes: [{ name: "旧屋", description: "旧屋", prompt: "旧屋" }], props: [] };
+        const result = await reviewChapterAssets({ projectId: "p", projectName: "测试", chapterId: "u", chapterTitle: "第一集", sourceText: "林夏走进旧屋。", projectStyle: "写实", config: { ...useConfigStore.getInitialState().config, model: "offline" } }, inventory, { batchId: "batch-1" });
+        expect(result).toMatchObject({ ...inventory, scenes: [], taskId: "review-task" });
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(run.mock.calls[0]![0].metadata).toMatchObject({ chapterBatchId: "batch-1", chapterBatchPhase: "review", promptTemplateVariables: { 章节正文: "林夏走进旧屋。", 资产复核清单: JSON.stringify(inventory) } });
+        expect(run.mock.calls[0]![0].nodeId).toContain("chapter-batch:");
+    } finally { run.mockRestore(); }
+});
 
 test("提取携带项目全部角色和造型，不把总库当本章出镜证据", async () => {
     const run = spyOn(canvasGeneration, "runBackendCanvasGenerationTask").mockImplementation(async (input) => {
@@ -27,6 +42,17 @@ test("合法空 JSON 不是有效的章节资产提取结果", async () => {
     try {
         await expect(extractChapterAssets({ projectId: "p", projectName: "测试", chapterId: "u", chapterTitle: "序章", sourceText: "人物介绍：林夏，青年女子，短发。", projectStyle: "写实", config: { ...useConfigStore.getInitialState().config, model: "offline" } })).rejects.toThrow("未识别到任何角色、场景或道具");
         expect(run).toHaveBeenCalledTimes(1);
+    } finally { run.mockRestore(); }
+});
+
+test("batch first-pass empty JSON still receives its one coverage review instead of abandoning paid output", async () => {
+    const run = spyOn(canvasGeneration, "runBackendCanvasGenerationTask").mockImplementation(async (input) => {
+        input.onTaskCreated?.({ id: "batch-empty-first", type: "canvas_text", status: "succeeded", prompt: "", attempts: 1, createdAt: "", updatedAt: "" });
+        return { text: JSON.stringify({ characters: [], scenes: [], props: [] }) };
+    });
+    try {
+        const result = await extractChapterAssets({ projectId: "p", projectName: "测试", chapterId: "u", chapterTitle: "第一集", sourceText: "林夏走进旧屋。", projectStyle: "写实", config: { ...useConfigStore.getInitialState().config, model: "offline" } }, { batchId: "batch" });
+        expect(result.characters).toEqual([]); expect(result.taskId).toBe("batch-empty-first");
     } finally { run.mockRestore(); }
 });
 

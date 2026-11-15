@@ -148,6 +148,8 @@ type ClientContext struct {
 	DomainProjectID    string `json:"domainProjectId,omitempty"`
 	ChapterID          string `json:"chapterId,omitempty"`
 	ChapterOperation   string `json:"chapterOperation,omitempty"`
+	ChapterBatchID     string `json:"chapterBatchId,omitempty"`
+	ChapterBatchPhase  string `json:"chapterBatchPhase,omitempty"`
 	ShotID             string `json:"shotId,omitempty"`
 	WorkflowStepID     string `json:"workflowStepId,omitempty"`
 	ArtifactType       string `json:"artifactType,omitempty"`

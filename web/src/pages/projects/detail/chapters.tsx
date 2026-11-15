@@ -90,6 +90,8 @@ import { ChapterSkillStatus, type ChapterSkillAttempt } from "./chapter-skill-st
 import { ChapterStoryboardRecoveryReview } from "./chapter-storyboard-recovery-review";
 import type { ProjectShotReplacementInput } from "./chapter-storyboard-production";
 import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
+import { ChapterBatchPanel } from "./chapter-batch-panel";
+import { chapterBatchIsActive, chapterBatchTask } from "./project-chapter-batch";
 
 const CHAPTER_ROW_HEIGHT = 62;
 const MAX_NOVEL_IMPORT_CHAPTERS = 2500;
@@ -128,6 +130,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
     activeChapterRef.current = { id: selectedId, dirty };
     const [characterExtractOpen, setCharacterExtractOpen] = useState(false);
     const [storyboardOpen, setStoryboardOpen] = useState(false);
+    const [batchRunning, setBatchRunning] = useState(false);
     const [chapterOperations, setChapterOperations] = useState<Record<string, ChapterOperation>>({});
     const [assetExtractionErrors, setAssetExtractionErrors] = useState<Record<string, string>>({});
     const [completedChapterOperations, setCompletedChapterOperations] = useState<Record<string, true>>({});
@@ -186,6 +189,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
     const serverChapterOperations = useMemo(() => {
         const operations = new Map<string, ChapterOperation>();
         for (const task of chapterTasksQuery.data || []) {
+            if (chapterBatchTask(task)) continue;
             if (task.status !== "queued" && task.status !== "running") continue;
             const identity = chapterTaskIdentity(task);
             if (!identity) continue;
@@ -501,6 +505,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         };
     };
     const extractCharacters = async () => {
+        if (chapterBatchIsActive(detail.project.id, captureUserScope())) { message.warning("本项目区间任务正在执行，请先暂停再单独提取"); return; }
         let operationUnitId = "";
         try {
             const input = chapterAnalysisInput(selectedTextModel);
@@ -535,6 +540,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         }
     };
     const createStoryboard = async () => {
+        if (chapterBatchIsActive(detail.project.id, captureUserScope())) { message.warning("本项目区间任务正在执行，请先暂停再单独生成分镜"); return; }
         const unit = selectedUnit;
         if (!unit) return message.warning("章节正文尚未加载完成");
         if (dirty) return message.warning("请先保存当前章节，再生成分镜");
@@ -702,6 +708,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         for (const task of chapterTasksQuery.data || []) {
             const identity = chapterTaskIdentity(task);
             if (!identity) continue;
+            if (chapterBatchTask(task) && (identity.kind === "characters" || chapterBatchIsActive(detail.project.id, captureUserScope()))) continue;
             const key = chapterOperationKey(identity.chapterId, identity.kind);
             if (!latestByOperation.has(key)) latestByOperation.set(key, { task, ...identity });
         }
@@ -750,6 +757,11 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                     const recovered = chapterStoryboardFromGenerationTask(completedTask);
                     const rows = recovered.rows;
                     queuePendingStoryboardRecovery({ taskId: completedTask.id, chapterId: taskChapterId, rows });
+                    if (chapterBatchTask(task)) {
+                        recoveredTaskIdsRef.current.add(task.id);
+                        message.info("区间任务有已生成分镜待核对，结果已保留，无需重新生成");
+                        continue;
+                    }
                     const approved = chapterStoryboardApprovalSnapshot(completedTask.inputJson);
                     const current = { revision: detail.project.revision, shotIds: detail.shots.filter((shot) => shot.unitId === taskChapterId).map((shot) => shot.id) };
                     if (approved && chapterStoryboardRecoveryDecision({ alreadyApplied: false, approved, current }).action === "apply") {
@@ -780,7 +792,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                 for (const item of pending) recoveringTaskIdsRef.current.delete(item.task.id);
             }
         })();
-    }, [chapterTasksQuery.data, detail]);
+    }, [chapterTasksQuery.data, detail, batchRunning]);
 
     const selectChapter = (unitId: string) => {
         if (unitId === selectedId) return;
@@ -841,6 +853,15 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                         <Tooltip title="添加章节"><Button type="text" size="small" icon={<Plus className="size-4" />} aria-label="添加章节" onClick={() => setCreateOpen(true)} /></Tooltip>
                     </div>
                 </div>
+                <ChapterBatchPanel projectId={detail.project.id} units={orderedUnits} disabled={dirty || detail.project.status === "archived" || Boolean(runningOperationCount)} onProgress={refreshProject} onBusy={setBatchRunning} prepare={() => {
+                    if (!configuredModelMatchesCapability(effectiveConfig, selectedTextModel, "text")) throw new Error("请选择可用的文本模型，不会自动切换模型");
+                    const config = { ...effectiveConfig, model: selectedTextModel, textModel: selectedTextModel };
+                    if (!isAiConfigReady(config, selectedTextModel)) throw new Error("请先完成文本模型渠道配置");
+                    if (skillsLoading) throw new Error("分镜技能仍在加载，请稍后再试");
+                    const style = resolveProjectCanvasStyle(detail.project.stylePresetId, detail.project.styleProfileJson);
+                    if (!style?.prompt.trim()) throw new Error("请先在项目设置中选择画风");
+                    return { config, skills: availableSkills, selectedSkillIds, projectStyle: { presetId: style.id, title: style.title, prompt: style.prompt, profileJson: detail.project.styleProfileJson }, storyboardMode, dialogueConstraintMode, systemPresentation: normalizeSystemPresentationSettings(systemPresentation) };
+                }} />
                 <div className="shrink-0 border-b border-border/60 p-2">
                     <label className="flex h-8 items-center gap-1.5 rounded-md border border-border/75 bg-background/55 px-2 focus-within:border-[var(--workspace-accent)] focus-within:ring-2 focus-within:ring-[var(--workspace-accent-soft)]">
                         <Search className="size-3.5 shrink-0 text-foreground/32" />
@@ -892,8 +913,8 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                             </div>
                             <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                                 {charactersGenerated && !characterOperation ? <Button size="small" icon={<Check className="size-3.5" />} disabled={dirty} onClick={() => showChapterAssets(selectedUnit.id)}>提取完成 · 查看资产</Button> : null}
-                                <Button size="small" icon={<UsersRound className="size-3.5" />} disabled={!selectedUnit || dirty || Boolean(characterOperation)} loading={Boolean(characterOperation)} onClick={() => setCharacterExtractOpen(true)} aria-label={characterOperation ? `提取角色、场景与道具，已运行 ${formatOperationElapsed(characterOperation.startedAt, operationNow)}` : "提取角色、场景与道具"}>{characterOperation ? `提取资产（已运行${formatOperationElapsed(characterOperation.startedAt, operationNow)}）` : charactersGenerated || selectedAssetTask?.status === "failed" ? "重新提取资产" : "提取角色、场景与道具"}</Button>
-                                <Button size="small" type="primary" icon={<Clapperboard className="size-3.5" />} disabled={!selectedUnit || dirty || Boolean(storyboardOperation)} loading={Boolean(storyboardOperation)} onClick={() => setStoryboardOpen(true)} aria-label={storyboardOperation ? `生成到分镜制作，已运行 ${formatOperationElapsed(storyboardOperation.startedAt, operationNow)}` : "生成到分镜制作"}>{storyboardOperation ? `生成到分镜制作（已运行${formatOperationElapsed(storyboardOperation.startedAt, operationNow)}）` : pendingStoryboardRecovery ? "生成到分镜制作（新结果待保存）" : storyboardGenerated ? "生成到分镜制作（已生成）" : "生成到分镜制作"}</Button>
+                                <Button size="small" icon={<UsersRound className="size-3.5" />} disabled={!selectedUnit || dirty || batchRunning || Boolean(characterOperation)} loading={Boolean(characterOperation)} onClick={() => setCharacterExtractOpen(true)} aria-label={characterOperation ? `提取角色、场景与道具，已运行 ${formatOperationElapsed(characterOperation.startedAt, operationNow)}` : "提取角色、场景与道具"}>{characterOperation ? `提取资产（已运行${formatOperationElapsed(characterOperation.startedAt, operationNow)}）` : charactersGenerated || selectedAssetTask?.status === "failed" ? "重新提取资产" : "提取角色、场景与道具"}</Button>
+                                <Button size="small" type="primary" icon={<Clapperboard className="size-3.5" />} disabled={!selectedUnit || dirty || batchRunning || Boolean(storyboardOperation)} loading={Boolean(storyboardOperation)} onClick={() => setStoryboardOpen(true)} aria-label={storyboardOperation ? `生成到分镜制作，已运行 ${formatOperationElapsed(storyboardOperation.startedAt, operationNow)}` : "生成到分镜制作"}>{storyboardOperation ? `生成到分镜制作（已运行${formatOperationElapsed(storyboardOperation.startedAt, operationNow)}）` : pendingStoryboardRecovery ? "生成到分镜制作（新结果待保存）" : storyboardGenerated ? "生成到分镜制作（已生成）" : "生成到分镜制作"}</Button>
                                 <Button size="small" type={dirty ? "primary" : "default"} icon={dirty ? <Save className="size-3.5" /> : <Check className="size-3.5" />} disabled={!selectedUnit || !dirty || !draftTitle.trim() || saveMutation.isPending} loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>{dirty ? "保存" : "已保存"}</Button>
                             </div>
                         </header>

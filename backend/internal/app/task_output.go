@@ -85,6 +85,8 @@ func taskClientContext(raw string) *TaskClientContext {
 			ShotID             string `json:"shotId"`
 			WorkflowStepID     string `json:"workflowStepId"`
 			ArtifactType       string `json:"artifactType"`
+			ChapterBatchID     string `json:"chapterBatchId"`
+			ChapterBatchPhase  string `json:"chapterBatchPhase"`
 		} `json:"metadata"`
 	}
 	if json.Unmarshal([]byte(raw), &input) != nil {
@@ -129,6 +131,8 @@ func taskClientContext(raw string) *TaskClientContext {
 	context.DomainProjectID = metadata.DomainProjectID
 	context.ChapterID = metadata.ChapterID
 	context.ChapterOperation = chapterOperation
+	context.ChapterBatchID = metadata.ChapterBatchID
+	context.ChapterBatchPhase = metadata.ChapterBatchPhase
 	return context
 }
 

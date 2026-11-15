@@ -67,6 +67,8 @@ export type GenerationTask = {
         domainProjectId?: string;
         chapterId?: string;
 		chapterOperation?: "characters" | "storyboard";
+        chapterBatchId?: string;
+        chapterBatchPhase?: "extract" | "review" | "storyboard";
 		shotId?: string;
 		workflowStepId?: string;
 		artifactType?: string;

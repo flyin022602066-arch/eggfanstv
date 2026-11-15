@@ -157,6 +157,10 @@ func TestTaskSummaryPreservesCanvasNodeWithoutExposingInput(t *testing.T) {
 }
 
 func TestTaskClientContextProjectsChapterOperations(t *testing.T) {
+	batch := taskClientContext(`{"metadata":{"domainProjectId":"project-1","chapterId":"chapter-1","operation":"chapter_character_breakdown","chapterBatchId":"batch-1","chapterBatchPhase":"review"}}`)
+	if batch == nil || batch.ChapterBatchID != "batch-1" || batch.ChapterBatchPhase != "review" {
+		t.Fatalf("missing batch task context: %+v", batch)
+	}
 	characters := taskClientContext(`{"metadata":{"domainProjectId":"project-1","chapterId":"chapter-1","operation":"chapter_character_breakdown"}}`)
 	if characters == nil || characters.DomainProjectID != "project-1" || characters.ChapterID != "chapter-1" || characters.ChapterOperation != "characters" {
 		t.Fatalf("character task context was not decoded: %+v", characters)

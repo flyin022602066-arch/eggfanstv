@@ -18,7 +18,7 @@ import { chapterStoryboardCinematographyRequirements, chapterStoryboardDurationP
 import type { ChapterStoryboardAsset, ChapterStoryboardCharacter } from "./chapter-storyboard-production";
 import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
 
-type ChapterAnalysisInput = {
+export type ChapterAnalysisInput = {
     projectId: string;
     projectName: string;
     chapterId: string;
@@ -35,6 +35,8 @@ type ChapterTaskOptions = {
     onTaskUpdate?: (task: GenerationTask) => void;
     onSkillLoadReport?: (report: SkillLoadReport[]) => void;
     expectedScope?: CapturedUserScope;
+    batchId?: string;
+    taskAttempt?: number;
 };
 
 export type ChapterTaskKind = "characters" | "storyboard";
@@ -161,6 +163,14 @@ export function chapterStoryboardRecoveryDecision(input: { alreadyApplied: boole
 }
 
 export async function extractChapterAssets(input: ChapterAnalysisInput, options?: ChapterTaskOptions): Promise<ChapterAssetBreakdown & { taskId: string }> {
+    return runChapterAssetExtraction(input, undefined, options);
+}
+
+export async function reviewChapterAssets(input: ChapterAnalysisInput, extracted: ChapterAssetBreakdown, options?: ChapterTaskOptions): Promise<ChapterAssetBreakdown & { taskId: string }> {
+    return runChapterAssetExtraction(input, extracted, options);
+}
+
+async function runChapterAssetExtraction(input: ChapterAnalysisInput, extracted: ChapterAssetBreakdown | undefined, options?: ChapterTaskOptions): Promise<ChapterAssetBreakdown & { taskId: string }> {
     const systemPresentation = normalizeSystemPresentationSettings(input.systemPresentation);
     const result = await runProjectTextTask(input, "chapter_character_breakdown", {
         项目名称: input.projectName,
@@ -173,8 +183,10 @@ export async function extractChapterAssets(input: ChapterAnalysisInput, options?
         系统角色名称: systemPresentation.characterName,
         系统角色形象: systemPresentation.characterAppearance,
         系统角色声音: systemPresentation.characterVoice,
+        ...(extracted ? { 资产复核清单: JSON.stringify(extracted) } : {}),
     }, options);
-    return { ...requireChapterAssetExtraction(parseChapterAssetBreakdown(result.text, input.sourceText, systemPresentation)), taskId: result.taskId };
+    const assets = parseChapterAssetBreakdown(result.text, input.sourceText, systemPresentation);
+    return { ...(extracted || options?.batchId ? assets : requireChapterAssetExtraction(assets)), taskId: result.taskId };
 }
 
 type ChapterStoryboardGenerationInput = {
@@ -287,6 +299,7 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
                 ...skillExecution.metadata,
                 approvedRevision: input.approvedRevision,
                 approvedShotIds: input.approvedShotIds.slice(),
+                ...(options?.batchId ? { chapterBatchId: options.batchId, chapterBatchPhase: "storyboard", clientOperationId: `chapter-batch:${options.batchId}:${input.chapterId}:storyboard:${options.taskAttempt || 0}` } : {}),
             },
         },
     }, options?.expectedScope ? { expectedScope: options.expectedScope } : undefined);
@@ -384,14 +397,16 @@ function appendProtectedSystemElement(prompt: string | undefined, element: strin
 async function runProjectTextTask(input: ChapterAnalysisInput, operation: string, promptTemplateVariables: Record<string, string>, options?: ChapterTaskOptions) {
     const model = input.config.textModel || input.config.model;
     let taskId = "";
+    const batchPhase = promptTemplateVariables.资产复核清单 ? "review" : "extract";
     const result = await runBackendCanvasGenerationTask({
         projectId: input.projectId,
-        nodeId: `${operation}:${input.chapterId}`,
+        nodeId: options?.batchId ? `chapter-batch:${options.batchId}:${input.chapterId}:${batchPhase}` : `${operation}:${input.chapterId}`,
         mode: "text",
         prompt: promptTemplateTaskPlaceholder("章节角色、场景与道具提取"),
         streamText: true,
         config: { ...input.config, model },
-        metadata: { domainProjectId: input.projectId, chapterId: input.chapterId, operation, promptTemplateOperation: PromptTemplateOperation.ChapterAssetsExtract, promptTemplateVariables },
+        metadata: { domainProjectId: input.projectId, chapterId: input.chapterId, operation, promptTemplateOperation: PromptTemplateOperation.ChapterAssetsExtract, promptTemplateVariables, ...(options?.batchId ? { chapterBatchId: options.batchId, chapterBatchPhase: batchPhase } : {}) },
+        ...(options?.batchId ? { clientOperationId: `chapter-batch:${options.batchId}:${input.chapterId}:${batchPhase}:${options.taskAttempt || 0}` } : {}),
         onTaskCreated: (task) => {
             taskId = task.id;
             options?.onTaskUpdate?.(task);

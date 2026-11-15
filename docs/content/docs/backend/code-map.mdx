@@ -59,6 +59,13 @@ Wails / local dev
 
 ## 硬边界
 
+### 章节区间流水线
+
+- `web/src/lib/chapter-batch.ts`：按集串行资产、单轮覆盖复核、合并与分镜依赖调度；各集各阶段独立状态。
+- `web/src/pages/projects/detail/project-chapter-batch.ts`：用户隔离断点、任务结果复用、现有候选确认与分镜写入；正文和镜头快照冲突保护。
+- `web/src/pages/projects/detail/chapter-batch-panel.tsx`：范围、模式、逐集进度、暂停和继续入口，不强制导航。
+- `backend/internal/prompts/prompt_template_defaults.go`：仅在明确提供首轮资产清单时追加覆盖复核要求，不改变单集提取规则或供应商参数。
+
 ### 工作流资产导入导出
 
 - `web/src/lib/asset-workflows.ts`：按稳定画布 ID 及资源关联识别工作流，收集当前文本和媒体快照。
