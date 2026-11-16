@@ -70,15 +70,26 @@ export type CharacterSelectionShot = {
     busy: boolean;
 };
 
-export function characterSelectionShots(workspace: ProjectUnitWorkspace, assets: ProjectAsset[]): CharacterSelectionShot[] {
+export function characterSelectionShots(workspace: ProjectUnitWorkspace, assets: ProjectAsset[], onlyShotId?: string): CharacterSelectionShot[] {
     const busy = new Set(workspace.tasks.filter((task) => task.status === "queued" || task.status === "running").map((task) => task.clientContext?.shotId));
-    return workspace.shots.filter((shot) => !workspace.unit?.id || !shot.unitId || shot.unitId === workspace.unit.id).sort((a, b) => a.position - b.position).map((shot) => {
-        const revision = workspace.shotRevisions.find((item) => item.id === shot.currentRevisionId);
+    const revisions = new Map(workspace.shotRevisions.map((revision) => [revision.id, revision]));
+    const characters = assets.filter((asset) => asset.category === "character");
+    const assetsById = new Map(characters.map((asset) => [asset.id, asset]));
+    const primaryAssets = new Map(characters.map((asset) => [asset.primaryVersionId, asset]));
+    const references = new Map<string, ShotAssetReference[]>();
+    for (const ref of workspace.shotReferences) {
+        const refs = references.get(ref.shotId) || [];
+        refs.push(ref);
+        references.set(ref.shotId, refs);
+    }
+    return workspace.shots.filter((shot) => (!onlyShotId || shot.id === onlyShotId) && (!workspace.unit?.id || !shot.unitId || shot.unitId === workspace.unit.id)).sort((a, b) => a.position - b.position).map((shot) => {
+        const revision = revisions.get(shot.currentRevisionId || "");
         const context = shotAssetContext(revision?.actionBeatsJson);
-        const excludedAssetIds = new Set(workspace.shotReferences.filter((ref) => ref.shotId === shot.id && ref.role === "reference" && ref.status === "excluded").flatMap((ref) => referenceAssetId(ref) || assets.find((asset) => asset.primaryVersionId === ref.assetVersionId)?.id || []));
-        const matched = matchProjectShotCharacters(assets.filter((asset) => !excludedAssetIds.has(asset.id)), { ...revision, plotDescription: revision?.plotDescription || shot.description, ...context, chapterSourceText: workspace.unit?.sourceText });
+        const shotReferences = references.get(shot.id) || [];
+        const excludedAssetIds = new Set(shotReferences.filter((ref) => ref.role === "reference" && ref.status === "excluded").flatMap((ref) => referenceAssetId(ref) || primaryAssets.get(ref.assetVersionId)?.id || []));
+        const matched = matchProjectShotCharacters(characters.filter((asset) => !excludedAssetIds.has(asset.id)), { ...revision, plotDescription: revision?.plotDescription || shot.description, ...context, chapterSourceText: workspace.unit?.sourceText });
         const visibleAssetIds = matched.map((match) => match.asset.id).filter((assetId) => !excludedAssetIds.has(assetId));
-        const refs = workspace.shotReferences.filter((ref) => ref.shotId === shot.id && ref.role === "reference" && ref.status === "linked" && (ref.asset?.category === "character" || assets.some((asset) => asset.id === ref.referencedVersion?.assetId && asset.category === "character")) && (!isAutomaticShotAssetReference(ref) || visibleAssetIds.includes(referenceAssetId(ref) || "")));
+        const refs = shotReferences.filter((ref) => ref.role === "reference" && ref.status === "linked" && (ref.asset?.category === "character" || assetsById.has(ref.referencedVersion?.assetId || "")) && (!isAutomaticShotAssetReference(ref) || visibleAssetIds.includes(referenceAssetId(ref) || "")));
         return {
             shotId: shot.id, revisionId: shot.currentRevisionId || "", position: shot.position,
             text: [revision?.plotDescription || shot.description, revision?.action, revision?.imagePrompt, revision?.videoPrompt, revision?.dialogue, revision?.continuityNotes].filter(Boolean).join("\n"),
@@ -91,6 +102,10 @@ export function characterSelectionShots(workspace: ProjectUnitWorkspace, assets:
 }
 
 export function referenceAssetId(ref: ShotAssetReference) { return ref.referencedVersion?.assetId || ref.asset?.id; }
+
+export function characterReferenceStateKey(references: ShotAssetReference[]) {
+    return references.map((ref) => [ref.id, ref.assetVersionId, ref.status, ref.selectionLocked, ref.selectionStatus, ref.selectionSource, ref.selectionRevisionId].join(":")).sort().join(",");
+}
 
 export function characterReferenceNeedsReview(ref: ShotAssetReference, revisionId: string) {
     return ref.selectionStatus === "pending" || Boolean(ref.selectionSource === "auto" && !ref.selectionLocked && ref.selectionRevisionId !== revisionId);

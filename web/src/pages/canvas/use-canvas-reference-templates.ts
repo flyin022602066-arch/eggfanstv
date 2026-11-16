@@ -11,6 +11,9 @@ import { isCanvasNodeGenerating } from '@/lib/canvas/canvas-node-task-state';
 import { applyCanvasConnectionPromptSync } from '@/lib/canvas/canvas-resource-references';
 import type { CanvasConnection, CanvasNodeData } from '@/types/canvas';
 import type { Asset } from '@/stores/use-asset-store';
+import { bindCanvasNodeResourceAsset } from '@/lib/canvas/canvas-node-asset';
+import { ensureCanvasResourceAssetBindings } from '@/services/project-asset-sync';
+import { useCanvasStore } from '@/stores/canvas/use-canvas-store';
 
 type Options = { projectId: string; assets?: Asset[]; nodesRef: MutableRefObject<CanvasNodeData[]>; connectionsRef: MutableRefObject<CanvasConnection[]>; setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>; setConnections: Dispatch<SetStateAction<CanvasConnection[]>>; enabled: boolean; onApplied?: (nodeId: string) => void };
 export function useCanvasReferenceTemplates({ projectId, assets = [], nodesRef, connectionsRef, setNodes, setConnections, enabled, onApplied }: Options) {
@@ -62,9 +65,21 @@ export function useCanvasReferenceTemplates({ projectId, assets = [], nodesRef, 
         verifyLimit(applyCanvasReferenceTemplate({ ...prepare(), template, images: previews, createId: nanoid }));
         const images = await referenceTemplateRepository.materialize(template, scope, signal);
         check();
-        const graph = applyCanvasReferenceTemplate({ ...prepare(), template, images, createId: nanoid });
+        const referenceNodeIds = template.items.map(() => nanoid());
+        const connectionIds = template.items.map(() => nanoid());
+        const buildGraph = () => {
+            const ids = template.items.flatMap((_, index) => [referenceNodeIds[index], connectionIds[index]]);
+            return applyCanvasReferenceTemplate({ ...prepare(), template, images, createId: () => ids.shift() || nanoid() });
+        };
+        const prepared = buildGraph();
+        verifyLimit(prepared);
+        const bound = await ensureCanvasResourceAssetBindings({ canvasId: projectId, domainProjectId: useCanvasStore.getState().openProject(projectId)?.projectId, nodes: prepared.nodes, signal, expectedScope: scope });
+        check();
+        const graph = buildGraph();
+        graph.nodes = graph.nodes.map(node => bindCanvasNodeResourceAsset(node, bound, []));
         verifyLimit(graph);
         check();
+        nodesRef.current = graph.nodes; connectionsRef.current = graph.connections;
         setNodes(graph.nodes); setConnections(graph.connections);
         onApplied?.(targetNodeId);
         message.success(images.some(image => image.pendingRemoteUpload) ? '模板已应用；图片暂存本机，尚未写入资源服务' : '参考模板已应用到当前节点');

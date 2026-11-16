@@ -13,7 +13,7 @@ import {
 } from "@/stores/use-config-store";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 
-export type DefaultModelKey = "imageModel" | "videoModel" | "textModel" | "audioModel" | "assistantModel";
+export type DefaultModelKey = "imageModel" | "videoModel" | "textModel" | "textFallbackModel" | "audioModel" | "assistantModel";
 
 type CapabilityRow = {
     kind: "capability";
@@ -36,6 +36,7 @@ const rows: Array<CapabilityRow | AssistantRow> = [
     { kind: "capability", id: "image", capability: "image", modelKey: "imageModel", title: "默认生图模型", icon: Image },
     { kind: "capability", id: "video", capability: "video", modelKey: "videoModel", title: "默认视频模型", icon: Film },
     { kind: "capability", id: "text", capability: "text", modelKey: "textModel", title: "默认文本模型", icon: MessageSquareText },
+    { kind: "capability", id: "text-fallback", capability: "text", modelKey: "textFallbackModel", title: "文本兜底模型", icon: MessageSquareText },
     { kind: "assistant", id: "assistant", modelKey: "assistantModel", title: "助手模型", icon: Bot },
     { kind: "capability", id: "audio", capability: "audio", modelKey: "audioModel", title: "默认音频模型", icon: AudioLines },
 ];
@@ -48,7 +49,9 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
         <div className="model-default-settings">
             {rows.map((row) => {
                 const isAssistant = row.kind === "assistant";
-                const models = isAssistant ? assistantOptions : filterModelsByCapability(config.models, row.capability, config.channels);
+                const isFallback = row.modelKey === "textFallbackModel";
+                const candidates = isAssistant ? assistantOptions : filterModelsByCapability(config.models, row.capability, config.channels);
+                const models = isFallback ? candidates.filter((model) => resolveModelChannel(config, model).enabled !== false) : candidates;
                 const selected = isAssistant ? assistantModel : config[row.modelKey];
                 const groups = !isAssistant && row.capability === "video"
                     ? groupModelsByDisplayName(config, models)
@@ -61,6 +64,7 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                     return { value: model, label, searchLabel: `${label} ${channel}`, channel };
                 });
                 if (isAssistant) options.unshift({ value: "", label: "跟随默认文本模型", searchLabel: "跟随默认文本模型", channel: "" });
+                if (isFallback) options.unshift({ value: "", label: "不启用兜底", searchLabel: "不启用兜底", channel: "" });
                 const unavailable = isAssistant ? Boolean(config.assistantModel && !selected) : Boolean(selected && !options.some((option) => option.value === selected));
                 const value = unavailable ? undefined : isAssistant && !config.assistantModel ? "" : options.some((option) => option.value === selected) ? selected : undefined;
                 const Icon = row.icon;
@@ -68,11 +72,15 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                     <section key={row.id} className="model-default-setting-row" aria-labelledby={`default-${row.id}-title`}>
                         <div className="model-default-setting-label">
                             <Icon className="size-4 shrink-0 text-foreground/50" />
-                            <h3 id={`default-${row.id}-title`}>{row.title}</h3>
+                            <div className="min-w-0">
+                                <h3 id={`default-${row.id}-title`}>{row.title}</h3>
+                                {isFallback ? <p className="mt-1 text-xs text-foreground/50" id="text-fallback-description">最终提示词检查或自动润色调用失败时使用，不切换视频模型</p> : null}
+                            </div>
                         </div>
                         <div className="model-default-setting-control">
                             <Select
                                 aria-label={row.title}
+                                aria-describedby={isFallback ? "text-fallback-description" : undefined}
                                 className="model-default-select"
                                 value={value}
                                 options={options}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button, Dropdown, Popconfirm } from "antd";
 import { characterAssetType } from "@/lib/character-asset-type";
 import { MoveRight, Pencil, Plus, Trash2, UserRound, Volume2 } from "lucide-react";
@@ -8,21 +8,34 @@ import { characterReferenceImage } from "@/lib/character-look-selection";
 import { resourceStorageKey } from "@/services/api/resources";
 import { getCharacterReferenceCatalog } from "@/services/api/project-character-references";
 import { useQuery } from "@tanstack/react-query";
+import { captureUserScope } from "@/lib/user-scope-guard";
 import type { Project, ProjectAsset } from "@/services/api/projects";
 import { ProjectCharacterLooksPanel } from "./project-character-looks-panel";
 
 export function ProjectCharacterWorkspace({ project, assets, chapterLabels, folderItems, removingId, onCreate, onEdit, onVoice, onPreview, onMove, onRemove, onSaved }: { project: Project; assets: ProjectAsset[]; chapterLabels: Map<string, string>; folderItems: Array<{ key: string; label: string }>; removingId?: string; onCreate: () => void; onEdit: (asset: ProjectAsset) => void; onVoice: (asset: ProjectAsset) => void; onPreview: (asset: ProjectAsset) => void; onMove: (asset: ProjectAsset, folderId: string) => void; onRemove: (asset: ProjectAsset) => Promise<unknown>; onSaved: () => Promise<unknown> }) {
     const [selectedId, setSelectedId] = useState(assets[0]?.id);
     const selected = assets.find((asset) => asset.id === selectedId) || assets[0];
-    const catalog = useQuery({ queryKey: ["project", project.id, "character-reference-catalog"], queryFn: () => getCharacterReferenceCatalog(project.id) });
+    const catalog = useQuery({ queryKey: ["project", project.id, "character-reference-catalog"], queryFn: ({ signal }) => getCharacterReferenceCatalog(project.id, captureUserScope(), signal), staleTime: 5_000 });
+    const lookCounts = useMemo(() => {
+        const versionsByAsset = new Map<string, NonNullable<typeof catalog.data>["versions"]>();
+        for (const version of catalog.data?.versions || []) {
+            const versions = versionsByAsset.get(version.assetId) || [];
+            versions.push(version);
+            versionsByAsset.set(version.assetId, versions);
+        }
+        return new Map([...versionsByAsset].map(([assetId, versions]) => {
+            const groups = characterLookGroups(versions);
+            return [assetId, { total: groups.length, pending: groups.filter((group) => group.pending.length).length }];
+        }));
+    }, [catalog.data]);
     if (!selected) return null;
     const chapters = selected.unitIds?.flatMap((id) => chapterLabels.get(id) || []) || [];
     return <div className="character-asset-workspace">
         <nav className="character-asset-list" aria-label="项目角色列表"><div className="character-asset-list-heading"><strong>角色列表</strong><Button size="small" type="text" icon={<Plus className="size-3.5" />} onClick={onCreate}>新增</Button></div>{assets.map((asset) => {
-            const groups = characterLookGroups(catalog.data?.versions.filter((version) => version.assetId === asset.id) || []);
+            const count = lookCounts.get(asset.id);
             const image = asset.character && characterReferenceImage(asset.character);
-            const pending = groups.filter((group) => group.pending.length).length;
-            return <button type="button" key={asset.id} className="character-asset-list-item" aria-pressed={selected.id === asset.id} onClick={() => setSelectedId(asset.id)}>{image ? <CachedResourceImage storageKey={resourceStorageKey(image.resourceId)} alt={asset.title} /> : <span className="character-asset-list-avatar"><UserRound className="size-5" /></span>}<span><strong title={asset.title}>{asset.title}</strong><small>{groups.length || asset.characterLookCount || 1} 套造型{pending ? ` · ${pending} 待确认` : ""}</small></span></button>;
+            const pending = count?.pending || 0;
+            return <button type="button" key={asset.id} className="character-asset-list-item" aria-pressed={selected.id === asset.id} onClick={() => setSelectedId(asset.id)}>{image ? <CachedResourceImage storageKey={resourceStorageKey(image.resourceId)} alt={asset.title} /> : <span className="character-asset-list-avatar"><UserRound className="size-5" /></span>}<span><strong title={asset.title}>{asset.title}</strong><small>{count?.total || asset.characterLookCount || 1} 套造型{pending ? ` · ${pending} 待确认` : ""}</small></span></button>;
         })}</nav>
         <div className="character-asset-detail"><div className="character-asset-detail-heading"><div><h3>{selected.title}</h3><p title={chapters.join("；")}>{chapters.join(" · ") || "未关联集数"}</p></div><div className="character-looks-actions">
             {characterAssetType(selected.title, selected.character?.definition || {}) === "group" ? <span className="text-xs text-foreground/55">群体演员 · 不同面孔</span> : null}

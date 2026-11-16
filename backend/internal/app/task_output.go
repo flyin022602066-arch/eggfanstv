@@ -26,6 +26,7 @@ func taskSummariesForOutput(tasks []model.Task) []TaskSummary {
 }
 
 func taskSummaryForOutput(task model.Task) TaskSummary {
+	task = normalizeImageTaskFailure(task)
 	task = generation.NormalizeHanbaoTaskFailure(task)
 	errorCode := persistedFailureErrorCode(task.Error, task.Stage)
 	if errorCode == string(generation.CategoryUnknown) && !isContentModerationFailure(task.Error) {
@@ -71,29 +72,36 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 func taskClientContext(raw string) *TaskClientContext {
 	var input struct {
 		Metadata struct {
-			Source             string `json:"source"`
-			SceneID            string `json:"sceneId"`
-			NodeID             string `json:"nodeId"`
-			CharacterVersionID string `json:"characterVersionId"`
-			ConversationID     string `json:"conversationId"`
-			MessageID          string `json:"messageId"`
-			BatchIndex         int    `json:"batchIndex"`
-			BatchCount         int    `json:"batchCount"`
-			DomainProjectID    string `json:"domainProjectId"`
-			ChapterID          string `json:"chapterId"`
-			Operation          string `json:"operation"`
-			ShotID             string `json:"shotId"`
-			WorkflowStepID     string `json:"workflowStepId"`
-			ArtifactType       string `json:"artifactType"`
-			ChapterBatchID     string `json:"chapterBatchId"`
-			ChapterBatchPhase  string `json:"chapterBatchPhase"`
+			VideoPromptPreflight struct {
+				Status string `json:"status"`
+			} `json:"videoPromptPreflight"`
+			VideoPromptRepairParentTaskID string `json:"videoPromptRepairParentTaskId"`
+			Source                        string `json:"source"`
+			SceneID                       string `json:"sceneId"`
+			NodeID                        string `json:"nodeId"`
+			CharacterVersionID            string `json:"characterVersionId"`
+			ConversationID                string `json:"conversationId"`
+			MessageID                     string `json:"messageId"`
+			BatchIndex                    int    `json:"batchIndex"`
+			BatchCount                    int    `json:"batchCount"`
+			DomainProjectID               string `json:"domainProjectId"`
+			ChapterID                     string `json:"chapterId"`
+			Operation                     string `json:"operation"`
+			ShotID                        string `json:"shotId"`
+			WorkflowStepID                string `json:"workflowStepId"`
+			ArtifactType                  string `json:"artifactType"`
+			ChapterBatchID                string `json:"chapterBatchId"`
+			ChapterBatchPhase             string `json:"chapterBatchPhase"`
 		} `json:"metadata"`
 	}
 	if json.Unmarshal([]byte(raw), &input) != nil {
 		return nil
 	}
 	metadata := input.Metadata
-	context := &TaskClientContext{NodeID: metadata.NodeID}
+	context := &TaskClientContext{NodeID: metadata.NodeID, VideoPromptRepairParentTaskID: metadata.VideoPromptRepairParentTaskID}
+	if metadata.VideoPromptPreflight.Status == "changed" || metadata.VideoPromptPreflight.Status == "unchanged" {
+		context.VideoPromptPreflightStatus = metadata.VideoPromptPreflight.Status
+	}
 	if strings.HasPrefix(metadata.NodeID, "character-turnaround:") {
 		context.CharacterVersionID = metadata.CharacterVersionID
 	}
@@ -123,7 +131,7 @@ func taskClientContext(raw string) *TaskClientContext {
 		chapterOperation = "storyboard"
 	}
 	if chapterOperation == "" || metadata.DomainProjectID == "" || metadata.ChapterID == "" {
-		if context.NodeID == "" {
+		if context.NodeID == "" && context.VideoPromptPreflightStatus == "" {
 			return nil
 		}
 		return context
@@ -235,6 +243,7 @@ func truncateRunes(value string, limit int) string {
 }
 
 func taskForOutput(task model.Task) *model.Task {
+	task = normalizeImageTaskFailure(task)
 	task = generation.NormalizeHanbaoTaskFailure(task)
 	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(task.FailureDiagnostics)
 	task.InputJSON = publicTaskInputJSON(task.InputJSON)

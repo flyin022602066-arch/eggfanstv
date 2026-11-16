@@ -65,7 +65,7 @@ func RunDoubaoBrowserVideoTask(ctx context.Context, input Input, policy VideoPol
 		if err := doubaobrowser.Validate(request); err != nil {
 			return nil, err
 		}
-		if err := setExecutionStage(ctx, runtime, "等待豆包浏览器环境，保留两个空闲环境"); err != nil {
+		if err := setExecutionStage(ctx, runtime, "正在准备豆包浏览器独立环境并提交生成"); err != nil {
 			return nil, err
 		}
 		receipt, err := runtime.DoubaoBrowser.Submit(ctx, meta.UserID, request)
@@ -109,7 +109,20 @@ func QueryDoubaoBrowserVideoResult(ctx context.Context, id string, policy VideoP
 		return nil, state.Status, errors.New("豆包浏览器：" + defaultString(state.Reason, "上游生成失败"))
 	}
 	if state.Status != "success" || state.VideoURL == "" {
+		stage := "上游正在生成视频，自动查询原任务"
+		if state.Status == "preparing" {
+			stage = "浏览器正在准备画布和参考图，尚未提交生成"
+		}
+		if state.Status == "submission_pending" {
+			stage = "提交状态待确认，保留原环境自动核对"
+		}
+		if err := setExecutionStage(ctx, runtime, stage); err != nil {
+			return nil, state.Status, err
+		}
 		return nil, state.Status, nil
+	}
+	if err := setExecutionStage(ctx, runtime, "上游已成功，正在下载原视频"); err != nil {
+		return nil, state.Status, err
 	}
 	data, mime, err := RunVideoDownload(ctx, id, policy, func(ctx context.Context) ([]byte, string, error) { return GetExternalBinary(ctx, state.VideoURL) })
 	if err != nil {

@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { App, ConfigProvider } from "antd";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { WorkflowCharacterReferences } from "@/pages/projects/detail/workflow-character-references";
 import WorkflowProductionWorkbench from "@/pages/projects/detail/workflow-production-workbench";
@@ -32,12 +32,9 @@ const integratedDetail = {
 } as unknown as ProjectDetail;
 
 function IntegratedHarness() {
-    const [current, setCurrent] = useState(integratedDetail);
-    const refresh = async () => {
-        const workspace = await getProjectUnitWorkspace("p", "u");
-        setCurrent((previous) => ({ ...previous, ...workspace }));
-    };
-    useEffect(() => { void refresh(); }, []);
+    const workspaceQuery = useQuery({ queryKey: ["project", "p", "unit-workspace", "u"], queryFn: ({ signal }) => getProjectUnitWorkspace("p", "u", signal) });
+    const current = { ...integratedDetail, ...workspaceQuery.data };
+    const refresh = async () => { await workspaceQuery.refetch(); };
     return <><output aria-label="当前提交角色参考">{JSON.stringify(buildShotAssetReferenceContext(current, "s").characterReferenceSnapshot)}</output><WorkflowProductionWorkbench activeStage="video" detail={current} projectId="p" unitId="u" selectedShot={current.shots[0]} onSelectShot={() => {}} onRefresh={refresh} onAddShot={() => {}} addingShot={false} /></>;
 }
 

@@ -14,7 +14,7 @@ import { normalizeSd2FaceMaskMode, usesHanbaoLocalFaceMask, usesSd2LocalFaceMask
 import { normalizeDoubaoBrowserFaceMaskMode } from "@/lib/doubao-browser";
 import { prepareJiasuFaceMaskedImage } from "@/services/jiasu-face-mask";
 import { portraitGenerationError, resolveVideoOperation } from "@/lib/model-selection";
-import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { configuredModelMatchesCapability, logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { buildBackendToolRequests, type ResponseFunctionTool, type ResponseInputMessage, type ToolChoice, type ToolResponseResult } from "@/services/api/image";
@@ -402,6 +402,7 @@ function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepa
             prompt,
             ...(workflow ? { execution: workflowPublicExecution(workflow) } : {}),
             config: backendProviderConfig(config, mode, prompt),
+            ...(mode === "video" && (config.textModel || config.textFallbackModel) ? { videoPromptRepair: { enabled: true, ...videoPromptTextCandidate(config, config.textModel), fallback: config.textFallbackModel && config.textFallbackModel !== config.textModel ? videoPromptTextCandidate(config, config.textFallbackModel) : null } } : {}),
             capabilityOptions: logicalModelId ? logicalCapabilityOptions(config, mode) : undefined,
             textHistory: options.textHistory,
             ...(mode === "text" ? { textOptions: { stream: options.streamText !== false, thinking: options.enableThinking === true } } : {}),
@@ -417,6 +418,12 @@ function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepa
             }),
         },
     };
+}
+
+function videoPromptTextCandidate(config: AiConfig, model: string) {
+    if (!configuredModelMatchesCapability(config, model, "text") || resolveModelChannel(config, model).enabled === false) return { modelSelection: model, configError: "所选文本模型或渠道不可用，请在模型配置中重新选择" };
+    const textConfig: AiConfig = { ...config, model, taskWorkflowProvider: "model" };
+    return { modelSelection: model, config: backendProviderConfig(textConfig, "text"), logicalModelId: logicalModelIDForConfig(textConfig) || undefined };
 }
 
 function generationMetadata(config: AiConfig, metadata?: Record<string, unknown>) {

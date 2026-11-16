@@ -423,6 +423,7 @@ export type AiConfig = {
     imageModel: string;
     videoModel: string;
     textModel: string;
+    textFallbackModel: string;
     audioModel: string;
     /** 画布助手模型；为空表示跟随 `textModel`。取值与其他默认模型一致，形如 `channelId::modelId`。 */
     assistantModel: string;
@@ -483,6 +484,7 @@ export const defaultConfig: AiConfig = {
     imageModel: "",
     videoModel: "",
     textModel: "",
+    textFallbackModel: "",
     audioModel: "",
     assistantModel: "",
     audioVoice: "alloy",
@@ -837,6 +839,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             imageModel: normalizeSelectedModel(config.imageModel || model, channels, imageModels),
             videoModel: normalizeSelectedModel(config.videoModel, channels, videoModels, "sd-2.5-c"),
             textModel: normalizeSelectedModel(config.textModel || model, channels, textModels),
+            textFallbackModel: typeof config.textFallbackModel === "string" ? config.textFallbackModel.trim() : "",
             audioModel: normalizeSelectedModel(config.audioModel || defaultConfig.audioModel, channels, audioModels),
             // 助手模型允许为空（跟随默认文本模型），因此这里只保证类型，
             // 协议与渠道有效性由 `lib/assistant-model` 在读取时裁决。

@@ -8,6 +8,7 @@ import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio } from "@/types/media";
 import { characterReferenceImage, characterReferenceNeedsReview } from "@/lib/character-look-selection";
 import { characterAssetType, groupCharacterVideoRule, type CharacterAssetType } from "@/lib/character-asset-type";
+import { expandExcludedProjectAssetIds } from "@/lib/project-shot-asset-matching";
 
 export type ShotAssetReferenceContext = {
     boundAssetIds?: string[];
@@ -42,8 +43,9 @@ export function buildShotAssetReferenceContext(detail: ProjectDetail, shotId: st
     const selectionIssues: string[] = [];
     const shot = detail.shots?.find((item) => item.id === shotId);
     const shotRevision = detail.shotRevisions?.find((item) => item.id === shot?.currentRevisionId);
-    const references = (detail.shotReferences || []).filter((reference) => reference.shotId === shotId && reference.status === "linked" && reference.role === "reference");
     const boundAsset = (reference: ShotAssetReference) => reference.asset || detail.assets.find((asset) => asset.id === reference.referencedVersion?.assetId) || assetByVersionId.get(reference.assetVersionId);
+    const excludedAssetIds = expandExcludedProjectAssetIds(detail.assets, (detail.shotReferences || []).filter((reference) => reference.shotId === shotId && reference.status === "excluded" && reference.role === "reference").flatMap((reference) => boundAsset(reference)?.id || reference.referencedVersion?.assetId || []));
+    const references = (detail.shotReferences || []).filter((reference) => reference.shotId === shotId && reference.status === "linked" && reference.role === "reference" && !excludedAssetIds.includes(boundAsset(reference)?.id || ""));
     for (const reference of references) {
         const asset = boundAsset(reference);
         if (asset?.category !== "character") continue;
@@ -120,7 +122,7 @@ export function buildShotAssetReferenceContext(detail: ProjectDetail, shotId: st
         assetReferences,
         resolvedCharacterVersions: entries.flatMap(({ asset, reference }) => asset.character ? [{ assetId: asset.id, versionId: reference.referencedVersion?.id || reference.assetVersionId || asset.character.versionId }] : []),
         assetCatalog: detail.assets.map((asset) => ({ id: asset.id, title: asset.title, category: asset.category })),
-        excludedAssetIds: [...new Set((detail.shotReferences || []).filter((reference) => reference.shotId === shotId && reference.status === "excluded" && reference.role === "reference").flatMap((reference) => boundAsset(reference)?.id || reference.referencedVersion?.assetId || []))],
+        excludedAssetIds,
     };
 }
 

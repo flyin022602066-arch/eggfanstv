@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "../src/lib/canvas/canvas-document-rebase";
+import { isCanvasGenerationOnlyRevision, rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "../src/lib/canvas/canvas-document-rebase";
 import type { CanvasProject } from "../src/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
@@ -27,6 +27,57 @@ function project(nodes: CanvasNodeData[], revision: number, title = "画布"): C
         directorScenes: [],
     };
 }
+
+describe("isCanvasGenerationOnlyRevision", () => {
+    function fixture() {
+        const original = node("image-a", "图片", { taskId: "task-a", status: "loading", prompt: "原提示词", errorDetails: "旧错误" });
+        const base = project([original], 1);
+        const remote = project([{ ...original, metadata: { ...original.metadata, status: "success", taskStatus: "succeeded", taskProgress: 100, content: "/api/resources/result/file", storageKey: "resource:result", errorDetails: null } }], 2);
+        return { base, remote };
+    }
+
+    test("仅同任务成功结果及展示状态变化可自动合并", () => {
+        const { base, remote } = fixture();
+        expect(isCanvasGenerationOnlyRevision(base, remote)).toBe(true);
+        expect(base.nodes[0]?.metadata?.status).toBe("loading");
+        expect(remote.nodes[0]?.metadata?.status).toBe("success");
+    });
+
+    test("结果同时到达也不能掩盖人工修改或节点增删", () => {
+        const { base, remote } = fixture();
+        const result = remote.nodes[0]!;
+        const edits: CanvasProject[] = [
+            { ...remote, title: "别处修改的标题" },
+            { ...remote, nodes: [{ ...result, title: "别处修改的节点" }] },
+            { ...remote, nodes: [{ ...result, position: { x: 20, y: 30 } }] },
+            { ...remote, nodes: [{ ...result, metadata: { ...result.metadata, prompt: "别处修改的提示词" } }] },
+            { ...remote, nodes: [...remote.nodes, node("new-node", "外部新增")] },
+            { ...remote, nodes: [], connections: [] },
+            { ...remote, connections: [{ id: "new-edge", fromNodeId: result.id, toNodeId: "other" }] },
+        ];
+        for (const edited of edits) expect(isCanvasGenerationOnlyRevision(base, edited)).toBe(false);
+    });
+
+    test("不同任务、未绑定媒体及不同画布均不自动确认", () => {
+        const { base, remote } = fixture();
+        const result = remote.nodes[0]!;
+        expect(isCanvasGenerationOnlyRevision(base, { ...remote, id: "other-canvas" })).toBe(false);
+        expect(isCanvasGenerationOnlyRevision(base, { ...remote, revision: 1 })).toBe(false);
+        expect(isCanvasGenerationOnlyRevision(base, { ...remote, nodes: [{ ...result, metadata: { ...result.metadata, taskId: "other-task" } }] })).toBe(false);
+        expect(isCanvasGenerationOnlyRevision(base, project([node(result.id, result.title, { taskId: "task-a", status: "success", taskStatus: "succeeded" })], 2))).toBe(false);
+        expect(isCanvasGenerationOnlyRevision(base, { ...remote, nodes: [{ ...result, metadata: { ...result.metadata, status: "loading" } }] })).toBe(false);
+        expect(isCanvasGenerationOnlyRevision(project([node(result.id, result.title)], 1), remote)).toBe(false);
+    });
+
+    test("并行完成多个结果时保留未变化节点", () => {
+        const { base, remote } = fixture();
+        const pending = node("image-b", "另一张图", { taskId: "task-b", status: "loading" });
+        const unchanged = node("reference", "参考图", { content: "/reference.png" });
+        base.nodes.push(pending, unchanged);
+        remote.nodes.push({ ...pending, metadata: { ...pending.metadata, status: "success", assetId: "asset-b" } }, unchanged);
+        expect(isCanvasGenerationOnlyRevision(base, remote)).toBe(true);
+    });
+});
 
 describe("settleInFlightGenerationOverlay", () => {
     test("settle comment matches overlay empty-string exception", () => {

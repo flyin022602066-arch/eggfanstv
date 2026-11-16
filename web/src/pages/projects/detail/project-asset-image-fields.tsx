@@ -5,11 +5,16 @@ import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capab
 import { imageResolutionUsesQuality } from "@/lib/image-size-presets";
 import type { ProjectAssetImagePreset } from "@/lib/project-asset-image-preferences";
 import { configuredModelMatchesCapability, type AiConfig } from "@/stores/use-config-store";
+import { CHARACTER_DESIGN_TEMPLATES, CHARACTER_REFERENCE_LAYOUTS, characterDesignTemplate, characterReferenceLayout } from "@/lib/character-reference-templates";
 
-export function ProjectAssetImageFields({ config, value, onChange, promptLabel, promptScope = "category", disabled = false }: { config: AiConfig; value: ProjectAssetImagePreset; onChange: (value: ProjectAssetImagePreset) => void; promptLabel?: string; promptScope?: "asset" | "category"; disabled?: boolean }) {
+export function ProjectAssetImageFields({ config, value, onChange, promptLabel, promptScope = "category", disabled = false, character = false }: { config: AiConfig; value: ProjectAssetImagePreset; onChange: (value: ProjectAssetImagePreset) => void; promptLabel?: string; promptScope?: "asset" | "category"; disabled?: boolean; character?: boolean }) {
     const available = configuredModelMatchesCapability(config, value.model, "image");
     const profile = available ? modelCapabilityConfigFor(config, value.model).image : undefined;
     return <Form layout="vertical" disabled={disabled}>
+        {character ? <>
+            <Form.Item label="角色参考图格式" extra={characterReferenceLayout(value.characterLayoutId).description}><Select aria-label="角色参考图格式" value={characterReferenceLayout(value.characterLayoutId).id} options={CHARACTER_REFERENCE_LAYOUTS.map((item) => ({ value: item.id, label: item.name }))} onChange={(characterLayoutId) => onChange({ ...value, characterLayoutId })} /></Form.Item>
+            <Form.Item label="角色形象生成模板" extra="仅用于角色图设计，不改变提取范围、模型或剧情；项目明确设定、人脸参考与单套造型优先。群体与非人角色沿用专用规则。"><Select aria-label="角色形象生成模板" value={characterDesignTemplate(value.characterDesignTemplateId).id} options={CHARACTER_DESIGN_TEMPLATES.map((item) => ({ value: item.id, label: item.name }))} onChange={(characterDesignTemplateId) => onChange({ ...value, characterDesignTemplateId })} /></Form.Item>
+        </> : null}
         {value.model && !available ? <Alert className="mb-4" type="warning" showIcon title="已保存的模型当前不可用，请重新选择图片模型" /> : null}
         <Form.Item label="图片模型"><div className={disabled ? "pointer-events-none opacity-50" : undefined} inert={disabled}><ModelPicker config={config} value={value.model} capability="image" fullWidth placeholder="请选择可用图片模型" onChange={(model) => {
             const nextProfile = modelCapabilityConfigFor(config, model).image;

@@ -11,8 +11,10 @@ test("章节页直接生成到分镜制作，并通过共享选择器执行技�
     expect(source).toContain("approvedShotIds");
     expect(source).toContain("detail.project.revision");
     expect(source).toContain("/workflow/${unit.id}/video`");
-    expect(source).toContain('<SkillRuntimePicker profile="shortDrama"');
-    expect(source.match(/<ModelPicker config=\{effectiveConfig\} capability="text"/g)).toHaveLength(2);
+    const settings = await Bun.file(new URL("../src/pages/projects/detail/chapter-generation-settings.tsx", import.meta.url)).text();
+    expect(settings).toContain('<SkillRuntimePicker profile="shortDrama"');
+    expect(settings).toContain('<ModelPicker config={config} capability="text"');
+    expect(source.match(/<ChapterGenerationSettings /g)).toHaveLength(2);
     expect(source).toContain("chapterAnalysisInput(selectedTextModel)");
     expect(source).toContain("const textModel = selectedTextModel");
     expect(source).toContain("generateChapterStoryboard");

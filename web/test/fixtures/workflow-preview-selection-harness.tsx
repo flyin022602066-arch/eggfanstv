@@ -31,6 +31,7 @@ const videoCase = new URLSearchParams(location.search).get("videoCase");
 const queryCase = new URLSearchParams(location.search).has("queryCase");
 const ratioCase = new URLSearchParams(location.search).has("ratioCase");
 const cameraCase = new URLSearchParams(location.search).has("cameraCase");
+const workflowCase = new URLSearchParams(location.search).get("workflowCase");
 if (ratioCase) {
     await useConfigStore.persist.rehydrate();
     useConfigStore.getState().replaceConfig(normalizeConfigSnapshot({ config: { ...useConfigStore.getState().config, videoModel: "hanbao::seedance_v2.0" } }).config);
@@ -55,6 +56,32 @@ const detail: ProjectDetail = {
     units: [], canvases: [], canvasUnitLinks: [], assets: [], assetFolders: [], workflows: [], shots, shotRevisions: [],
     shotArtifacts: artifacts, shotReferences: [], assetCandidates: [], tasks,
 };
+if (workflowCase) {
+    detail.units = [{ id: unitId, title: "第7集", position: 0 }, { id: "other-chapter", title: "第8集", position: 1 }, { id: "empty-chapter", title: "第9集", position: 2 }] as ProjectDetail["units"];
+    detail.unitVideoProgress = { [unitId]: { shotCount: 4, readyVideoCount: 1 }, "other-chapter": { shotCount: 3, readyVideoCount: 2 }, "empty-chapter": { shotCount: 0, readyVideoCount: 0 } };
+    detail.shotArtifacts = [];
+    detail.tasks = tasks.filter((task) => task.id.endsWith("latest")).map((task, index) => ({ ...task,
+        model: "doubao-browser::seedance_v2.0", status: workflowCase === "retry" ? "failed" : "running",
+        stage: workflowCase === "retry" ? index === 1 ? "submission_unknown" : "生成提交前" : ["浏览器正在准备画布和参考图，尚未提交生成", "提交状态待确认，保留原环境自动核对", "上游已成功，正在下载原视频"][index],
+        error: workflowCase === "retry" ? index === 1 ? "提交结果未确认" : "参考图片无法读取" : undefined,
+        prompt: "人工修改的最终提示词-" + task.id,
+    }));
+}
+if (workflowCase === "reconcile") {
+    detail.tasks = ["a", "b", "c"].flatMap((name, index) => [
+        { ...tasks.find((task) => task.id === `shot-${name}-old`)!, model: "doubao-browser::seedance_v2.0", status: index === 2 ? "succeeded" : "running", stage: "提交状态待确认，正在核对原任务", updatedAt: "2026-11-16T10:00:00Z" },
+        { ...tasks.find((task) => task.id === `shot-${name}-latest`)!, model: index === 0 ? "nono::video" : "doubao-browser::seedance_v2.0", status: index === 0 ? "succeeded" : index === 1 ? "failed" : "running", stage: index === 0 ? "任务完成" : index === 1 ? "原任务回执缺失" : "上游正在生成", error: index === 1 ? "原任务没有有效回执，无法确认上游状态" : undefined },
+    ] as GenerationTask[]);
+    detail.shotArtifacts = artifacts.filter((artifact) => artifact.shotId === "shot-a" && artifact.selected).map((artifact) => ({ ...artifact, resourceId: "ready-video" }));
+}
+
+const episodeDownload = new URLSearchParams(location.search).get("episodeDownload");
+if (episodeDownload) {
+    detail.units = [{ id: unitId, title: "第7集" } as ProjectDetail["units"][number]];
+    detail.tasks = tasks.map((task) => ({ ...task, status: "succeeded" }));
+    detail.shotArtifacts = artifacts.map((artifact) => ({ ...artifact, resourceId: `resource-${artifact.shotId}-v${artifact.version}`, status: "ready" }));
+    if (episodeDownload !== "missing") detail.shotArtifacts.push({ ...artifacts[0]!, id: "empty-result", shotId: "shot-empty", resourceId: "resource-shot-empty-v1", version: 1, selected: true, status: "ready" });
+}
 
 if (videoCase) {
     detail.shotArtifacts = artifacts.map((artifact) => ({ ...artifact, resourceId: artifact.shotId === "shot-b" ? "landscape-video" : "portrait-video" }));
@@ -113,14 +140,15 @@ if (assetCase) {
 }
 
 function Harness() {
+    const [retryUnitId, setRetryUnitId] = useState(unitId);
     const [mergeOpen, setMergeOpen] = useState(false);
     const [shotId, setShotId] = useState(shots[0]!.id);
     const [activeStage, setActiveStage] = useState<"video" | "storyboard">("video");
-    const [savedTasks, setSavedTasks] = useState(assetCase ? [] : tasks);
+    const [savedTasks, setSavedTasks] = useState(assetCase ? [] : detail.tasks);
     const [savedArtifacts, setSavedArtifacts] = useState(detail.shotArtifacts);
     const [savedDetail, setSavedDetail] = useState(detail);
     const refresh = async () => {
-        if (!queryCase && !submissionCase) return;
+        if (!queryCase && !submissionCase && !["retry", "reconcile"].includes(workflowCase || "")) return;
         const response = await fetch(`/api/projects/${projectId}/units/${unitId}/workspace`);
         if (!response.ok) throw new Error("workspace refresh failed");
         const { data } = await response.json();
@@ -131,12 +159,16 @@ function Harness() {
     useEffect(() => { if (submissionCase) void refresh(); }, []);
     return <>
         <nav>{shots.map((shot) => <button key={shot.id} onClick={() => setShotId(shot.id)}>{shot.id}</button>)}
+            {workflowCase === "retry" ? <button onClick={() => setRetryUnitId((current) => current === unitId ? "retry-other-chapter" : unitId)}>切换重试测试章节</button> : null}
             <button onClick={() => setActiveStage(activeStage === "video" ? "storyboard" : "video")}>切换产物类型</button>
             <button onClick={() => setSavedTasks((current) => current.map((task) => ({ ...task, status: "succeeded" })))}>模拟任务完成</button>
+            {workflowCase === "reconcile" ? <button onClick={() => void refresh()}>刷新任务状态</button> : null}
+            {promptCase ? <button onClick={() => void refresh()}>刷新提示词任务</button> : null}
+            {workflowCase ? <button onClick={() => setSavedDetail((current) => ({ ...current, unitVideoProgress: { ...current.unitVideoProgress, "other-chapter": { shotCount: 3, readyVideoCount: 3 } } }))}>模拟其他集完成</button> : null}
         </nav>
         {propMergeCase ? <button onClick={() => setMergeOpen(true)}>合并重复道具</button> : null}
         {mergeOpen ? <ProjectPropMergeModal projectId={projectId} source={detail.assets.find((asset) => asset.id === "duplicate-prop")!} onClose={() => setMergeOpen(false)} onSaved={() => void refresh()} /> : null}
-        <WorkflowProductionWorkbench activeStage={activeStage} detail={{ ...savedDetail, tasks: savedTasks, shotArtifacts: savedArtifacts }} projectId={projectId} unitId={unitId}
+        <WorkflowProductionWorkbench activeStage={activeStage} detail={{ ...savedDetail, shots: savedDetail.shots.map((shot) => ({ ...shot, unitId: retryUnitId })), tasks: savedTasks, shotArtifacts: savedArtifacts }} projectId={projectId} unitId={retryUnitId}
             workflowStep={submissionCase ? { id: "fixture-video-step", stepKey: "video", status: "ready" } as never : undefined}
             selectedShot={savedDetail.shots.find((shot) => shot.id === shotId)} onSelectShot={setShotId} onRefresh={refresh} onAddShot={() => {}} addingShot={false} />
     </>;

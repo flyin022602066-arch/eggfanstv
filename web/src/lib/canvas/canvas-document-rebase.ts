@@ -1,5 +1,6 @@
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
+import { sameCanvasDocument } from "./canvas-content";
 
 export type CanvasDocumentRebaseResult = {
     project: CanvasProject;
@@ -127,6 +128,24 @@ function remoteHasBoundGenerationResult(node: CanvasNodeData | undefined) {
     const meta = node?.metadata;
     if (!meta || meta.status !== "success") return false;
     return nonemptyMediaRef(meta.content) || nonemptyMediaRef(meta.storageKey) || nonemptyMediaRef(meta.assetId);
+}
+
+export function isCanvasGenerationOnlyRevision(base: CanvasProject, remote: CanvasProject) {
+    if (base.id !== remote.id || (remote.revision ?? 0) <= (base.revision ?? 0)) return false;
+    const baseById = new Map(base.nodes.map((node) => [node.id, node]));
+    let hasResult = false;
+    const nodes = remote.nodes.map((node) => {
+        const previous = baseById.get(node.id);
+        if (!previous || !nodeTaskId(previous) || nodeTaskId(previous) !== nodeTaskId(node) || !remoteHasBoundGenerationResult(node)) return node;
+        hasResult = true;
+        const metadata = { ...node.metadata } as Record<string, unknown>;
+        for (const key of [...GENERATION_BIND_METADATA_KEYS, ...GENERATION_ERROR_METADATA_KEYS]) {
+            if (Object.prototype.hasOwnProperty.call(previous.metadata ?? {}, key)) metadata[key] = previous.metadata?.[key];
+            else delete metadata[key];
+        }
+        return { ...node, metadata };
+    });
+    return hasResult && sameCanvasDocument(base, { ...remote, nodes });
 }
 
 function hasTrueGenerationContentConflict(base: CanvasNodeData | undefined, local: CanvasNodeData, remote: CanvasNodeData) {

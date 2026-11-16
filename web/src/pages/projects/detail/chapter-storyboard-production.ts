@@ -56,32 +56,76 @@ export type StoryboardCharacterReferenceIssue = {
     candidates: CharacterReferenceVersion[];
 };
 
+export class StoryboardCharacterReferenceError extends Error {
+    constructor(public issues: StoryboardCharacterReferenceIssue[]) {
+        super(issues.map((issue) => `${issue.shotLabel} · 角色“${issue.characterName}”（资产 ID：${issue.assetId}）· 返回版本 ID：${issue.versionId}：${issue.reason}。请在核对窗口选择该角色的正确版本，无需重新生成。`).join("\n"));
+        this.name = "StoryboardCharacterReferenceError";
+    }
+}
+
+export function repairStoryboardCharacterReferences(rows: StoryboardRow[], detail: ProjectDetail, versions: CharacterReferenceVersion[]) {
+    const repairs: Array<{ shotLabel: string; characterName: string; previousVersionId: string; versionId: string }> = [];
+    const repairedRows = reviewStoryboardCharacterReferences(rows, detail, versions).rows.map((row, rowIndex) => ({
+        ...row,
+        characters: (row.characters || []).map((character) => {
+            const assetId = character.characterAssetId;
+            if (!assetId || !detail.assets.some((asset) => asset.id === assetId && asset.category === "character")) return character;
+            if (versions.some((version) => version.versionId === character.characterVersionId)) return character;
+            const candidates = versions.filter((version) => version.assetId === assetId && version.referenceProfile?.enabled !== false);
+            const text = [row.plotDescription, row.performanceBlocking, row.imageGenerationPrompt, row.videoMotionPrompt].filter(Boolean).join("\n").normalize("NFKC");
+            const named = candidates.filter((version) => {
+                const profile = version.referenceProfile;
+                const name = profile?.name.normalize("NFKC").trim();
+                return profile?.preferred && name && name.length >= 2 && !["默认造型", "基础造型"].includes(name) && text.includes(name)
+                    && !profile.excludeHints.split(/[，,、；;\n]/u).map((hint) => hint.trim()).filter(Boolean).some((hint) => text.includes(hint));
+            });
+            const selected = candidates.length === 1 ? candidates[0] : named.length === 1 ? named[0] : undefined;
+            if (!selected) return character;
+            repairs.push({ shotLabel: formatShotOrdinal(rowIndex), characterName: character.characterName, previousVersionId: character.characterVersionId || "", versionId: selected.versionId });
+            return { ...character, characterVersionId: selected.versionId };
+        }),
+    }));
+    const review = reviewStoryboardCharacterReferences(repairedRows, detail, versions);
+    return { ...review, repairs };
+}
+
 export function reviewStoryboardCharacterReferences(rows: StoryboardRow[], detail: ProjectDetail | undefined, versions: CharacterReferenceVersion[], selections: Record<string, string> = {}) {
     const issues: StoryboardCharacterReferenceIssue[] = [];
     const reviewedRows = rows.map((row, rowIndex) => ({
         ...row,
         characters: (row.characters || []).map((character, characterIndex) => {
-            if (!character.characterAssetId || !character.characterVersionId) return character;
-            const assetId = character.characterAssetId;
-            if (versions.some((version) => version.assetId === assetId && version.versionId === character.characterVersionId)) return character;
+            if (!character.characterAssetId) return character;
+            const assetIds = storyboardCharacterAssetIds(character, detail, versions);
+            const assetId = assetIds.length === 1 ? assetIds[0]! : character.characterAssetId;
+            if (assetIds.length === 1 && versions.some((version) => version.assetId === assetId && version.versionId === character.characterVersionId)) return assetId === character.characterAssetId ? character : { ...character, characterAssetId: assetId };
             const key = `${rowIndex}:${characterIndex}`;
-            const candidates = versions.filter((version) => version.assetId === assetId);
+            const candidates = versions.filter((version) => assetIds.includes(version.assetId) || !assetIds.length && detail?.assets.some((asset) => asset.id === version.assetId && asset.category === "character"));
             const selected = candidates.find((version) => version.versionId === selections[key]);
-            if (selected) return { ...character, characterVersionId: selected.versionId };
+            if (selected) return { ...character, characterAssetId: selected.assetId, characterVersionId: selected.versionId, ...(!assetIds.length ? { characterName: selected.title } : {}) };
             const owner = versions.find((version) => version.versionId === character.characterVersionId);
             issues.push({
                 key,
                 shotLabel: formatShotOrdinal(rowIndex),
                 characterName: detail?.assets.find((asset) => asset.id === assetId)?.title || character.characterName || assetId,
                 assetId,
-                versionId: character.characterVersionId,
-                reason: owner ? `该版本属于“${owner.title}”（资产 ID：${owner.assetId}），不属于该角色` : "该版本不存在或已被移除，可能是模型写错了版本 ID，并非已确认引用了其他角色",
+                versionId: character.characterVersionId || "",
+                reason: assetIds.length > 1 ? "角色资产 ID 无效且存在同名角色，请按资产 ID 明确选择本镜头角色及版本" : !assetIds.length ? "角色资产 ID 无效，当前项目没有名称或别名准确匹配的角色，请手动指定角色，不能仅凭版本 ID 绑定其他角色" : assetId !== character.characterAssetId ? "角色资产 ID 无效，已按本项目唯一角色名称定位，请选择该角色的正确版本" : owner ? `该版本属于“${owner.title}”（资产 ID：${owner.assetId}），不属于该角色` : character.characterVersionId ? "该版本不存在或已被移除，可能是模型写错了版本 ID，并非已确认引用了其他角色" : "未指定造型版本，请选择该角色的正确版本",
                 candidates,
             });
             return character;
         }),
     }));
     return { rows: reviewedRows, issues };
+}
+
+function storyboardCharacterAssetIds(character: StoryboardRow["characters"][number], detail: ProjectDetail | undefined, versions: CharacterReferenceVersion[]) {
+    const characters = detail ? detail.assets.filter((asset) => asset.category === "character").map((asset) => ({ id: asset.id, title: asset.title, definition: asset.character?.definition || candidateDefinition(asset.definitionJson || "{}") }))
+        : [...new Map(versions.map((version) => [version.assetId, { id: version.assetId, title: version.title, definition: version.definition }])).values()];
+    if (characters.some((asset) => asset.id === character.characterAssetId)) return [character.characterAssetId!];
+    const name = normalizeCharacterName(character.characterName || "");
+    if (!name) return [];
+    return characters.filter((asset) => [asset.title, ...(Array.isArray(asset.definition.aliases) ? asset.definition.aliases : [])]
+        .some((value) => typeof value === "string" && normalizeCharacterName(value) === name)).map((asset) => asset.id);
 }
 
 export function chapterStoryboardCharacters(detail: ProjectDetail, unitId?: string): ChapterStoryboardCharacter[] {
@@ -128,8 +172,10 @@ export function chapterStoryboardAssets(detail: ProjectDetail, versions: Charact
 }
 
 export function storyboardRowsToProjectShots(rows: StoryboardRow[], detail?: ProjectDetail, versions?: CharacterReferenceVersion[], matchOptions?: ShotAssetMatchOptions): ProjectShotReplacementInput[] {
-    const referenceIssues = versions ? reviewStoryboardCharacterReferences(rows, detail, versions).issues : [];
+    const referenceReview = versions ? reviewStoryboardCharacterReferences(rows, detail, versions) : undefined;
+    const referenceIssues = referenceReview?.issues || [];
     if (referenceIssues.length) throw new Error(referenceIssues.map((issue) => `${issue.shotLabel} · 角色“${issue.characterName}”（资产 ID：${issue.assetId}）· 返回版本 ID：${issue.versionId}：${issue.reason}。请在核对窗口选择该角色的正确版本，无需重新生成。`).join("\n"));
+    if (referenceReview) rows = referenceReview.rows;
     if (versions) for (const [rowIndex, row] of rows.entries()) {
         const seen = new Set<string>();
         for (const character of row.characters || []) {
@@ -162,12 +208,13 @@ export function storyboardRowsToProjectShots(rows: StoryboardRow[], detail?: Pro
         const durationMs = Math.max(1000, Math.round((Number(row.durationSeconds) || 1) * 1000));
         const matches = shotMatches[index]!;
         const scene = matches.find(({ asset }) => asset.category === "environment")?.asset;
-        const assetContext = scene || row.sceneName || row.propNames ? [{
+        const assetContext = scene || row.sceneName || row.propNames || row.referenceAssetIds ? [{
             type: "asset_context",
             sceneAssetId: scene?.id || "",
             sceneName: row.sceneName || scene?.title || "",
             sceneChange: Boolean(row.sceneChange),
             ...(row.propNames ? { propNames: row.propNames } : {}),
+            ...(row.referenceAssetIds ? { referenceAssetIds: row.referenceAssetIds } : {}),
         }] : [];
         const systemContext = row.systemElements?.length ? [{
             type: "system_elements",
@@ -235,7 +282,7 @@ function candidateDefinition(value: string): Record<string, unknown> {
 }
 
 function normalizeCharacterName(value: string) {
-    return value.trim().toLocaleLowerCase();
+    return value.normalize("NFKC").trim().toLocaleLowerCase();
 }
 
 function joinStoryboardAction(row: StoryboardRow, includeSystemElements = true) {

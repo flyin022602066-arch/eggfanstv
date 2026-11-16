@@ -88,7 +88,7 @@ export function applyCanvasReferenceTemplate(input: { nodes: CanvasNodeData[]; c
             node = { id: createId(), type: CanvasNodeType.Image, title: `${REFERENCE_TEMPLATE_LABELS[item.role]} · ${template.title}`, position, ...size, metadata: { nodeRole: 'result', resultOrigin: 'upload', content: image.url, storageKey: image.storageKey, naturalWidth: image.width, naturalHeight: image.height, mimeType: image.mimeType, bytes: image.bytes, referenceTemplateMediaId: item.mediaId, referenceTemplateStorageKey: image.storageKey } };
             graph.nodes.push(node);
         } else if (node.metadata?.storageKey !== image.storageKey || node.metadata.content !== image.url) {
-            node = { ...node, metadata: { ...node.metadata, storageKey: image.storageKey, content: image.url, referenceTemplateStorageKey: image.storageKey } };
+            node = { ...node, metadata: { ...node.metadata, ...(node.metadata?.storageKey !== image.storageKey ? { assetId: undefined } : {}), storageKey: image.storageKey, content: image.url, referenceTemplateStorageKey: image.storageKey } };
             graph.nodes = graph.nodes.map(value => value.id === node!.id ? node! : value);
         }
         const existing = graph.connections.find(edge => edge.fromNodeId === node.id && edge.toNodeId === targetNodeId);

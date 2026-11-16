@@ -14,6 +14,7 @@ const makeWorkspace = (unit) => {
 };
 const writes = [];
 const errors = [];
+let consolidations = 0;
 
 async function scenario({ initialFailures = [], delays = [], waitForShots = true } = {}) {
     const context = await browser.newContext();
@@ -27,6 +28,10 @@ async function scenario({ initialFailures = [], delays = [], waitForShots = true
         const request = route.request();
         const target = new URL(request.url());
         if (target.origin !== new URL(url).origin) return route.abort();
+        if (request.method() === "POST" && target.pathname.endsWith("/assets/merge-same-name-props")) {
+            consolidations++;
+            return route.fulfill({ json: { code: 0, data: { merged: 0, deferred: 0 }, msg: "" } });
+        }
         if (request.method() !== "GET") { writes.push(request.method() + " " + target.pathname); return route.abort(); }
         if (!target.pathname.startsWith("/api/")) return route.continue();
         counts.set(target.pathname, (counts.get(target.pathname) || 0) + 1);
@@ -38,14 +43,17 @@ async function scenario({ initialFailures = [], delays = [], waitForShots = true
             if (typeof failure === "object" && --failure.remaining === 0) failures.delete(target.pathname);
             return route.fulfill({ status, json: { code: status, reason: status === 403 ? "forbidden" : status === 404 ? "not_found" : "unavailable", msg: "测试读取失败", data: null } });
         }
-        let data = { assets: [], skills: [], tasks: [], total: 0 };
+        let data = { assets: [], versions: [], revision: project.revision, skills: [], tasks: [], total: 0 };
         if (target.pathname.endsWith("/core")) data = { project };
         if (target.pathname.endsWith("/units")) data = { units, canvasCounts: {} };
         if (target.pathname.endsWith("/workspace")) data = makeWorkspace(units.find((unit) => target.pathname.includes(unit.id)));
         return route.fulfill({ json: { code: 0, data, msg: "" } });
     });
     await page.goto(url);
-    if (waitForShots) await page.locator(".workflow-timeline-shot").nth(1).waitFor();
+    if (waitForShots) {
+        try { await page.locator(".workflow-timeline-shot").nth(1).waitFor(); }
+        catch (error) { console.log(JSON.stringify({ errors, writes, counts: [...counts], body: await page.locator("body").innerText() })); throw error; }
+    }
     return { context, page, failures, counts, refresh: () => page.evaluate(() => window.refreshProjectReads()) };
 }
 
@@ -84,7 +92,7 @@ try {
     {
         const { context, page, counts } = await scenario({ delays: [["/api/projects/read-project/core", 4_500], ["/api/projects/read-project/units/chapter-a/workspace", 4_500]] });
         assert.equal(counts.get("/api/projects/read-project/core"), 1, "a slow read must not timeout and retry at four seconds");
-        assert.equal(counts.get("/api/projects/read-project/units/chapter-a/workspace"), 1);
+        assert.equal(counts.get("/api/projects/read-project/units/chapter-a/workspace"), 2, "the workspace and character reference query each read once, without timeout retries");
         assert.equal(await page.getByText("项目不可用", { exact: true }).count(), 0);
         await context.close();
     }
@@ -121,6 +129,7 @@ try {
         await context.close();
     }
     assert.deepEqual(errors, []);
+    assert.ok(consolidations > 0, "project entry explicitly checks same-name props");
     assert.deepEqual(writes, [], "switching shots and recovering reads must never submit or modify tasks");
     console.log("PASS project read recovery: cached/initial/slow reads, automatic/manual retry, shot/chapter switching, 403/404 boundaries; no writes");
 } finally { await browser.close(); }

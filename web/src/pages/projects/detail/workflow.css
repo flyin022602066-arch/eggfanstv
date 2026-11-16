@@ -176,6 +176,7 @@
 .workflow-simple-list button > span:first-child { color: color-mix(in srgb, var(--foreground) 34%, transparent); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 .workflow-simple-list strong { display: block; overflow: hidden; font-size: var(--fs-caption); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-simple-list small { display: block; margin-top: 2px; color: color-mix(in srgb, var(--foreground) 38%, transparent); font-size: var(--fs-micro); }
+.workflow-simple-list small.workflow-episode-complete { color: var(--status-success); font-weight: 600; }
 
 .workflow-shot-editor {
     display: flex;
@@ -868,7 +869,8 @@ video.workflow-preview-media:is(:fullscreen, :-webkit-full-screen) {
     padding: 0 16px;
 }
 .workflow-shot-timeline > header strong { font-size: var(--fs-caption); font-weight: 650; }
-.workflow-shot-timeline > header span { margin-left: 8px; color: color-mix(in srgb, var(--foreground) 42%, transparent); font-size: var(--fs-micro); }
+.workflow-shot-timeline > header > div:first-child > span { margin-left: 8px; color: color-mix(in srgb, var(--foreground) 42%, transparent); font-size: var(--fs-micro); }
+.workflow-shot-timeline-actions { display: flex; flex-shrink: 0; align-items: center; gap: 12px; }
 
 .workflow-shot-track {
     display: flex;

@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { resolve } from "node:path";
+import postcss from "postcss";
+import tailwind from "@tailwindcss/postcss";
 
 let server: ReturnType<typeof Bun.serve>;
 
@@ -26,15 +28,51 @@ beforeAll(async () => {
     });
     if (!build.success) throw new Error(build.logs.join("\n"));
     const script = await build.outputs.find((output) => output.path.endsWith(".js"))!.text();
+    const globalPath = resolve(import.meta.dir, "../src/styles/globals.css");
+    const globalCss = await postcss([tailwind()]).process(await Bun.file(globalPath).text(), { from: globalPath });
+    const episodeCss = await Bun.file(resolve(import.meta.dir, "../node_modules/antd/dist/reset.css")).text() + "\n" + globalCss.css + "\n" + await Bun.file(resolve(import.meta.dir, "../src/pages/projects/detail/workflow.css")).text();
     server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
         const path = new URL(request.url).pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
+        if (path === "/episode-download.css") return new Response(episodeCss, { headers: { "Content-Type": "text/css" } });
         if (path === "/workflow.css") return new Response(Bun.file(resolve(import.meta.dir, "../src/pages/projects/detail/workflow.css")), { headers: { "Content-Type": "text/css" } });
         return new Response("<html><head><meta charset='utf-8'></head><body><div id='root'></div><script type='module' src='/harness.js'></script></body></html>", { headers: { "Content-Type": "text/html" } });
     } });
 }, 60000);
 
 afterAll(() => server?.stop(true));
+
+test("completed shots never regress to historical pending tasks after refresh or local stop", async () => {
+    const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/workflow-state-reconciliation-browser.mjs"), server.url.toString()], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    console.log(stdout);
+    if (code) throw new Error(stdout + stderr);
+    expect(code).toBe(0);
+}, 60000);
+
+test("episode progress, browser stages and failed-video retries remain accurate without live providers", async () => {
+    const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/workflow-progress-retry-browser.mjs"), server.url.toString()], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    console.log(stdout);
+    if (code) throw new Error(stdout + stderr);
+    expect(code).toBe(0);
+}, 60000);
+
+test("episode-download saves ordered original videos in one ZIP without generation requests", async () => {
+    const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/workflow-unit-video-download-browser.mjs"), server.url.toString()], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    console.log(stdout);
+    if (code) throw new Error(stdout + stderr);
+    expect(code).toBe(0);
+}, 60000);
+
+test("automatic prompt repair displays the actual full submission and protects later manual edits", async () => {
+    const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/workflow-prompt-repair-browser.mjs"), server.url.toString()], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    console.log(stdout);
+    if (code) throw new Error(stdout + stderr);
+    expect(code).toBe(0);
+}, 60000);
 
 test("manual final prompt survives failures and reloads and reaches the actual task payload unchanged", async () => {
     const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/workflow-final-prompt-browser.mjs"), server.url.toString()], { stdout: "pipe", stderr: "pipe" });

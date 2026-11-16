@@ -47,8 +47,8 @@ export function ChapterStoryboardRecoveryReview({ rows, detail, versions, impact
                 <p className="font-medium text-foreground">{issue.shotLabel} · {issue.characterName}</p>
                 <p className="break-all text-xs">资产 ID：{issue.assetId}<br />返回版本 ID：{issue.versionId}</p>
                 <p className="break-words">{issue.reason}</p>
-                {issue.candidates.length ? <Select className="w-full min-w-0" aria-label={`核对${issue.shotLabel}${issue.characterName}版本`} placeholder="请选择该角色的正确版本" value={versionSelections[issue.key]}
-                    options={issue.candidates.map((version) => ({ value: version.versionId, label: `v${version.version} · ${version.referenceProfile?.name || String(version.definition.clothing || version.definition.appearance || "基础造型").slice(0, 50)} · ID ${version.versionId.slice(0, 12)}` }))}
+                {issue.candidates.length ? <Select className="w-full min-w-0" aria-label={`核对${issue.shotLabel}${issue.characterName}版本`} placeholder="请选择本镜头角色及正确版本" value={versionSelections[issue.key]}
+                    options={issue.candidates.map((version) => ({ value: version.versionId, label: `${version.title} · v${version.version} · ${version.referenceProfile?.name || String(version.definition.clothing || version.definition.appearance || "基础造型").slice(0, 50)} · 资产 ${version.assetId} · 版本 ${version.versionId.slice(0, 12)}` }))}
                     onChange={(value) => setVersionSelections((current) => ({ ...current, [issue.key]: value }))} />
                     : <p>该角色没有可用版本，请先到“角色与资产”确认角色后重新打开核对。原分镜结果仍保留，不需要重新生成。</p>}
             </div>)}

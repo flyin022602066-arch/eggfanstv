@@ -435,12 +435,24 @@ func (s *Service) characterCard(userID string, asset *model.Asset) (CharacterCar
 }
 
 func (s *Service) characterVersionCard(userID string, version model.AssetVersion) (CharacterCardSummary, error) {
-	definition := map[string]any{}
-	if err := json.Unmarshal([]byte(version.DefinitionJSON), &definition); err != nil {
-		return CharacterCardSummary{}, err
-	}
 	stored, err := s.repo.AssetRepresentations(version.ID)
 	if err != nil {
+		return CharacterCardSummary{}, err
+	}
+	binding, bindingErr := s.repo.CharacterVoiceBinding(version.ID)
+	if bindingErr != nil && !errors.Is(bindingErr, gorm.ErrRecordNotFound) {
+		return CharacterCardSummary{}, bindingErr
+	}
+	var profile *model.VoiceProfile
+	if binding != nil {
+		profile, _ = s.repo.VoiceProfileForUser(userID, binding.VoiceProfileID)
+	}
+	return characterVersionCardFromData(version, stored, binding, profile)
+}
+
+func characterVersionCardFromData(version model.AssetVersion, stored []model.AssetRepresentation, binding *model.CharacterVoiceBinding, profile *model.VoiceProfile) (CharacterCardSummary, error) {
+	definition := map[string]any{}
+	if err := json.Unmarshal([]byte(version.DefinitionJSON), &definition); err != nil {
 		return CharacterCardSummary{}, err
 	}
 	representations := make([]CharacterRepresentationSummary, 0, len(stored))
@@ -457,17 +469,13 @@ func (s *Service) characterVersionCard(userID string, version model.AssetVersion
 	}
 	var voice *CharacterVoiceSummary
 	voiceStatus := "missing"
-	binding, bindingErr := s.repo.CharacterVoiceBinding(version.ID)
-	if bindingErr == nil && binding != nil {
-		profile, profileErr := s.repo.VoiceProfileForUser(userID, binding.VoiceProfileID)
-		if profileErr == nil && profile != nil && profile.Status == "active" {
+	if binding != nil {
+		if profile != nil && profile.Status == "active" {
 			voice = &CharacterVoiceSummary{Profile: voiceProfileSummary(*profile), Instructions: binding.Instructions}
 			voiceStatus = "ready"
 		} else {
 			voiceStatus = "unavailable"
 		}
-	} else if !errors.Is(bindingErr, gorm.ErrRecordNotFound) {
-		return CharacterCardSummary{}, bindingErr
 	}
 	return CharacterCardSummary{VersionID: version.ID, Version: version.Version, Definition: definition, Representations: representations, Voice: voice, VisualStatus: visualStatus, VoiceStatus: voiceStatus}, nil
 }

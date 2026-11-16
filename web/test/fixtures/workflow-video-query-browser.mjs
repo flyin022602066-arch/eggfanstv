@@ -30,10 +30,11 @@ try {
             return route.abort();
         }
         if (target.pathname.endsWith("/workspace")) return route.fulfill({ json: { code: 0, data: {
+            shots: [], shotRevisions: [], shotReferences: [],
             tasks: ["a", "b", "c"].map((shot) => ({ id: `shot-${shot}-latest`, projectId: "preview-project", type: "canvas_video", status: recovered && shot === "b" ? "succeeded" : "failed", prompt: "", attempts: 1, providerRequestId: shot === "a" ? "" : `api-shot-${shot}-latest`, error: recovered && shot === "b" ? "" : "提交结果未确认", createdAt: "2026-11-01T01:00:00Z", updatedAt: "2026-11-01T01:00:00Z", clientContext: { shotId: `shot-${shot}`, artifactType: "video" } })),
             shotArtifacts: recovered ? [{ id: "recovered-artifact", projectId: "preview-project", unitId: "preview-chapter", shotId: "shot-b", taskId: "shot-b-latest", type: "video", resourceId: "recovered-video", version: 1, status: "ready", selected: true, metadataJson: "{}", createdAt: "2026-11-01T01:00:00Z", updatedAt: "2026-11-01T01:00:00Z" }] : [],
         }, msg: "" } });
-        if (target.pathname.startsWith("/api/")) return route.fulfill({ json: { code: 0, data: { assets: [], skills: [], tasks: [], total: 0 }, msg: "" } });
+        if (target.pathname.startsWith("/api/")) return route.fulfill({ json: { code: 0, data: { assets: [], versions: [], revision: 1, shots: [], shotRevisions: [], shotArtifacts: [], shotReferences: [], skills: [], tasks: [], total: 0 }, msg: "" } });
         return route.continue();
     });
     await page.goto(url.toString());

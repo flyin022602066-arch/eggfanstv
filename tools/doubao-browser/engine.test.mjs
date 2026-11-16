@@ -99,6 +99,12 @@ test('failed original task preserves the upstream rejection message and business
   assert.equal(result.reason, '上游画布任务生成失败（业务码 2）：审核不通过,请修改后重试');
   assert.throws(() => collectResult({ id: 'item', asset: { status: 3, gen_task_info: { ...task, extras: { canvas_id: 'other' } } } }, checkpoint));
 });
+test('an active original node is not failed by an intermediate task business code', () => {
+  const checkpoint = { itemId: 'item', taskIds: { canvas_id: 'canvas', canvas_sub_id: 'sub' } };
+  const task = { code: 2, message: '暂未同步', extras: { canvas_id: 'canvas', canvas_sub_id: 'sub' } };
+  for (const status of [0, 1, '1']) assert.equal(collectResult({ id: 'item', asset: { status, gen_task_info: task } }, checkpoint).status, 'running');
+  assert.equal(collectResult({ id: 'item', asset: { status: 3, gen_task_info: task } }, checkpoint).status, 'failed');
+});
 test('failure messages redact credentials and URLs and remain bounded plain text', () => {
   const message = '请求被拒绝\nAuthorization: Bearer secret-access-token; api_key=private-key; https://cdn.example.test/video?signature=private-url ' + '额'.repeat(1000);
   const result = collectResult({ id: 'item', asset: { status: 3, gen_task_info: { code: 3, message } } }, { itemId: 'item' });

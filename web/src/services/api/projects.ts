@@ -267,6 +267,7 @@ export type ProjectDetail = {
     canvases: ProjectCanvas[];
     canvasUnitLinks: CanvasUnitLink[];
     unitCanvasCounts?: Record<string, number>;
+    unitVideoProgress?: Record<string, { shotCount: number; readyVideoCount: number }>;
     assets: ProjectAsset[];
     assetFolders: ProjectAssetFolder[];
     workflows: ProjectWorkflow[];
@@ -366,7 +367,7 @@ export function getProjectCore(id: string, expectedScope?: CapturedUserScope, si
 }
 
 export function listProjectUnits(projectId: string, signal?: AbortSignal) {
-    return http.get<{ units: ProjectUnit[]; canvasCounts: Record<string, number> }>(`/projects/${encodeURIComponent(projectId)}/units`, { signal, timeout: 30_000 });
+    return http.get<{ units: ProjectUnit[]; canvasCounts: Record<string, number>; videoProgress: NonNullable<ProjectDetail["unitVideoProgress"]> }>(`/projects/${encodeURIComponent(projectId)}/units`, { signal, timeout: 30_000 });
 }
 
 export function getProjectOverview(projectId: string) {
@@ -394,8 +395,8 @@ export function listProjectAssetsPage(projectId: string, options: { page?: numbe
     } }).then((page) => ({ ...page, assets: page.assets.map(normalizeProjectAsset) }));
 }
 
-export function listProjectAssets(projectId: string, expectedScope?: CapturedUserScope) {
-    return http.get<{ assets: ProjectAsset[] }>(`/projects/${encodeURIComponent(projectId)}/assets`, { expectedScope }).then((result) => ({ assets: result.assets.map(normalizeProjectAsset) }));
+export function listProjectAssets(projectId: string, expectedScope?: CapturedUserScope, signal?: AbortSignal) {
+    return http.get<{ assets: ProjectAsset[] }>(`/projects/${encodeURIComponent(projectId)}/assets`, { expectedScope, signal, timeout: 60_000 }).then((result) => ({ assets: result.assets.map(normalizeProjectAsset) }));
 }
 
 export function listProjectAssetCandidates(projectId: string, options: { page?: number; pageSize?: number; unitId?: string; status?: string; category?: string; query?: string } = {}) {
@@ -512,6 +513,10 @@ export function unlinkProjectAsset(projectId: string, assetId: string, signal?: 
 
 export function mergeProjectProp(projectId: string, assetId: string, input: { targetAssetId: string; expectedRevision: number }, expectedScope?: CapturedUserScope) {
     return http.post<{ asset: ProjectAsset; mergedShots: number }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/merge-prop`, input, { expectedScope });
+}
+
+export function mergeSameNameProjectProps(projectId: string, expectedScope?: CapturedUserScope) {
+    return http.post<{ merged: number; deferred: number }>(`/projects/${encodeURIComponent(projectId)}/assets/merge-same-name-props`, {}, { expectedScope, timeout: 60_000 });
 }
 
 export function updateProjectAssetCategory(projectId: string, assetId: string, category: AssetCategory, signal?: AbortSignal, expectedScope?: CapturedUserScope) {

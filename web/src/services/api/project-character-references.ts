@@ -1,5 +1,5 @@
 import { compactApiParams, http } from "./request";
-import type { CharacterCardSummary } from "./projects";
+import type { CharacterCardSummary, ProjectAsset } from "./projects";
 import type { CapturedUserScope } from "@/lib/user-scope-guard";
 
 export type CharacterReferenceProfile = {
@@ -34,8 +34,12 @@ export type CharacterReferenceChoice = {
 
 const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`;
 
-export function getCharacterReferenceCatalog(projectId: string, expectedScope?: CapturedUserScope) {
-    return http.get<CharacterReferenceCatalog>(`${projectPath(projectId)}/character-versions`, { expectedScope });
+export function getCharacterReferenceCatalog(projectId: string, expectedScope?: CapturedUserScope, signal?: AbortSignal) {
+    return http.get<CharacterReferenceCatalog>(`${projectPath(projectId)}/character-versions`, { expectedScope, signal, timeout: 60_000 });
+}
+
+export function listProjectCharacters(projectId: string, expectedScope?: CapturedUserScope, signal?: AbortSignal) {
+    return http.get<{ assets: ProjectAsset[] }>(`${projectPath(projectId)}/assets`, { params: { category: "character" }, expectedScope, signal, timeout: 60_000 });
 }
 
 export function saveCharacterReferenceProfile(projectId: string, version: CharacterReferenceVersion, profile: CharacterReferenceProfile, expectedScope?: CapturedUserScope) {

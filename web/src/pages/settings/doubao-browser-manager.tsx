@@ -36,16 +36,16 @@ export function DoubaoBrowserManager({ onClose }: { onClose: () => void }) {
     };
     return <AppModal open title="eggfansTV · 豆包浏览器账号池" width={920} footer={null} onCancel={onClose}>
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-            <Alert type="info" showIcon title="环境轮换复用，明确失败不计为成功使用" description="每个环境同时只分配一个任务。明确失败后释放；视频保存完成后，环境不足时自动清理网站数据再复用。手动清理同样恢复本地可调度状态，跳过生成中、提交未确认及成功待取回环境，不删除本地视频、素材或 output。清理不代表上游额度已恢复。" />
+            <Alert type="info" showIcon title="环境独立并发，预热不阻塞提交" description="基础储备 300 个环境，不足时自动新增，不设本地任务并发数量上限。已有就绪环境直接使用；没有时各任务独立准备环境，不等待凑齐空闲储备。后台预热、清理与其他任务互不等待，每个环境同时只分配一个任务。明确失败后释放；已保存视频的环境可清理复用，跳过生成中、提交未确认及成功待取回环境，不删除本地视频、素材或 output。清理不代表上游额度已恢复。" />
             {error ? <Alert type="error" showIcon title={error} /> : null}
             {feedback ? <Alert type="info" showIcon title={feedback} /> : null}
             <Space wrap>
                 <span>自动维护</span><Switch checked={status?.enabled || false} disabled={!status || busy} onChange={enabled => void run(async signal => { const value = await configureDoubaoBrowser(enabled, signal); if (!signal.aborted) setStatus(value); })} />
-                <Tag>环境储备 {status?.total ?? 0}/{status?.target ?? 100}</Tag><Tag color="green">空闲 {status?.idle ?? 0}/至少 2</Tag><Tag color="blue">占用 {status?.busy ?? 0}</Tag>
+                <Tag>环境储备 {status?.total ?? 0}（基础 {status?.target ?? 300}）</Tag><Tag color="green">空闲 {status?.idle ?? 0}（后台补充，不限提交）</Tag><Tag color="blue">占用 {status?.busy ?? 0}</Tag>
                 <Tag>待预热 {status?.cold ?? 0}</Tag><Tag color={status?.attention ? "warning" : undefined}>需检查 {status?.attention ?? 0}</Tag>
                 <Tag>成功任务 {status?.succeeded ?? 0}</Tag><Tag>失败任务 {status?.failed ?? 0}（不占用）</Tag>
                 <Tag color={status?.pending ? "warning" : undefined}>成功待取回 {status?.pending ?? 0}</Tag><Tag>成功待清理 {Math.max(0, (status?.used ?? 0) - (status?.pending ?? 0))}</Tag>
-                {status?.warming ? <Tag color="processing">正在预热补位</Tag> : null}
+                {status?.warming ? <Tag color="processing">后台预热中 · 不阻塞提交</Tag> : null}
                 {status?.cleaning ? <Tag color="processing">正在清理网站数据</Tag> : null}
                 <Button loading={busy} onClick={() => void run(async signal => { const value = await getDoubaoBrowserStatus(signal); if (!signal.aborted) setStatus(value); })}>刷新</Button>
                 <Button danger disabled={busy || !status?.total} onClick={() => setClearConfirmOpen(true)}>一键清理缓存 / 网站数据</Button>

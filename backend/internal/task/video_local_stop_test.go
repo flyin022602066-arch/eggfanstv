@@ -155,3 +155,22 @@ func TestLocalVideoStopDoesNotBlockExplicitRetry(t *testing.T) {
 		t.Fatal("upstream submission uncertainty must remain protected")
 	}
 }
+
+func TestStopVideoLocallyCanStopUnconfirmedBrowserSubmission(t *testing.T) {
+	service, repo, db, runtime, provider := localStopTestService(t)
+	task := model.Task{ID: "unknown-browser", UserID: "owner", Type: "canvas_video", Model: "doubao-browser::seedance_v2.0", Status: model.TaskStatusFailed, Stage: "submission_unknown", PollStage: "browser_receipt_lookup", Error: "原任务回执缺失，无法确认上游状态"}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := service.StopVideoLocally(task.UserID, task.ID)
+	if err != nil || stopped.Status != model.TaskStatusCancelled || stopped.Stage != "本地已停止" {
+		t.Fatalf("unconfirmed task cannot be stopped: %+v %v", stopped, err)
+	}
+	if err := repo.ResumeUnconfirmedDoubaoBrowserTasks(); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := repo.Task(task.ID)
+	if stored.Status != model.TaskStatusCancelled || stored.NextPollAt != nil || stored.PollStage != "" || runtime.stopped.Load() != task.ID || len(provider.ids) != 0 {
+		t.Fatal("local stop was reversed or called upstream")
+	}
+}

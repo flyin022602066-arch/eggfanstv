@@ -16,6 +16,7 @@ import { logicalModelIDForConfig, type AiConfig } from "@/stores/use-config-stor
 import { chapterStoryboardCinematographyRequirements, chapterStoryboardDurationPolicy, chapterStoryboardDurationRequirements, chapterStoryboardRequirements, chapterStoryboardSourcePrompt, chapterStoryboardReviewPolicy, extractSystemElementBlocks, reviewChapterStoryboardPrompt, reviewChapterDialogueCoverage, type ChapterDialogueConstraintMode, type ChapterStoryboardMode, type ChapterStoryboardReviewPolicy } from "@/lib/chapter-storyboard-mode";
 
 import type { ChapterStoryboardAsset, ChapterStoryboardCharacter } from "./chapter-storyboard-production";
+import { chapterStoryboardReferencePlan } from "./chapter-storyboard-reference-budget";
 import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
 
 export type ChapterAnalysisInput = {
@@ -99,7 +100,12 @@ export function chapterStoryboardFromGenerationTask(task: GenerationTask) {
     let context: { characters?: ChapterStoryboardCharacter[]; canvasAssets?: ChapterStoryboardAsset[] } = {};
     try { context = JSON.parse(task.inputJson || "{}"); } catch { context = {}; }
     const scoped = scopeChapterStoryboardRows(result.rows, typeof metadata.chapterSourceText === "string" ? metadata.chapterSourceText : "", Array.isArray(context?.characters) ? context.characters : Array.isArray(metadata.storyboardCharacters) ? metadata.storyboardCharacters as ChapterStoryboardCharacter[] : [], Array.isArray(context?.canvasAssets) ? context.canvasAssets : Array.isArray(metadata.storyboardAssets) ? metadata.storyboardAssets as ChapterStoryboardAsset[] : [], systemPresentation);
-    const rows = ensureProtectedSystemElements(scoped, Array.isArray(metadata.protectedSystemElements) ? metadata.protectedSystemElements : [], systemPresentation);
+    let rows = ensureProtectedSystemElements(scoped, Array.isArray(metadata.protectedSystemElements) ? metadata.protectedSystemElements : [], systemPresentation);
+    if (metadata.storyboardMode === "standard") {
+        const plan = chapterStoryboardReferencePlan(rows, context.canvasAssets || metadata.storyboardAssets as ChapterStoryboardAsset[] || [], context.characters || metadata.storyboardCharacters as ChapterStoryboardCharacter[] || []);
+        if (plan.issues.length) throw new Error(`常规分镜参考预算需要重新编排：${plan.issues.join("；")}`);
+        rows = plan.rows;
+    }
     const policy = chapterStoryboardTaskReviewPolicy(task);
     return { ...result, rows, promptReview: [...(metadata.storyboardMode === "continuous_30s" || policy.maxDurationSeconds ? reviewChapterStoryboardPrompt(rows, policy) : []), ...(metadata.storyboardMode === "continuous_30s" ? reviewChapterDialogueCoverage(typeof metadata.chapterSourceText === "string" ? metadata.chapterSourceText : "", rows) : [])] };
 }
@@ -253,6 +259,7 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
     } : durationPolicy;
     const requirements = [
         chapterStoryboardRequirements(mode, dialogueConstraintMode, systemPresentation, reviewPolicy.directorFormat, shortDirector ? 15 : 30),
+        options?.batchId ? "【区间批量分镜完整性】必须通读并完整拆解本集正文，顶层rows至少包含3个可独立生成且有实际剧情内容的分镜单元；只返回1—2个单元会被视为未完成并重新生成。按当前所选技能、时长和自然剧情节点安排完整话轮与动作，不以空镜、重复内容、空白单元或编造剧情凑数；不改变原文对白、角色身份和资产引用规则。" : "",
         reviewPolicy.directorFormat ? "" : chapterStoryboardCinematographyRequirements(input.skills, input.selectedSkillIds),
         chapterStoryboardDurationRequirements(durationPolicy),
     ].filter(Boolean).join("\n\n");
@@ -266,10 +273,10 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
         skillBoundary >= 0 ? skillExecution.prompt.slice(skillBoundary) : "",
         storyboardRowsOutputContract("每个生成单元必须能独立用于生成首帧图片和镜头视频。", mode, reviewPolicy),
     ].join("\n\n");
-    const task = await createGenerationTask({
+    const request = {
         projectId: input.projectId,
         type: "canvas_text",
-        operation: "storyboard",
+        operation: "storyboard" as const,
         prompt,
         model,
         ...(logicalModelIDForConfig(config) ? { logicalModelId: logicalModelIDForConfig(config) } : {}),
@@ -302,11 +309,23 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
                 ...(options?.batchId ? { chapterBatchId: options.batchId, chapterBatchPhase: "storyboard", clientOperationId: `chapter-batch:${options.batchId}:${input.chapterId}:storyboard:${options.taskAttempt || 0}` } : {}),
             },
         },
-    }, options?.expectedScope ? { expectedScope: options.expectedScope } : undefined);
-    options?.onTaskUpdate?.(task);
-    const completed = await waitForGenerationTask(task.id, { initialTask: task, useTextEvents: true, onTaskUpdate: options?.onTaskUpdate, expectedScope: options?.expectedScope });
-    const result = storyboardRowsFromTask(completed);
-    const rows = ensureProtectedSystemElements(scopeChapterStoryboardRows(result.rows, input.sourceText, input.characters, input.assets, systemPresentation), protectedSystemElements, systemPresentation);
+    };
+    let completed: GenerationTask;
+    let result: ReturnType<typeof storyboardRowsFromTask>;
+    let rows: StoryboardRow[];
+    for (let revision = 0; ; revision++) {
+        const task = await createGenerationTask({ ...request, input: { ...request.input, metadata: { ...request.input.metadata, ...(revision ? { clientOperationId: `${request.input.metadata.clientOperationId || `chapter:${input.chapterId}:${completed!.id}`}:references:${revision}` } : {}) } } }, options?.expectedScope ? { expectedScope: options.expectedScope } : undefined);
+        options?.onTaskUpdate?.(task);
+        completed = await waitForGenerationTask(task.id, { initialTask: task, useTextEvents: true, onTaskUpdate: options?.onTaskUpdate, expectedScope: options?.expectedScope });
+        result = storyboardRowsFromTask(completed);
+        rows = ensureProtectedSystemElements(scopeChapterStoryboardRows(result.rows, input.sourceText, input.characters, input.assets, systemPresentation), protectedSystemElements, systemPresentation);
+        if (mode !== "standard") break;
+        const plan = chapterStoryboardReferencePlan(rows, input.assets, input.characters);
+        rows = plan.rows;
+        if (!plan.issues.length) break;
+        if (revision >= 2) throw new Error(`分镜已自动重排但仍需重新拆解：${plan.issues.join("；")}`);
+        request.prompt = `${prompt}\n\n【参考预算自动重排】\n${plan.issues.join("\n")}\n保留全章所有剧情、原话和必要资产，不删人物、不删关键道具；沿完整话轮和动作承接点拆镜或重排，不直接截断参考列表。重新输出完整全章JSON。\n【上一稿】\n${JSON.stringify(result.rows)}`;
+    }
     return { ...result, rows, promptReview: [...(mode === "continuous_30s" || reviewPolicy.maxDurationSeconds ? reviewChapterStoryboardPrompt(rows, reviewPolicy) : []), ...(mode === "continuous_30s" ? reviewChapterDialogueCoverage(input.sourceText, rows) : [])], skillCount: skillExecution.selectedSkills.length, skillLoadReport: skillExecution.metadata.skillLoadReport || [], taskId: completed.id };
 }
 
@@ -395,6 +414,7 @@ function appendProtectedSystemElement(prompt: string | undefined, element: strin
 }
 
 async function runProjectTextTask(input: ChapterAnalysisInput, operation: string, promptTemplateVariables: Record<string, string>, options?: ChapterTaskOptions) {
+    promptTemplateVariables = { ...promptTemplateVariables, 角色参考图格式: input.config.projectAssetImagePresets?.character?.characterLayoutId || "portrait-body-grid", 角色形象模板: input.config.projectAssetImagePresets?.character?.characterDesignTemplateId || "project-style" };
     const model = input.config.textModel || input.config.model;
     let taskId = "";
     const batchPhase = promptTemplateVariables.资产复核清单 ? "review" : "extract";

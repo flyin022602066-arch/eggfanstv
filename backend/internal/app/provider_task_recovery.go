@@ -82,9 +82,14 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		var original canvasGenerationInput
 		if readErr == nil && json.Unmarshal([]byte(body), &original) == nil && original.Config.InterfaceType == "doubao-browser-video" && s.DoubaoBrowserDomain() != nil {
 			receipt, lookupErr := s.DoubaoBrowserDomain().Lookup(ctx, task.UserID, task.ID)
-			if lookupErr == nil { providerRequestID = generation.EncodeDoubaoBrowserTask(receipt) }
+			if lookupErr != nil {
+				return nil, fmt.Errorf("查询原任务回执失败：%w", lookupErr)
+			}
+			providerRequestID = generation.EncodeDoubaoBrowserTask(receipt)
 		}
-		if providerRequestID == "" { return nil, BadAuthRequest("本地未记录上游任务 ID，历史提交记录中也没有可恢复的回执；无法查询原任务，不会重新提交生成。") }
+		if providerRequestID == "" {
+			return nil, BadAuthRequest("本地未记录上游任务 ID，历史提交记录中也没有可恢复的回执；无法查询原任务，不会重新提交生成。")
+		}
 	}
 	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
 	if err != nil {
@@ -105,7 +110,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	doubaoBrowserVideo := config.InterfaceType == "doubao-browser-video" && s.DoubaoBrowserDomain() != nil
 	if doubaoBrowserVideo {
 		receipt, decodeErr := generation.DecodeDoubaoBrowserTask(providerRequestID)
-		if decodeErr != nil || receipt.TaskID != task.ID { return nil, BadAuthRequest("豆包浏览器原任务回执无效") }
+		if decodeErr != nil || receipt.TaskID != task.ID {
+			return nil, BadAuthRequest("豆包浏览器原任务回执无效")
+		}
 	}
 	if hanbaoVideo {
 		if _, err := generation.DecodeHanbaoTask(providerRequestID); err != nil {
@@ -147,8 +154,6 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	var providerStatus string
 	if doubaoBrowserVideo {
 		result, providerStatus, err = generation.QueryDoubaoBrowserVideoResult(queryCtx, providerRequestID, defaultVideoPollPolicy())
-		var pending generation.StatePendingError
-		if errors.As(err, &pending) { err, providerStatus = nil, "pending" }
 	} else if hanbaoVideo {
 		result, providerStatus, err = generation.QueryHanbaoVideoResult(queryCtx, providerRequestID, defaultVideoPollPolicy())
 		var pending generation.StatePendingError
@@ -163,6 +168,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	}
 	if err != nil {
 		_ = s.log(task.UserID, task.ID, "error", "人工查询上游视频任务失败", err.Error())
+		if doubaoBrowserVideo {
+			return s.confirmBrowserQueryFailure(task, providerStatus, err)
+		}
 		if hanbaoVideo && errors.Is(err, hanbao.ErrBusy) {
 			return nil, &AuthError{Status: 409, Message: "憨包组件正在处理其他任务，请稍后再次取回原任务结果"}
 		}
@@ -208,6 +216,39 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	projected := s.attachRecoveredProviderTask(task)
 	_ = s.log(task.UserID, task.ID, "info", "人工查询确认生成成功，任务已恢复并登记项目产物", providerStatus)
 	return &ProviderTaskQueryResult{Task: projected, ProviderStatus: providerStatus, Recovered: true}, nil
+}
+
+func (s *Service) confirmBrowserQueryFailure(task *model.Task, status string, cause error) (*ProviderTaskQueryResult, error) {
+	source, stage := "local_runtime", "原任务查询失败"
+	var pending generation.StatePendingError
+	if errors.As(cause, &pending) && pending.Cause != nil {
+		cause = pending.Cause
+	}
+	if status == "failed" {
+		source, stage = "upstream_response", "上游已确认生成失败"
+	}
+	task.Stage = stage
+	captureTaskFailureDiagnostics(task, cause, source)
+	if status == "failed" {
+		task.FailureDiagnostics.ExecutionResult = "failed"
+	} else {
+		task.FailureDiagnostics.ExecutionResult = "pending"
+	}
+	updated, err := s.repo.UpdateTaskTerminalState(task.ID, task.LeaseOwner, model.TaskStatusFailed, model.TaskStatusFailed, stage, persistableTaskFailureMessage(cause), time.Now(), task.FailureDiagnostics)
+	if err != nil {
+		return nil, err
+	}
+	if !updated {
+		return nil, repository.ErrTaskProviderRecoveryConflict
+	}
+	stored, err := s.repo.Task(task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if status != "failed" {
+		status = "query_error"
+	}
+	return &ProviderTaskQueryResult{Task: taskForOutput(*stored), ProviderStatus: status}, nil
 }
 
 func (s *Service) confirmHanbaoQueryFailure(task *model.Task, status string, cause error) (*ProviderTaskQueryResult, error) {

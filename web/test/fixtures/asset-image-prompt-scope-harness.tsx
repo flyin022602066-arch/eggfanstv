@@ -38,7 +38,7 @@ const assets = [
     ...[versions[0]!, versions[2]!].map((character) => ({ id: character.assetId, title: character.title, category: "character", mediaType: "entity", primaryVersionId: character.versionId, character })),
     ...["environment", "prop"].flatMap((category) => ["甲", "乙"].map((suffix) => ({ id: `${category}-${suffix}`, title: `${category === "environment" ? "场景" : "道具"}${suffix}`, category, mediaType: "text", primaryVersionId: `${category}-${suffix}-v1`, definitionJson: JSON.stringify({ description: `${category === "environment" ? "木制庭院" : "青铜宝剑"}${suffix}` }) }))),
 ] as ProjectAsset[];
-const submissions: { assetId: string; versionId?: string; prompt: string }[] = [];
+const submissions: { assetId: string; versionId?: string; prompt: string; layoutId?: string; templateId?: string }[] = [];
 Object.assign(window, { promptScopeFixture: { project, versions, submissions, readConfig: () => useConfigStore.getState().config, readPresets: () => Object.fromEntries(["character", "environment", "prop"].map((category) => [category, resolveProjectAssetImagePreset(useConfigStore.getState().config, project, category as "character" | "environment" | "prop")])) } });
 
 function Harness() {
@@ -46,8 +46,9 @@ function Harness() {
     const [settings, setSettings] = useState(false);
     const submit = async (input: ProjectAssetImageSubmission) => {
         await submitProjectAssetImages(project, input, { loadCatalog: async () => ({ revision: 1, versions }), submit: async (_project, current) => {
-            const prompt = current.asset.character ? characterTurnaroundVariables(current.asset.title, current.asset.character.definition, current.prompt).角色设定 : current.prompt;
-            submissions.push({ assetId: current.asset.id, versionId: current.asset.character?.versionId, prompt });
+            const variables = current.asset.character ? characterTurnaroundVariables(current.asset.title, current.asset.character.definition, current.prompt, undefined, current.config.projectAssetImagePresets?.character) : undefined;
+            const prompt = variables?.角色设定 ?? current.prompt;
+            submissions.push({ assetId: current.asset.id, versionId: current.asset.character?.versionId, prompt, layoutId: variables?.角色参考图格式, templateId: variables?.角色形象模板 });
             return { id: `offline-${submissions.length}`, status: "queued" } as GenerationTask;
         } });
         setAsset(null);

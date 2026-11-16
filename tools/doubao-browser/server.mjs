@@ -15,6 +15,7 @@ lines.on('line', async line => {
   try {
     if (line.length > 280 * 1024 * 1024) throw Error('请求过大');
     request = JSON.parse(line);
+    line = null;
     if (!Number.isSafeInteger(request.id) || !Object.hasOwn(methods, request.method)) throw Error('调用无效');
     const data = await methods[request.method](request.params || {});
     process.stdout.write(JSON.stringify({ id: request.id, data }) + '\n');

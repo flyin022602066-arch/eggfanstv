@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Pool, MODELS, validateRequest } from './pool.mjs';
+import { Pool, MODELS, TARGET, RESERVE, validateRequest } from './pool.mjs';
 
 async function fixture(t, patch = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'eggfans-pool-test-'));
@@ -25,6 +25,35 @@ async function fixture(t, patch = {}) {
 }
 const request = { taskId: 'fixture-task', model: 'seedance_v2.5', prompt: 'fixture', duration: 5, ratio: '16:9', images: [] };
 
+test('existing 100-environment pool expands to 300 without changing identities or active receipts', async t => {
+  const { pool, directory, calls } = await fixture(t);
+  await pool.configure({ enabled: true });
+  pool.state.profiles = pool.state.profiles.slice(0, 100);
+  const profile = pool.state.profiles[0];
+  const receipt = { taskId: request.taskId, profileId: profile.id };
+  profile.state = 'busy';
+  profile.taskId = request.taskId;
+  profile.usedTaskId = request.taskId;
+  pool.state.jobs[request.taskId] = { profileId: profile.id, phase: 'accepted', receipt };
+  await pool.save();
+  const original = structuredClone(pool.state);
+  calls.length = 0;
+  const restarted = new Pool(directory, pool.engine);
+  await restarted.maintain();
+  const status = await restarted.status();
+  assert.equal(status.target, 300);
+  assert.equal(status.total, 300);
+  assert.equal(new Set(status.profiles.map(item => item.id)).size, 300);
+  assert.deepEqual(status.profiles.slice(0, 100).map(item => item.id), original.profiles.map(item => item.id));
+  assert.equal(status.busy, 1);
+  assert.equal(status.idle, 2);
+  assert.equal(status.reserve, 2);
+  assert.deepEqual(restarted.state.jobs, original.jobs);
+  assert.deepEqual(await restarted.lookup(request.taskId), receipt);
+  assert.equal(calls.some(call => call[0] === 'submit' || call[0] === 'clear'), false);
+  assert.equal((await new Pool(directory, {}).status()).total, 300);
+});
+
 test('prompt boundary counts unicode characters and preserves the full 8000-character request', () => {
   const prompt = '镜\u{1F3AC}'.repeat(4000);
   for (const model of MODELS) {
@@ -36,12 +65,12 @@ test('prompt boundary counts unicode characters and preserves the full 8000-char
   }
 });
 
-test('enable maintains exactly 100 environments and two warm idle pages', async t => {
+test('enable maintains exactly 300 environments and two warm idle pages', async t => {
   const { pool, calls } = await fixture(t);
   await pool.configure({ enabled: true });
   const status = await pool.status();
-  assert.equal(status.profiles.length, 100);
-  assert.equal(new Set(status.profiles.map(p => p.id)).size, 100);
+  assert.equal(status.profiles.length, 300);
+  assert.equal(new Set(status.profiles.map(p => p.id)).size, 300);
   assert.equal(status.idle, 2);
   assert.equal(calls.filter(c => c[0] === 'probe').length, 2);
 });
@@ -52,7 +81,7 @@ test('automatic names are unique across pools and stable after restart and clean
   await second.pool.configure({ enabled: true });
   const profiles = (await first.pool.status()).profiles;
   const names = profiles.map(profile => profile.label);
-  assert.equal(new Set([...names, ...(await second.pool.status()).profiles.map(profile => profile.label)]).size, 200);
+  assert.equal(new Set([...names, ...(await second.pool.status()).profiles.map(profile => profile.label)]).size, TARGET * 2);
   for (const profile of profiles) assert.equal(profile.label, 'eggfansTV-' + profile.id);
   await first.pool.clearAll();
   assert.deepEqual((await first.pool.status()).profiles.map(profile => profile.label), names);
@@ -69,7 +98,7 @@ test('legacy duplicate names are repaired durably without changing profile ident
   await writeFile(path.join(directory, 'pool.json'), JSON.stringify(original));
   const restarted = new Pool(directory, {});
   const profiles = (await restarted.status()).profiles;
-  assert.equal(new Set(profiles.map(profile => profile.label)).size, 100);
+  assert.equal(new Set(profiles.map(profile => profile.label)).size, TARGET);
   assert.deepEqual(profiles.map(profile => profile.id), original.profiles.map(profile => profile.id));
   assert.deepEqual(await restarted.lookup(request.taskId), receipt);
   const saved = JSON.parse(await readFile(path.join(directory, 'pool.json'), 'utf8'));
@@ -108,7 +137,7 @@ test('status remains readable while browser initialization is pending', async t 
   let timer;
   try {
     const status = await Promise.race([pool.status(), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('status blocked by initialization')), 1000); })]);
-    assert.equal(status.total, 100);
+    assert.equal(status.total, TARGET);
     assert.equal(status.idle, 0);
   } finally { clearTimeout(timer); release(); await enabling; }
   assert.equal((await pool.status()).idle, 2);
@@ -124,63 +153,59 @@ test('repeated status calls never expose an invalid loaded pool', async t => {
   assert.equal(calls.length, 0);
 });
 
-test('accepted task keeps two other idle environments and preserves all parameters', async t => {
+test('accepted task consumes a ready environment without changing any generation parameters', async t => {
   const { pool, calls } = await fixture(t);
   await pool.configure({ enabled: true });
   const receipt = await pool.submit(request);
   assert.equal(receipt.taskId, 'fixture-task');
-  assert.equal((await pool.status()).idle, 2);
+  assert.equal((await pool.status()).idle, 1);
   assert.deepEqual(calls.find(c => c[0] === 'submit')[2], request);
   assert.equal((await pool.status()).busy, 1);
 });
 
-test('replacement is ready before reservation consumes an idle environment', async t => {
+test('ready environments submit immediately even when reserve replacement is unavailable', async t => {
   const { pool, calls } = await fixture(t);
   await pool.configure({ enabled: true });
-  pool.engine.probe = async () => {
-    assert.equal((await pool.status()).idle, 2);
-    assert.equal((await pool.status()).busy, 0);
-    return { ready: false };
-  };
-  await assert.rejects(pool.submit(request), /空闲环境不足/);
-  assert.equal((await pool.status()).idle, 2);
-  assert.equal((await pool.status()).busy, 0);
-  assert.equal(calls.filter(call => call[0] === 'submit').length, 0);
-  for (const profile of pool.state.profiles) if (profile.state === 'attention') profile.checkedAt = new Date(0).toISOString();
-  pool.engine.probe = async () => {
-    assert.equal((await pool.status()).idle, 2);
-    assert.equal((await pool.status()).busy, 0);
-    return { ready: true };
-  };
-  await pool.submit(request);
-  assert.equal((await pool.status()).idle, 2);
-  assert.equal((await pool.status()).busy, 1);
+  calls.length = 0;
+  pool.engine.probe = async () => { throw Error('replacement unavailable'); };
+  const receipts = await Promise.all([pool.submit(request), pool.submit({ ...request, taskId: 'second-ready' })]);
+  assert.equal(new Set(receipts.map(receipt => receipt.profileId)).size, 2);
+  assert.equal((await pool.status()).idle, 0);
+  assert.equal((await pool.status()).busy, 2);
+  assert.equal(calls.filter(call => call[0] === 'submit').length, 2);
 });
 
-test('replacement skips unready environments and continues to an unused ready candidate', async t => {
+test('a cold environment failure cannot consume another task environment or invent acceptance', async t => {
   const { pool, calls } = await fixture(t);
   await pool.configure({ enabled: true });
+  for (const profile of pool.state.profiles) if (profile.state === 'idle') profile.state = 'cold';
   let attempts = 0;
-  pool.engine.probe = async () => ({ ready: ++attempts > 2 });
-  const receipt = await pool.submit(request);
-  assert.equal(attempts, 3);
-  assert.equal((await pool.status()).idle, 2);
+  pool.engine.probe = async () => ({ ready: ++attempts > 1 });
+  await assert.rejects(pool.submit(request), /网页未就绪/);
+  const original = await pool.lookup(request.taskId);
+  const receipt = await pool.submit({ ...request, taskId: 'after-unready' });
+  assert.notEqual(receipt.profileId, original.profileId);
+  assert.equal((await pool.query(original)).status, 'failed');
+  assert.equal(attempts, 2);
+  assert.equal((await pool.status()).idle, 0);
   assert.equal((await pool.status()).busy, 1);
   assert.equal(calls.filter(call => call[0] === 'submit').length, 1);
-  assert.equal(receipt.taskId, request.taskId);
+  assert.equal(receipt.taskId, 'after-unready');
 });
 
-test('a failed replacement after five submissions does not exhaust the other unused environments', async t => {
+test('reserve replacement never gates an available environment after five submissions', async t => {
   const { pool, calls } = await fixture(t);
   await pool.configure({ enabled: true });
   const receipts = [];
   for (let index = 0; index < 5; index++) receipts.push(await pool.submit({ ...request, taskId: 'first-five-' + index }));
+  pool.state.profiles.find(profile => profile.state === 'cold').state = 'idle';
   let attempts = 0;
   pool.engine.probe = async () => ({ ready: ++attempts > 2 });
   receipts.push(await pool.submit({ ...request, taskId: 'sixth-task' }));
   assert.equal(new Set(receipts.map(receipt => receipt.profileId)).size, 6);
   assert.equal(calls.filter(call => call[0] === 'submit').length, 6);
-  assert.equal((await pool.status()).idle, 2);
+  assert.equal(attempts, 0);
+  assert.equal((await pool.status()).idle, 0);
 });
 
 test('same task after restart reads receipt without another submission', async t => {
@@ -198,7 +223,7 @@ test('unknown submission holds its environment across restart and is skipped by 
   const receipt = await pool.submit(request);
   const restarted = new Pool(directory, {});
   assert.deepEqual(await restarted.submit(request), receipt);
-  await assert.rejects(restarted.query(receipt), /未确认/);
+  assert.equal((await restarted.query(receipt)).status, 'submission_pending');
   restarted.engine.clear = async () => {};
   assert.equal((await restarted.clearAll()).skipped, 1);
   assert.equal((await restarted.status()).busy, 1);
@@ -209,7 +234,7 @@ test('batch clear skips unfinished tasks and cleans the remaining environments',
   await pool.configure({ enabled: true });
   const receipt = await pool.submit(request);
   assert.equal((await pool.clearAll()).skipped, 1);
-  assert.equal(calls.filter(c => c[0] === 'clear').length, 99);
+  assert.equal(calls.filter(c => c[0] === 'clear').length, TARGET - 1);
   assert.equal(calls.some(c => c[0] === 'clear' && c[1] === receipt.profileId), false);
 });
 
@@ -217,10 +242,10 @@ test('clear reports real results and never claims a server quota reset', async t
   const { pool, calls } = await fixture(t);
   await pool.configure({ enabled: true });
   const result = await pool.clearAll();
-  assert.equal(result.cleared, 100);
-  assert.equal(calls.filter(c => c[0] === 'clear').length, 100);
+  assert.equal(result.cleared, TARGET);
+  assert.equal(calls.filter(c => c[0] === 'clear').length, TARGET);
   assert.equal(result.quotaResetConfirmed, false);
-  assert.equal((await pool.status()).profiles.length, 100);
+  assert.equal((await pool.status()).profiles.length, TARGET);
   assert.equal((await pool.status()).idle, 2);
 });
 
@@ -229,7 +254,7 @@ test('failed cleanup is reported, not counted as successful', async t => {
   const { pool } = await fixture(t, { clear: async () => { if (++n === 1) throw Error('locked'); } });
   await pool.configure({ enabled: true });
   const result = await pool.clearAll();
-  assert.equal(result.cleared, 99);
+  assert.equal(result.cleared, TARGET - 1);
   assert.equal(result.failed.length, 1);
 });
 
@@ -237,7 +262,7 @@ test('capacity and account readiness are never invented after a failed probe', a
   const { pool } = await fixture(t, { probe: async () => ({ ready: false, reason: '需要登录' }) });
   await pool.configure({ enabled: true });
   assert.equal((await pool.status()).idle, 0);
-  await assert.rejects(pool.submit(request), /空闲/);
+  await assert.rejects(pool.submit(request), /网页未就绪/);
 });
 
 test('only confirmed pre-generation failures expose the retry-safe marker', async t => {
@@ -249,6 +274,39 @@ test('only confirmed pre-generation failures expose the retry-safe marker', asyn
   const legacy = { ...request, taskId: 'legacy-unknown' };
   pool.state.jobs[legacy.taskId] = { profileId: pool.state.profiles[0].id, digest: createHash('sha256').update(JSON.stringify(legacy)).digest('hex') };
   await assert.rejects(pool.submit(legacy), error => error.beforeGeneration !== true);
+});
+
+test('restarted pre-execution preparation is not reported as upstream generation', async t => {
+  const { pool, directory } = await fixture(t);
+  await pool.configure({ enabled: true });
+  const receipt = await pool.submit(request);
+  const job = pool.state.jobs[request.taskId];
+  job.phase = 'workspace_ready'; job.checkpoint = { phase: 'workspace_ready', conversationId: 'conversation', workspaceId: 'workspace' };
+  await pool.save();
+  let queried = 0;
+  const restarted = new Pool(directory, { query: async () => { queried++; throw Error('must not query an unsubmitted task'); } });
+  const result = await restarted.query(receipt);
+  assert.equal(result.status, 'failed');
+  assert.match(result.reason, /准备阶段已中断.*尚未提交视频生成/);
+  assert.equal(queried, 0);
+  assert.equal(restarted.state.jobs[request.taskId].phase, 'failed');
+});
+
+test('live preparation remains preparing and execution-intent resumes only the original query', async t => {
+  let release, started;
+  const ready = new Promise(resolve => { started = resolve; });
+  const waiting = new Promise(resolve => { release = resolve; });
+  const { pool } = await fixture(t, { submit: async (_id, _input, persist) => { await persist({ phase: 'workspace_ready', workspaceId: 'workspace' }); started(); await waiting; return { phase: 'accepted', workspaceId: 'workspace', conversationId: 'conversation', itemId: 'item', requestId: 'request' }; } });
+  await pool.configure({ enabled: true });
+  const submitting = pool.submit(request);
+  await ready;
+  const receipt = await pool.lookup(request.taskId);
+  const during = await pool.query(receipt);
+  assert.equal(during.status, 'preparing');
+  assert.match(during.reason, /准备/);
+  release(); await submitting;
+  pool.state.jobs[request.taskId].phase = 'exec_intent';
+  assert.equal((await pool.query(receipt)).status, 'running');
 });
 
 test('terminal query releases only its original environment', async t => {
@@ -303,12 +361,12 @@ test('repeated terminal query cannot release a newer reservation', async t => {
   assert.equal((await pool.status()).busy, 1);
 });
 
-test('concurrent tasks reserve distinct environments and preserve two idle', async t => {
+test('concurrent tasks reserve distinct environments without waiting for spare pages', async t => {
   const { pool } = await fixture(t);
   await pool.configure({ enabled: true });
   const receipts = await Promise.all(Array.from({ length: 4 }, (_, index) => pool.submit({ ...request, taskId: 'parallel-' + index })));
   assert.equal(new Set(receipts.map(r => r.profileId)).size, 4);
-  assert.equal((await pool.status()).idle, 2);
+  assert.equal((await pool.status()).idle, 0);
   assert.equal((await pool.status()).busy, 4);
   await assert.rejects(pool.open(receipts[0].profileId), /占用/);
 });
@@ -325,6 +383,7 @@ test('completed tasks rotate environments instead of always reusing the first pr
   assert.equal(new Set(assigned).size, 6);
   assert.equal(calls.filter(call => call[0] === 'submit').length, 6);
   assert.equal((await pool.status()).busy, 0);
+  await pool.maintain();
   assert.equal((await pool.status()).idle, 2);
 });
 
@@ -394,20 +453,21 @@ test('delivered environments recycle after cleanup without losing receipts', asy
   const { pool, calls } = await fixture(t, { query: async () => ({ status: 'success', videoUrl: 'https://v.douyinvod.com/fixture.mp4' }) });
   await pool.configure({ enabled: true });
   let original;
-  for (let index = 0; index < 120; index++) {
+  for (let index = 0; index < TARGET + 20; index++) {
     const receipt = await pool.submit({ ...request, taskId: 'once-only-' + index });
     original ||= receipt;
     await pool.query(receipt);
     await pool.delivered(receipt);
   }
   const submitted = calls.filter(call => call[0] === 'submit');
-  assert.equal(submitted.length, 120);
-  assert.equal(new Set(submitted.map(call => call[1])).size, 100);
-  assert.ok((await pool.status()).profiles.filter(profile => profile.state === 'used').length < 100);
+  assert.equal(submitted.length, TARGET + 20);
+  assert.equal(new Set(submitted.map(call => call[1])).size, TARGET);
+  await pool.maintain();
+  assert.ok((await pool.status()).profiles.filter(profile => profile.state === 'used').length < TARGET);
   assert.equal((await pool.status()).idle, 2);
-  assert.equal((await pool.status()).succeeded, 120);
+  assert.equal((await pool.status()).succeeded, TARGET + 20);
   assert.deepEqual(await new Pool(pool.directory, {}).lookup(original.taskId), original);
-  assert.equal((await new Pool(pool.directory, {}).status()).total, 100);
+  assert.equal((await new Pool(pool.directory, {}).status()).total, TARGET);
 });
 
 test('a historical pool with failed profiles releases them before the next submission', async t => {
@@ -427,9 +487,9 @@ test('a historical pool with failed profiles releases them before the next submi
   });
   const receipt = await restarted.submit({ ...request, taskId: 'after-historical-exhaustion' });
   assert.equal(submitted.length, 1);
-  assert.equal((await restarted.status()).active, 100);
+  assert.equal((await restarted.status()).active, TARGET);
   assert.equal((await restarted.status()).busy, 2);
-  assert.equal((await restarted.status()).idle, 2);
+  assert.equal((await restarted.status()).idle, 0);
   assert.equal((await restarted.status()).used, 0);
   assert.equal((await restarted.status()).failed, 97);
   assert.equal(receipt.profileId, submitted[0]);
@@ -443,20 +503,74 @@ test('concurrent duplicate submissions reserve one environment and call generati
   assert.ok(receipts.every(receipt => receipt.profileId === receipts[0].profileId));
   assert.equal(calls.filter(call => call[0] === 'submit').length, 1);
   assert.equal((await pool.status()).busy, 1);
-  assert.equal((await pool.status()).idle, 2);
+  assert.equal((await pool.status()).idle, 1);
 });
 
-test('100-environment capacity never consumes the last two idle environments', async t => {
+test('concurrent demand grows beyond 300 without withholding idle pages or losing persisted receipts', async t => {
+  const { pool, directory, calls } = await fixture(t);
+  await pool.configure({ enabled: true });
+  const receipts = await Promise.all(Array.from({ length: TARGET }, (_, index) => pool.submit({ ...request, taskId: 'capacity-' + index })));
+  assert.equal(new Set(receipts.map(receipt => receipt.profileId)).size, TARGET);
+  assert.equal((await pool.status()).total, TARGET);
+  assert.equal((await pool.status()).busy, TARGET);
+  assert.equal((await pool.status()).idle, 0);
+  const originalJobs = structuredClone(pool.state.jobs);
+  const originalIds = pool.state.profiles.map(profile => profile.id);
+  const additional = await Promise.all(Array.from({ length: 4 }, (_, index) => pool.submit({ ...request, taskId: 'capacity-overflow-' + index })));
+  const status = await pool.status();
+  assert.equal(status.total, TARGET + 4);
+  assert.equal(status.busy, TARGET + 4);
+  assert.equal(status.idle, 0);
+  assert.equal(new Set([...receipts, ...additional].map(receipt => receipt.profileId)).size, TARGET + 4);
+  assert.ok(originalIds.every(id => status.profiles.some(profile => profile.id === id)));
+  for (const [taskId, job] of Object.entries(originalJobs)) assert.deepEqual(pool.state.jobs[taskId], job);
+  assert.equal(calls.filter(call => call[0] === 'submit').length, TARGET + 4);
+  assert.equal(calls.filter(call => call[0] === 'clear').length, 0);
+  const restarted = new Pool(directory, pool.engine);
+  await restarted.maintain();
+  assert.equal((await restarted.status()).total, TARGET + 4 + RESERVE);
+  assert.equal((await restarted.status()).idle, RESERVE);
+  assert.deepEqual(restarted.state.jobs, pool.state.jobs);
+  assert.deepEqual(await restarted.submit({ ...request, taskId: 'capacity-overflow-0' }), additional[0]);
+  assert.equal(calls.filter(call => call[0] === 'submit').length, TARGET + 4);
+});
+
+test('maintenance adds reserve without touching busy, unknown or undelivered environments', async t => {
   const { pool, calls } = await fixture(t);
   await pool.configure({ enabled: true });
-  const receipts = await Promise.all(Array.from({ length: 98 }, (_, index) => pool.submit({ ...request, taskId: 'capacity-' + index })));
-  assert.equal(new Set(receipts.map(receipt => receipt.profileId)).size, 98);
-  assert.equal((await pool.status()).total, 100);
-  assert.equal((await pool.status()).busy, 98);
-  assert.equal((await pool.status()).idle, 2);
-  await assert.rejects(pool.submit({ ...request, taskId: 'capacity-overflow' }), /空闲环境/);
-  assert.equal(calls.filter(call => call[0] === 'submit').length, 98);
-  assert.equal((await pool.status()).idle, 2);
+  for (const [index, profile] of pool.state.profiles.entries()) {
+    const taskId = 'protected-' + index;
+    const phase = index % 3 === 0 ? 'success' : index % 3 === 1 ? 'unknown' : 'accepted';
+    profile.state = phase === 'success' ? 'pending' : 'busy';
+    profile.usedTaskId = taskId;
+    if (phase !== 'success') profile.taskId = taskId;
+    pool.state.jobs[taskId] = { profileId: profile.id, phase, receipt: { taskId, profileId: profile.id } };
+  }
+  const original = structuredClone(pool.state);
+  calls.length = 0;
+  await pool.maintain();
+  assert.equal((await pool.status()).total, TARGET + RESERVE);
+  assert.equal((await pool.status()).idle, RESERVE);
+  assert.deepEqual(pool.state.profiles.slice(0, TARGET), original.profiles);
+  assert.deepEqual(pool.state.jobs, original.jobs);
+  const receipt = await pool.submit(request);
+  assert.equal((await pool.status()).total, TARGET + RESERVE);
+  assert.equal((await pool.status()).idle, 1);
+  assert.equal(original.profiles.some(profile => profile.id === receipt.profileId), false);
+  assert.equal(calls.some(call => call[0] === 'clear'), false);
+});
+
+test('unready browsers do not cause repeated automatic environment creation', async t => {
+  const { pool, calls } = await fixture(t, { probe: async id => { calls.push(['probe', id]); return { ready: false }; } });
+  await pool.configure({ enabled: true });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await assert.rejects(pool.submit({ ...request, taskId: 'unready-' + attempt }), /网页未就绪/);
+    await pool.maintain();
+    assert.equal((await pool.status()).total, TARGET);
+    assert.equal((await pool.status()).busy, 0);
+  }
+  assert.equal(calls.filter(call => call[0] === 'probe').length, 11);
+  assert.equal(calls.filter(call => call[0] === 'submit').length, 0);
 });
 
 test('unknown exec preserves a recoverable original receipt before transport returns', async t => {
@@ -472,4 +586,255 @@ test('unknown exec preserves a recoverable original receipt before transport ret
   assert.equal((await pool.query(receipt)).status, 'success');
   assert.deepEqual(await new Pool(directory, {}).lookup(request.taskId), receipt);
   assert.equal(generated, 1);
+});
+
+test('slow environment preparation never blocks another live task checkpoint or original query', async t => {
+  let releaseProbe, enteredProbe, continueSubmission, enteredSubmission;
+  const probeGate = new Promise(resolve => { releaseProbe = resolve; });
+  const probeStarted = new Promise(resolve => { enteredProbe = resolve; });
+  const submissionGate = new Promise(resolve => { continueSubmission = resolve; });
+  const submissionStarted = new Promise(resolve => { enteredSubmission = resolve; });
+  const { pool } = await fixture(t, {
+    submit: async (_profileId, input, persist) => {
+      if (input.taskId === 'first-live') {
+        enteredSubmission();
+        await submissionGate;
+      }
+      const checkpoint = { phase: 'accepted', workspaceId: 'workspace', conversationId: 'conversation', itemId: input.taskId, requestId: input.taskId };
+      await persist(checkpoint);
+      return checkpoint;
+    },
+  });
+  await pool.configure({ enabled: true });
+  const first = pool.submit({ ...request, taskId: 'first-live' });
+  await submissionStarted;
+  for (const profile of pool.state.profiles) if (profile.state === 'idle') profile.state = 'cold';
+  pool.engine.probe = async () => { enteredProbe(); await probeGate; return { ready: true }; };
+  const second = pool.submit({ ...request, taskId: 'second-slow' });
+  await probeStarted;
+  continueSubmission();
+  let timer;
+  try {
+    const receipt = await Promise.race([first, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('checkpoint blocked by another environment preparation')), 300); })]);
+    assert.equal((await pool.query(receipt)).status, 'running');
+  } finally {
+    clearTimeout(timer);
+    releaseProbe();
+    await Promise.allSettled([first, second]);
+  }
+});
+
+test('independent batch submissions prepare different cold environments concurrently', async t => {
+  const { pool } = await fixture(t);
+  await pool.configure({ enabled: true });
+  for (const profile of pool.state.profiles) if (profile.state === 'idle') profile.state = 'cold';
+  const preparing = [];
+  let release, bothStarted;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { bothStarted = resolve; });
+  pool.engine.probe = async profileId => {
+    preparing.push(profileId);
+    if (preparing.length === 2) bothStarted();
+    await gate;
+    return { ready: true };
+  };
+  const first = pool.submit({ ...request, taskId: 'parallel-cold-1' });
+  const second = pool.submit({ ...request, taskId: 'parallel-cold-2' });
+  let timer;
+  try {
+    await Promise.race([started, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('cold browser preparation was serialized')), 300); })]);
+    assert.equal(new Set(preparing).size, 2);
+  } finally {
+    clearTimeout(timer);
+    release();
+    await Promise.allSettled([first, second]);
+  }
+  assert.equal((await pool.status()).busy, 2);
+  assert.equal((await pool.status()).idle, 0);
+});
+
+test('background reserve preparation never queues a ready submission or an original query', async t => {
+  const { pool } = await fixture(t);
+  await pool.configure({ enabled: true });
+  const original = await pool.submit(request);
+  const spare = pool.state.profiles.filter(profile => profile.state === 'idle');
+  for (const profile of spare.slice(1)) profile.state = 'cold';
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  pool.engine.probe = async () => { entered(); await gate; return { ready: true }; };
+  const maintenance = pool.maintain();
+  await started;
+  let timer;
+  try {
+    const result = await Promise.race([
+      Promise.all([pool.submit({ ...request, taskId: 'ready-during-maintenance' }), pool.query(original)]),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Error('submission or query queued behind background warmup')), 500); }),
+    ]);
+    assert.notEqual(result[0].profileId, original.profileId);
+    assert.equal(result[1].status, 'running');
+  } finally {
+    clearTimeout(timer); release(); await maintenance;
+    await pool.tail;
+  }
+});
+
+test('a new task prepares its own environment while every background warmup is still pending', async t => {
+  const { pool } = await fixture(t);
+  await pool.configure({ enabled: true });
+  for (const profile of pool.state.profiles) if (profile.state === 'idle') profile.state = 'cold';
+  const blocked = new Set(pool.state.profiles.slice(0, 2).map(profile => profile.id));
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  pool.engine.probe = async id => { if (blocked.has(id)) { entered(); await gate; } return { ready: true }; };
+  const maintenance = pool.maintain();
+  await started;
+  let timer;
+  try {
+    const receipt = await Promise.race([pool.submit(request), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('task waited for unrelated warmup')), 500); })]);
+    assert.equal(blocked.has(receipt.profileId), false);
+    assert.equal((await pool.query(receipt)).status, 'running');
+  } finally { clearTimeout(timer); release(); await maintenance; await pool.tail; }
+});
+
+test('cleaning all idle profiles never blocks original queries or newly submitted work', async t => {
+  const { pool } = await fixture(t);
+  await pool.configure({ enabled: true });
+  const original = await pool.submit(request);
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  pool.engine.clear = async () => { entered(); await gate; };
+  const cleaning = pool.clearAll();
+  await started;
+  let timer;
+  try {
+    const [receipt, result] = await Promise.race([
+      Promise.all([pool.submit({ ...request, taskId: 'during-clear' }), pool.query(original)]),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Error('task blocked by website cleanup')), 500); }),
+    ]);
+    assert.notEqual(receipt.profileId, original.profileId);
+    assert.equal(result.status, 'running');
+    assert.equal((await pool.query(receipt)).status, 'running');
+  } finally { clearTimeout(timer); release(); await cleaning; await pool.tail; }
+});
+
+test('slow shutdown of a completed environment cannot block other task checkpoints or reuse that profile early', async t => {
+  const { pool, calls } = await fixture(t, { query: async () => ({ status: 'failed', reason: 'fixture rejection' }) });
+  await pool.configure({ enabled: true });
+  const original = await pool.submit(request);
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  pool.engine.stop = async () => { entered(); await gate; };
+  const ending = pool.query(original);
+  await started;
+  let timer;
+  try {
+    const receipt = await Promise.race([pool.submit({ ...request, taskId: 'during-shutdown' }), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('checkpoint blocked by browser shutdown')), 500); })]);
+    assert.notEqual(receipt.profileId, original.profileId);
+    assert.deepEqual(calls.find(call => call[0] === 'submit' && call[2].taskId === 'during-shutdown')[2], { ...request, taskId: 'during-shutdown' });
+  } finally { clearTimeout(timer); release(); await ending; await pool.tail; }
+});
+
+test('duplicate requests during cold preparation keep one original receipt and one generation', async t => {
+  const { pool, calls } = await fixture(t);
+  await pool.configure({ enabled: true });
+  for (const profile of pool.state.profiles) if (profile.state === 'idle') profile.state = 'cold';
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  pool.engine.probe = async () => { entered(); await gate; return { ready: true }; };
+  const first = pool.submit(request);
+  await started;
+  try {
+    const receipt = await pool.submit(request);
+    assert.equal((await pool.query(receipt)).status, 'preparing');
+    await assert.rejects(pool.submit({ ...request, prompt: 'changed' }), /参数已改变/);
+    assert.equal(calls.some(call => call[0] === 'submit'), false);
+    release();
+    assert.deepEqual(await first, receipt);
+    assert.equal(calls.filter(call => call[0] === 'submit').length, 1);
+  } finally { release(); await first; }
+});
+
+test('more than 300 submissions all reach generation before any earlier submission completes', async t => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const profiles = new Set();
+  const { pool } = await fixture(t, { submit: async (id, input, persist) => {
+    profiles.add(id);
+    if (profiles.size === 320) entered();
+    await gate;
+    const checkpoint = { phase: 'accepted', workspaceId: 'workspace', itemId: input.taskId, requestId: input.taskId };
+    await persist(checkpoint);
+    return checkpoint;
+  } });
+  await pool.configure({ enabled: true });
+  const submitting = Promise.all(Array.from({ length: 320 }, (_, index) => pool.submit({ ...request, taskId: 'all-inflight-' + index })));
+  let timer;
+  try {
+    await Promise.race([started, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('batch waiting for another generation to finish')), 5000); })]);
+    assert.equal((await pool.status()).busy, 320);
+    assert.equal(profiles.size, 320);
+  } finally { clearTimeout(timer); release(); await submitting; }
+});
+
+test('cleanup skips an environment reserved by a task still preparing its browser', async t => {
+  const { pool, calls } = await fixture(t);
+  await pool.configure({ enabled: true });
+  for (const profile of pool.state.profiles) if (profile.state === 'idle') profile.state = 'cold';
+  const id = pool.state.profiles[0].id;
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  pool.engine.probe = async profileId => { if (profileId === id) { entered(); await gate; } return { ready: true }; };
+  const submitting = pool.submit(request);
+  await started;
+  try {
+    const result = await pool.clearAll();
+    assert.equal(result.skipped, 1);
+    assert.equal(calls.some(call => call[0] === 'clear' && call[1] === id), false);
+    assert.equal((await pool.query(await pool.lookup(request.taskId))).status, 'preparing');
+  } finally { release(); await submitting; }
+});
+
+test('a failed browser shutdown cannot return its profile to scheduling or overwrite the original result', async t => {
+  const { pool } = await fixture(t, { query: async () => ({ status: 'failed', reason: 'original upstream failure' }), stop: async () => { throw Error('fixture process still running'); } });
+  await pool.configure({ enabled: true });
+  const original = await pool.submit(request);
+  assert.deepEqual(await pool.query(original), { status: 'failed', reason: 'original upstream failure' });
+  const profile = pool.state.profiles.find(value => value.id === original.profileId);
+  assert.equal(profile.needsCleanup, true);
+  assert.equal(profile.state, 'attention');
+  pool.state.profiles.sort((left, right) => left.id === original.profileId ? -1 : right.id === original.profileId ? 1 : 0);
+  const next = await pool.submit({ ...request, taskId: 'after-shutdown-failure' });
+  assert.notEqual(next.profileId, original.profileId);
+});
+
+test('late submission acknowledgements cannot reset an already confirmed terminal result', async t => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const { pool, directory } = await fixture(t, {
+    submit: async (_id, input, persist) => {
+      const checkpoint = { phase: 'accepted', workspaceId: 'workspace', itemId: input.taskId, requestId: input.taskId };
+      await persist(checkpoint); entered(); await gate; return checkpoint;
+    },
+    query: async () => ({ status: 'failed', reason: 'original confirmed failure' }),
+  });
+  await pool.configure({ enabled: true });
+  const submitting = pool.submit(request);
+  await started;
+  try {
+    const receipt = await pool.lookup(request.taskId);
+    assert.equal((await pool.query(receipt)).status, 'failed');
+    release(); await submitting;
+    assert.equal(pool.state.jobs[request.taskId].phase, 'failed');
+    const restarted = new Pool(directory, {});
+    assert.equal((await restarted.status()).busy, 0);
+    assert.deepEqual(await restarted.query(receipt), { status: 'failed', reason: 'original confirmed failure' });
+  } finally { release(); await submitting; }
 });

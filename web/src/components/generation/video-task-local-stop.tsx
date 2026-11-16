@@ -3,14 +3,13 @@ import { Alert, App, Button } from "antd";
 
 import { AppModal } from "@/components/ui/product/app-modal/app-modal";
 import { stopVideoTaskLocally, type GenerationTask } from "@/services/api/task-center";
+import { canStopVideoTaskLocally } from "@/lib/workflow-shot-task";
 
 export function VideoTaskLocalStop({ task, onStopped }: { task: GenerationTask; onStopped: (task: GenerationTask) => void }) {
     const { message } = App.useApp();
     const [confirmTask, setConfirmTask] = useState(false);
     const [stopping, setStopping] = useState(false);
-    const active = task.status === "queued" || task.status === "running";
-    const video = task.type === "canvas_video" || task.type.startsWith("canvas_video_") || task.type.startsWith("video_");
-    if (!active || !video || task.id.startsWith("local:")) return null;
+    if (!canStopVideoTaskLocally(task)) return null;
 
     const stop = async () => {
         if (!confirmTask || stopping) return;

@@ -10,12 +10,12 @@ import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, CanvasStaleS
 import { CanvasJournalError, clearCanvasOperationJournal, clearCanvasPendingProjection, loadCanvasOperationJournal, newCanvasCommitOperationId, peekCanvasOperationJournal, recordConfirmedCanvasCommit, updateCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import { canvasNodeToAsset, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
+import { bindCanvasNodeResourceAsset, canvasNodeToAsset, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { canvasUnconfirmedReason, canvasUnconfirmedDiagnostic, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
-import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
+import { isCanvasGenerationOnlyRevision, rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 
 export type { CapturedUserScope } from "@/lib/user-scope-guard";
@@ -496,6 +496,20 @@ async function applyAcceptedCanvasSave(id: string, submitted: CanvasProject, sav
 
 async function submitGeneratedAssetsToBackend(id: string, expected: CapturedUserScope) {
     const scope = expected.userScope;
+    const before = openLocalCanvasProject(id);
+    if (before && canvasNodesMissingResourceAssetBinding(before.nodes).length) {
+        const { ensureCanvasResourceAssetBindings } = await import("@/services/project-asset-sync");
+        const bound = await ensureCanvasResourceAssetBindings({ canvasId: id, domainProjectId: before.projectId, nodes: before.nodes, expectedScope: expected });
+        assertDispatchGuard(expected);
+        const latest = openLocalCanvasProject(id);
+        if (!latest) return;
+        const nodes = latest.nodes.map(node => bindCanvasNodeResourceAsset(node, bound, []));
+        if (nodes.some((node, index) => node !== latest.nodes[index])) {
+            useCanvasStore.getState().updateProject(id, { nodes });
+            const updated = openLocalCanvasProject(id);
+            if (updated) notifyCanvasRefresh(updated, latest);
+        }
+    }
     await commitLiveCanvasDocument(id, expected);
     throwIfCanvasNotWritable(id, expected);
     const project = openLocalCanvasProject(id);
@@ -538,13 +552,13 @@ async function commitLiveCanvasDocument(id: string, expected: CapturedUserScope)
     return withCanvasProjection(scope, id, () => commitLiveCanvasDocumentUnlocked(id, expected));
 }
 
-async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUserScope) {
+async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUserScope, allowGenerationRebase = true) {
     const scope = expected.userScope;
     await replayPendingCanvasProjection(id, scope, expected, { throwOnFailure: true });
     const journal = await loadCanvasOperationJournal(id, scope);
     let sent = false;
     if (journal.inFlight) {
-        await sendCanvasDocumentCommit(id, journal.inFlight.operationId, journal.inFlight.payload, expected);
+        await sendCanvasDocumentCommit(id, journal.inFlight.operationId, journal.inFlight.payload, expected, allowGenerationRebase);
         sent = true;
     }
     if (!matchesDispatchGuard(expected)) {
@@ -590,10 +604,10 @@ async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUs
     });
     if (!queued.inFlight) return;
     throwIfCanvasNotWritable(id, expected);
-    await sendCanvasDocumentCommit(id, queued.inFlight.operationId, queued.inFlight.payload, expected);
+    await sendCanvasDocumentCommit(id, queued.inFlight.operationId, queued.inFlight.payload, expected, allowGenerationRebase);
 }
 
-async function sendCanvasDocumentCommit(id: string, operationId: string, payload: { canvasId: string; expectedRevision: number; document: CanvasProject }, expected: CapturedUserScope) {
+async function sendCanvasDocumentCommit(id: string, operationId: string, payload: { canvasId: string; expectedRevision: number; document: CanvasProject }, expected: CapturedUserScope, allowGenerationRebase = true) {
     traceCanvasGraph("repository.submit", { document: payload.document, confirmed: canvasDocumentBase(id, expected.userScope)?.snapshot });
     const scope = expected.userScope;
     assertDispatchGuard(expected);
@@ -620,6 +634,22 @@ async function sendCanvasDocumentCommit(id: string, operationId: string, payload
                 if (!current.inFlight) return;
                 return { ...current, inFlight: null };
             });
+            if (allowGenerationRebase && !canvasSubmitBlocked(id, scope)) {
+                const base = peekCanvasOperationJournal(id, scope)?.confirmedSnapshot;
+                let remote: CanvasProject | undefined;
+                try {
+                    remote = (await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`, { expectedScope: expected })).project;
+                } catch (readError) {
+                    rethrowIfAbandoned(readError);
+                }
+                assertDispatchGuard(expected);
+                if (base && remote && isCanvasGenerationOnlyRevision(base, remote)) {
+                    const confirmed = await confirmRemoteDocument(remote, scope);
+                    alignLiveAfterConfirmedRemote({ id, scope, remote, base, hadLive: true, expected });
+                    await persistProjectedCanvas(id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: true }, expected);
+                    if (!canvasSubmitBlocked(id, scope)) return commitLiveCanvasDocumentUnlocked(id, expected, false);
+                }
+            }
             await handleRejectedCanvasBackendSave(id, payload.document, error, scope);
             throw error;
         }
@@ -1034,7 +1064,8 @@ export async function refreshLocalCanvasProjectIfChanged(id: string, expectedSco
             // 读取可能早于本机提交回执；在同一投影锁内对照已确认版本，
             // 相同或更旧的快照不能把尚未自动保存的编辑标成外部冲突。
             if (journal?.confirmedSnapshot && typeof remote.revision === "number" && remote.revision <= journal.confirmedRevision) return undefined;
-            if (hasUnconfirmedCanvasEdits(id) || canvasSubmitBlocked(id, scope)) {
+            const generationOnly = Boolean(journal?.confirmedSnapshot && remote && isCanvasGenerationOnlyRevision(journal.confirmedSnapshot, remote));
+            if ((hasUnconfirmedCanvasEdits(id) && !generationOnly) || canvasSubmitBlocked(id, scope)) {
                 pauseForExternalCandidate(id, remote, scope);
                 return undefined;
             }

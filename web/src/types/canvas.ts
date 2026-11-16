@@ -127,6 +127,7 @@ export type StoryboardRow = {
     sceneName?: string;
     sceneChange?: boolean;
     propNames?: string[];
+    referenceAssetIds?: string[];
     systemElements?: string[];
     systemPresentation?: import("@/lib/chapter-system-presentation").SystemPresentationSettings;
     imageGenerationPrompt: string;

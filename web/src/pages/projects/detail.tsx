@@ -1,10 +1,11 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, App, Button } from "antd";
 import { ArrowLeft, Plus } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 
-import { getProject, getProjectCore, getProjectOverview, getProjectUnitWorkspace, linkCanvasUnit, listProjectUnits } from "@/services/api/projects";
+import { getProject, getProjectCore, getProjectOverview, getProjectUnitWorkspace, linkCanvasUnit, listProjectUnits, mergeSameNameProjectProps } from "@/services/api/projects";
+import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import type { ProjectDetail } from "@/services/api/projects";
@@ -47,7 +48,7 @@ export default function ProjectDetailPage() {
         refetchOnMount: "always",
         retry: retryProjectRead,
     });
-    const unitsQuery = useQuery({ queryKey: ["project", projectId, "units"], queryFn: ({ signal }) => listProjectUnits(projectId, signal), enabled: Boolean(projectId), retry: retryProjectRead });
+    const unitsQuery = useQuery({ queryKey: ["project", projectId, "units"], queryFn: ({ signal }) => listProjectUnits(projectId, signal), enabled: Boolean(projectId), retry: retryProjectRead, refetchInterval: activeView === "workflow" ? 3_000 : false });
     const units = unitsQuery.data?.units || [];
     const firstUnitId = units.slice().sort((left, right) => left.position - right.position)[0]?.id || "";
     const requestedUnitId = chapterId || unitId || "";
@@ -67,6 +68,22 @@ export default function ProjectDetailPage() {
         refetchOnMount: "always",
     });
     const project = coreQuery.data?.project;
+    const scope = captureUserScope();
+    useEffect(() => {
+        if (!projectId || project?.status !== "active") return;
+        let disposed = false;
+        void mergeSameNameProjectProps(projectId, scope).then(({ merged, deferred }) => {
+            if (disposed || !userScopeMatches(scope)) return;
+            if (merged) {
+                void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+                message.success(`已自动合并 ${merged} 个同名道具，原图与历史版本保留`);
+            }
+            if (deferred) message.info(`有 ${deferred} 个同名道具正在生成，暂缓合并，不影响现有任务`);
+        }).catch((error) => {
+            if (!disposed && userScopeMatches(scope)) message.error(`同名道具自动整理失败：${error instanceof Error ? error.message : "请重新进入项目重试"}`);
+        });
+        return () => { disposed = true; };
+    }, [projectId, project?.status, scope.userScope, scope.epoch]);
     const workspace = workspaceQuery.data;
     const readErrorQuery = [coreQuery, unitsQuery].find((query) => query.isError)
         || ((activeView === "chapters" || activeView === "workflow") && workspaceQuery.isError ? workspaceQuery : undefined);
@@ -79,6 +96,7 @@ export default function ProjectDetailPage() {
         canvases: [],
         canvasUnitLinks: [],
         unitCanvasCounts: unitsQuery.data?.canvasCounts || {},
+        unitVideoProgress: unitsQuery.data?.videoProgress,
         assets: workspace?.assets || [],
         assetFolders: [],
         workflows: workspace?.workflows || [],

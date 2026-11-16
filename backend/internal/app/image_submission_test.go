@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -26,6 +27,11 @@ import (
 func imageSubmissionFixture(t *testing.T, multipartBody bool) (*Service, *gorm.DB, model.Task, *model.ImageSubmission, []byte) {
 	t.Helper()
 	s, db, _, _ := creationTestService(t)
+	sqlDatabase, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDatabase.Close() })
 	s.workerID = newID()
 	task := model.Task{ID: "image-task", UserID: "user", Type: "canvas_image", Status: model.TaskStatusRunning, LeaseOwner: "owner", InputJSON: `{"mode":"image"}`}
 	expires := time.Now().Add(time.Hour)
@@ -64,6 +70,138 @@ func imageSubmissionFixture(t *testing.T, multipartBody bool) (*Service, *gorm.D
 }
 
 func noImageWait(context.Context, time.Duration) error { return nil }
+
+func TestImageSubmissionExplicitRejectionPreservesCauseAndAllowsManualRetry(t *testing.T) {
+	for _, withSnapshot := range []bool{false, true} {
+		t.Run(fmt.Sprint(withSnapshot), func(t *testing.T) {
+			service, database, task, snapshot, _ := imageSubmissionFixture(t, false)
+			if !withSnapshot {
+				if err := database.Delete(snapshot).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			attempt, err := service.repo.LatestRouteAttempt(task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt.DispatchState = "not_sent"
+			if err := service.repo.SaveRouteAttempt(attempt); err != nil {
+				t.Fatal(err)
+			}
+			executor := newTaskRouteExecutor(service)
+			adapter := executor.port.(taskRouteServiceAdapter)
+			calls := 0
+			adapter.process = func(context.Context, model.Task) (map[string]interface{}, []map[string]interface{}, error) {
+				calls++
+				return nil, nil, providerHTTPError{StatusCode: 400, Body: `{"error":{"code":"upstream_error","message":"非常抱歉，生成的图片可能违反了关于裸露、色情或性内容的相关政策。如果你认为这是误判，可以重试或修改提示词。 (request id: image-rejection-123)"}}`}
+			}
+			executor.port = adapter
+			result, err := executor.execute(context.Background(), &task, attempt)
+			if err != nil || calls != 1 {
+				t.Fatalf("execution calls=%d error=%v", calls, err)
+			}
+			failure := classifyTaskFailure(result.err)
+			if !failure.IsModeration() || failure.Uncertain || failure.RequestID != "image-rejection-123" || isImageRecoveryError(result.err) {
+				t.Fatalf("explicit rejection hidden: %+v error=%v", failure, result.err)
+			}
+			if attempt.DispatchState != "rejected_no_job" {
+				t.Fatalf("rejection state=%s", attempt.DispatchState)
+			}
+			if err := service.validateImageTaskRetry(&task); err != nil {
+				t.Fatalf("confirmed rejected task cannot be manually retried: %v", err)
+			}
+		})
+	}
+}
+
+func TestImageSubmissionLostResponseDoesNotClaimRecoveryWasStopped(t *testing.T) {
+	failure := classifyTaskFailure(imageRecoveryError{io.ErrUnexpectedEOF})
+	if failure.Category != generation.CategorySubmissionUncertain || !failure.Uncertain {
+		t.Fatalf("lost response became definite: %+v", failure)
+	}
+	if strings.Contains(failure.UserMessage(), "自动恢复已停止") || strings.Contains(failure.UserMessage(), "联系支持") {
+		t.Fatalf("misleading recovery message: %s", failure.UserMessage())
+	}
+}
+
+func TestImageSubmissionDefiniteRejectionDoesNotAffectOtherTaskRoutes(t *testing.T) {
+	service, database, task, snapshot, _ := imageSubmissionFixture(t, false)
+	if err := database.Delete(snapshot).Error; err != nil {
+		t.Fatal(err)
+	}
+	task.Type = "canvas_video"
+	if err := database.Model(&model.Task{}).Where("id = ?", task.ID).Update("type", task.Type).Error; err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := service.repo.LatestRouteAttempt(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.finishTaskRouteAttempt(attempt, &task, providerHTTPError{StatusCode: 400, Body: `{"error":{"code":"content_policy_violation","message":"blocked by safety policy"}}`})
+	if attempt.DispatchState != "submission_unknown" {
+		t.Fatalf("image correction changed a video route: %s", attempt.DispatchState)
+	}
+}
+
+func TestImageSubmissionAmbiguousResponseIsNotDefiniteRejection(t *testing.T) {
+	for _, response := range []providerHTTPError{
+		{StatusCode: 400},
+		{StatusCode: 400, Body: `{"error":{"code":"do_request_failed","message":"connection reset"}}`},
+		{StatusCode: 409, Body: `{"error":{"code":"image_result_unknown"}}`},
+		{StatusCode: 524, Body: "gateway timed out"},
+	} {
+		if definiteImageRejection(response) {
+			t.Fatalf("ambiguous image submission became safe to resubmit: %+v", response)
+		}
+	}
+}
+
+func TestImageSubmissionHistoricalRejectionUsesRecordedEvidence(t *testing.T) {
+	service, database, task, snapshot, _ := imageSubmissionFixture(t, false)
+	if err := database.Delete(snapshot).Error; err != nil {
+		t.Fatal(err)
+	}
+	task.Status, task.Stage = model.TaskStatusFailed, "submission_unknown"
+	task.Error = "图片结果尚未确认，自动恢复已停止。请保留任务记录并联系支持查询结果，不要重复提交。"
+	task.FailureDiagnostics = &model.TaskFailureDiagnostics{Source: "upstream_http", ExecutionResult: "failed", Requests: []model.TaskRequestEvidence{{Operation: "image_edit", Dispatched: true, Outcome: "http_error", HTTPStatus: 400, ProviderCode: "upstream_error", RequestID: "legacy-image-123", Summary: "非常抱歉，生成的图片可能违反了我们的内容政策。"}}}
+	for _, displayed := range []model.Task{*taskForOutput(task), {Stage: taskSummaryForOutput(task).Stage, Error: taskSummaryForOutput(task).Error, ErrorCode: taskSummaryForOutput(task).ErrorCode}} {
+		if displayed.Stage == "submission_unknown" || displayed.ErrorCode != string(generation.CategoryModerationOutput) || !strings.Contains(displayed.Error, "内容安全审核") || !strings.Contains(displayed.Error, "legacy-image-123") {
+			t.Fatalf("historical evidence still hidden: %+v", displayed)
+		}
+	}
+	if task.Stage != "submission_unknown" {
+		t.Fatal("output projection mutated the original record")
+	}
+	if err := service.validateImageTaskRetry(&task); err != nil {
+		t.Fatalf("edited replacement of definite rejected image is blocked: %v", err)
+	}
+	attempt, err := service.repo.LatestRouteAttempt(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.DispatchState = "accepted"
+	if err := service.repo.SaveRouteAttempt(attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.validateImageTaskRetry(&task); err == nil {
+		t.Fatal("accepted image was unlocked by an older rejection")
+	}
+	task.FailureDiagnostics.Requests = append(task.FailureDiagnostics.Requests, model.TaskRequestEvidence{Operation: "image_edit", Dispatched: true, Outcome: "transport_error", Summary: "connection reset"})
+	if displayed := taskSummaryForOutput(task); displayed.Stage != "submission_unknown" {
+		t.Fatal("older rejection overrode the newer unknown attempt")
+	}
+	if err := service.validateImageTaskRetry(&task); err == nil {
+		t.Fatal("newer unknown submission allowed duplicate generation")
+	}
+}
+
+func TestImageSubmissionLostResponseDiagnosticsRemainUnconfirmed(t *testing.T) {
+	task := model.Task{Type: "canvas_image", Stage: "正在连接上游", FailureDiagnostics: &model.TaskFailureDiagnostics{ExecutionResult: "failed", Requests: []model.TaskRequestEvidence{{Operation: "image_edit", Dispatched: true, Outcome: "transport_error", Summary: "connection reset by peer"}}}}
+	captureTaskFailureDiagnostics(&task, imageRecoveryError{io.ErrUnexpectedEOF}, "unknown")
+	if task.FailureDiagnostics.ExecutionResult != "pending" || task.FailureDiagnostics.Source != "transport" || task.FailureDiagnostics.Summary != "connection reset by peer" {
+		t.Fatalf("lost response mislabeled as upstream failure: %+v", task.FailureDiagnostics)
+	}
+}
 
 func TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse(t *testing.T) {
 	s, db, task, row, _ := imageSubmissionFixture(t, false)

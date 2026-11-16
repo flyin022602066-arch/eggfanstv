@@ -14,6 +14,7 @@ try {
         let revision = 1;
         let rejectRemoval = true;
         let shotBusy = false;
+        let slowCatalog = theme === "dark" && width === 1500;
         const extraAssets = [
             { id: "phone-a", title: "云舒的手机", category: "prop", mediaType: "image", primaryVersionId: "phone-a-v1", definitionJson: JSON.stringify({ aliases: ["手机"] }) },
             { id: "phone-b", title: "周行旻的电话设备", category: "prop", mediaType: "image", primaryVersionId: "phone-b-v1", definitionJson: JSON.stringify({ aliases: ["手机"] }) },
@@ -78,7 +79,10 @@ try {
                 }
                 errors.push("unexpected write: " + path); return route.abort();
             }
-            if (path.endsWith("/character-versions")) return ok({ revision, versions });
+            if (path.endsWith("/character-versions")) {
+                if (slowCatalog) { slowCatalog = false; await new Promise((resolve) => setTimeout(resolve, 4500)); }
+                return ok({ revision, versions });
+            }
             if (path.endsWith("/workspace")) {
                 const data = workspace();
                 data.shotRevisions[0].videoPrompt += "苏卉拿起手机。";
@@ -104,6 +108,7 @@ try {
         assert.equal(await panel.getByRole("combobox").isEnabled(), true);
         assert.equal(await panel.getByRole("button", { name: "锁定", exact: true }).isEnabled(), true);
         await page.getByRole("button", { name: "切换脚本未保存" }).click();
+        revision++;
         await panel.locator(".ant-select").click();
         const selectedImageLoaded = page.waitForResponse((response) => new URL(response.url()).pathname.includes("img1"));
         await page.locator(".ant-select-item-option").filter({ hasText: longName }).click();

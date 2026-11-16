@@ -21,7 +21,7 @@ try {
             writes.push(request.method() + " " + target.pathname);
             return route.abort();
         }
-        if (target.pathname.startsWith("/api/")) return route.fulfill({ json: { code: 0, data: { assets: [], skills: [], tasks: [], total: 0 }, msg: "" } });
+        if (target.pathname.startsWith("/api/")) return route.fulfill({ json: { code: 0, data: { assets: [], versions: [], revision: 1, shots: [], shotRevisions: [], shotArtifacts: [], shotReferences: [], skills: [], tasks: [], total: 0 }, msg: "" } });
         return route.continue();
     });
     await page.goto(url.toString());

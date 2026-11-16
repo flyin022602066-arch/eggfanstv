@@ -175,9 +175,12 @@ func TestTaskClientContextProjectsChapterOperations(t *testing.T) {
 }
 
 func TestTaskClientContextProjectsShotWorkflow(t *testing.T) {
-	context := taskClientContext(`{"metadata":{"domainProjectId":"project-1","shotId":"shot-1","workflowStepId":"step-1","artifactType":"video"}}`)
+	context := taskClientContext(`{"metadata":{"domainProjectId":"project-1","shotId":"shot-1","workflowStepId":"step-1","artifactType":"video","videoPromptRepairParentTaskId":"repair-parent"}}`)
 	if context == nil || context.DomainProjectID != "project-1" || context.ShotID != "shot-1" || context.WorkflowStepID != "step-1" || context.ArtifactType != "video" {
 		t.Fatalf("shot task context was not decoded: %+v", context)
+	}
+	if context.VideoPromptRepairParentTaskID != "repair-parent" {
+		t.Fatal("prompt repair parent identity missing from workflow summaries")
 	}
 }
 
@@ -185,5 +188,18 @@ func TestTaskOutputResourceReadsPersistedMedia(t *testing.T) {
 	id, mediaType := taskOutputResource(`{"mode":"video","video":{"resourceId":"resource-1","storageKey":"resource:resource-1"}}`, "canvas_video")
 	if id != "resource-1" || mediaType != "video" {
 		t.Fatalf("unexpected task output resource: id=%q mediaType=%q", id, mediaType)
+	}
+}
+
+func TestTaskClientContextExposesOnlyPreflightStatus(t *testing.T) {
+	summary := taskSummaryForOutput(model.Task{InputJSON: `{"metadata":{"shotId":"shot-1","workflowStepId":"step-1","videoPromptPreflight":{"status":"changed","originalPrompt":"private-long-draft","replacements":[{"original":"private-fragment"}]}},"config":{"apiKey":"private-key"}}`})
+	body, _ := json.Marshal(summary)
+	if !strings.Contains(string(body), `"videoPromptPreflightStatus":"changed"`) {
+		t.Fatalf("preflight status missing: %s", body)
+	}
+	for _, private := range []string{"private-long-draft", "private-fragment", "private-key", "originalPrompt", "replacements"} {
+		if strings.Contains(string(body), private) {
+			t.Fatalf("summary leaked %s", private)
+		}
 	}
 }

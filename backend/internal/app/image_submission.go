@@ -44,6 +44,11 @@ func (s *Service) validateImageTaskRetry(task *model.Task) error {
 	}
 	row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if attempt.DispatchState != "accepted" {
+			if _, rejected := recordedImageRejection(*task); rejected {
+				return nil
+			}
+		}
 		if attempt.DispatchState == "submission_unknown" || attempt.DispatchState == "accepted" {
 			return BadAuthRequest("图片请求可能已经生成，请保留任务记录并联系支持查询结果，不要重复提交")
 		}
@@ -52,8 +57,15 @@ func (s *Service) validateImageTaskRetry(task *model.Task) error {
 	if err != nil {
 		return err
 	}
-	if attempt.DispatchState == "rejected_no_job" && !row.ResponseAccepted {
-		return nil
+	if !row.ResponseAccepted {
+		if attempt.DispatchState == "rejected_no_job" {
+			return nil
+		}
+		if attempt.DispatchState != "accepted" {
+			if _, rejected := recordedImageRejection(*task); rejected {
+				return nil
+			}
+		}
 	}
 	return BadAuthRequest("图片请求可能已经生成，请保留任务记录并联系支持查询结果，不要重复提交")
 }
@@ -61,6 +73,82 @@ func (s *Service) validateImageTaskRetry(task *model.Task) error {
 func definiteImageThrottle(err error) bool {
 	var upstream providerHTTPError
 	return !isImageRecoveryError(err) && errors.As(err, &upstream) && upstream.StatusCode == 429 && classifyProviderHTTP(upstream).Category == generation.CategoryThrottled
+}
+
+func definiteImageRejection(err error) bool {
+	var upstream providerHTTPError
+	if isImageRecoveryError(err) || !errors.As(err, &upstream) {
+		return false
+	}
+	if upstream.StatusCode != http.StatusBadRequest && upstream.StatusCode != http.StatusUnprocessableEntity && upstream.StatusCode != http.StatusRequestEntityTooLarge {
+		return false
+	}
+	failure := classifyProviderHTTP(upstream)
+	if failure.Uncertain || !failure.Structured {
+		return false
+	}
+	if failure.IsModeration() {
+		return true
+	}
+	switch failure.Category {
+	case generation.CategoryInvalidParams, generation.CategoryInputTooLarge, generation.CategoryInputInaccessible, generation.CategoryContextTooLong:
+		return true
+	}
+	return false
+}
+
+func recordedImageRejection(task model.Task) (generation.Failure, bool) {
+	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed || task.Stage != "submission_unknown" || task.ProviderRequestID != "" || task.FailureDiagnostics == nil || task.FailureDiagnostics.ExecutionResult == "completed" {
+		return generation.Failure{}, false
+	}
+	requests := task.FailureDiagnostics.Requests
+	if len(requests) == 0 {
+		return generation.Failure{}, false
+	}
+	last := requests[len(requests)-1]
+	if !last.Dispatched || last.Outcome != "http_error" || last.Operation != "image_edit" && last.Operation != "image_generate" {
+		return generation.Failure{}, false
+	}
+	body, err := json.Marshal(map[string]any{"error": map[string]string{"code": last.ProviderCode, "message": last.Summary}})
+	if err != nil {
+		return generation.Failure{}, false
+	}
+	upstream := providerHTTPError{StatusCode: last.HTTPStatus, Body: string(body)}
+	if !definiteImageRejection(upstream) {
+		return generation.Failure{}, false
+	}
+	failure := classifyProviderHTTP(upstream)
+	failure.RequestID = firstNonEmpty(failure.RequestID, last.RequestID)
+	return failure, true
+}
+
+func normalizeImageTaskFailure(task model.Task) model.Task {
+	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed || task.Stage != "submission_unknown" {
+		return task
+	}
+	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(task.FailureDiagnostics)
+	if failure, rejected := recordedImageRejection(task); rejected {
+		task.Stage, task.Error = "任务失败", failure.UserMessage()
+		task.FailureDiagnostics.Source = "upstream_http"
+		task.FailureDiagnostics.HTTPStatus = failure.HTTPStatus
+		task.FailureDiagnostics.RequestID = failure.RequestID
+		task.FailureDiagnostics.ExecutionResult = "failed"
+		return task
+	}
+	failure := applyAppFailureWrappers(imageRecoveryError{}, generation.ClassifyText(task.Error))
+	task.Error = failure.UserMessage()
+	if task.FailureDiagnostics != nil {
+		task.FailureDiagnostics.ExecutionResult = "pending"
+		requests := task.FailureDiagnostics.Requests
+		if len(requests) > 0 {
+			last := requests[len(requests)-1]
+			if last.Dispatched && (last.Outcome == "transport_error" || last.Outcome == "timeout") {
+				task.FailureDiagnostics.Source = "transport"
+				task.FailureDiagnostics.Summary = firstNonEmpty(last.Summary, task.FailureDiagnostics.Summary)
+			}
+		}
+	}
+	return task
 }
 
 func isImageRecoveryError(err error) bool {
@@ -156,7 +244,7 @@ func (s *Service) deferImageRecovery(task model.Task) error {
 type imageRecoveryError struct{ cause error }
 
 func (e imageRecoveryError) Error() string {
-	return "图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果"
+	return "图片提交结果尚未确认；请查看原任务的上游响应和排查信息，核对前不要重复提交"
 }
 func (e imageRecoveryError) Unwrap() error { return e.cause }
 

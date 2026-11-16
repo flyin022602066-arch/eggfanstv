@@ -101,29 +101,36 @@ func (s *Service) CharacterReferenceCatalog(userID, projectID string) (Character
 	if err != nil {
 		return CharacterReferenceCatalog{}, err
 	}
-	assets, err := s.repo.ProjectAssets(userID, projectID)
+	data, err := s.repo.ProjectCharacterReferenceData(userID, projectID)
 	if err != nil {
 		return CharacterReferenceCatalog{}, err
 	}
 	result := CharacterReferenceCatalog{Revision: project.Revision, Versions: []CharacterReferenceVersion{}}
-	for _, asset := range assets {
-		if asset.Category != model.AssetCategoryCharacter {
-			continue
+	representations := make(map[string][]model.AssetRepresentation, len(data.Versions))
+	for _, representation := range data.Representations {
+		representations[representation.AssetVersionID] = append(representations[representation.AssetVersionID], representation)
+	}
+	bindings := make(map[string]*model.CharacterVoiceBinding, len(data.VoiceBindings))
+	for index := range data.VoiceBindings {
+		binding := &data.VoiceBindings[index]
+		bindings[binding.AssetVersionID] = binding
+	}
+	profiles := make(map[string]*model.VoiceProfile, len(data.VoiceProfiles))
+	for index := range data.VoiceProfiles {
+		profile := &data.VoiceProfiles[index]
+		profiles[profile.ID] = profile
+	}
+	for _, version := range data.Versions {
+		binding := bindings[version.ID]
+		var profile *model.VoiceProfile
+		if binding != nil {
+			profile = profiles[binding.VoiceProfileID]
 		}
-		versions, err := s.repo.AssetVersions(asset.ID)
+		card, err := characterVersionCardFromData(version.AssetVersion, representations[version.ID], binding, profile)
 		if err != nil {
 			return result, err
 		}
-		for _, version := range versions {
-			if version.Status == model.AssetVersionStatusArchived {
-				continue
-			}
-			card, err := s.characterVersionCard(userID, version)
-			if err != nil {
-				return result, err
-			}
-			result.Versions = append(result.Versions, CharacterReferenceVersion{CharacterCardSummary: card, AssetID: asset.ID, Title: asset.Title, ReferenceProfile: referenceProfile(version.ReferenceProfileJSON), UpdatedAt: version.UpdatedAt})
-		}
+		result.Versions = append(result.Versions, CharacterReferenceVersion{CharacterCardSummary: card, AssetID: version.AssetID, Title: version.AssetTitle, ReferenceProfile: referenceProfile(version.ReferenceProfileJSON), UpdatedAt: version.UpdatedAt})
 	}
 	return result, nil
 }

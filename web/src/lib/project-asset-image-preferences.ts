@@ -1,6 +1,6 @@
 export const PROJECT_ASSET_IMAGE_CATEGORIES = ["character", "environment", "prop"] as const;
 export type ProjectAssetImageCategory = (typeof PROJECT_ASSET_IMAGE_CATEGORIES)[number];
-export type ProjectAssetImagePreset = { model: string; size: string; quality: string; extraPrompt: string; extraPromptScope?: "category" };
+export type ProjectAssetImagePreset = { model: string; size: string; quality: string; extraPrompt: string; extraPromptScope?: "category"; characterLayoutId?: string; characterDesignTemplateId?: string };
 export type ProjectAssetImagePresets = Partial<Record<ProjectAssetImageCategory, ProjectAssetImagePreset>>;
 export const projectAssetImageCategoryLabels = { character: "角色", environment: "场景", prop: "道具" };
 
@@ -12,7 +12,7 @@ export function normalizeProjectAssetImagePresets(value: unknown): ProjectAssetI
         if (!preset || typeof preset !== "object" || Array.isArray(preset)) continue;
         const fields = preset as Record<string, unknown>;
         const text = (key: string) => typeof fields[key] === "string" ? fields[key] as string : "";
-        result[category] = { model: text("model"), size: text("size"), quality: text("quality"), extraPrompt: text("extraPrompt"), ...(fields.extraPromptScope === "category" ? { extraPromptScope: "category" as const } : {}) };
+        result[category] = { model: text("model"), size: text("size"), quality: text("quality"), extraPrompt: text("extraPrompt"), ...(fields.extraPromptScope === "category" ? { extraPromptScope: "category" as const } : {}), ...(category === "character" && text("characterLayoutId") ? { characterLayoutId: text("characterLayoutId") } : {}), ...(category === "character" && text("characterDesignTemplateId") ? { characterDesignTemplateId: text("characterDesignTemplateId") } : {}) };
     }
     return result;
 }

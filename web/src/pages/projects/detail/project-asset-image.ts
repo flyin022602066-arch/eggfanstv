@@ -5,6 +5,7 @@ import type { GenerationTask } from "@/services/api/task-center";
 import type { ProjectAssetImageCategory, ProjectAssetImagePreset } from "@/lib/project-asset-image-preferences";
 import { systemInterfaceIdentity, systemInterfaceTemplatePrompt } from "@/lib/chapter-system-interface";
 import { PROP_REFERENCE_DESIGN_RULE, SCENE_REFERENCE_DESIGN_RULE } from "@/lib/asset-visual-design";
+import { characterDesignTemplate, characterReferenceLayout } from "@/lib/character-reference-templates";
 
 export function projectAssetImageModel(config: AiConfig, projectDefault?: string) {
     return [projectDefault, config.imageModel, ...selectableModelsByCapability(config, "image")].find((model) => model && configuredModelMatchesCapability(config, model, "image")) || "";
@@ -38,17 +39,17 @@ export function projectAssetImageCategory(asset: ProjectAsset): ProjectAssetImag
 export function resolveProjectAssetImagePreset(config: AiConfig, project: Project, category: ProjectAssetImageCategory): ProjectAssetImagePreset {
     const saved = config.projectAssetImagePresets?.[category];
     const model = saved?.model || projectAssetImageModel(config, project.defaultImageModel);
-    const selection = { size: saved?.size || (category === "character" ? "3:2" : project.aspectRatio || config.size), quality: saved?.quality || config.quality, count: "1" };
+    const selection = { size: saved?.size || (category === "character" ? "16:9" : project.aspectRatio || config.size), quality: saved?.quality || config.quality, count: "1" };
     const profile = configuredModelMatchesCapability(config, model, "image") ? modelCapabilityConfigFor(config, model).image : undefined;
     const normalized = profile ? normalizeImageValue(profile, selection) : selection;
-    return { model, size: normalized.size, quality: normalized.quality, extraPrompt: saved?.extraPromptScope === "category" ? saved.extraPrompt : "", ...(saved?.extraPromptScope === "category" ? { extraPromptScope: "category" as const } : {}) };
+    return { model, size: normalized.size, quality: normalized.quality, extraPrompt: saved?.extraPromptScope === "category" ? saved.extraPrompt : "", ...(saved?.extraPromptScope === "category" ? { extraPromptScope: "category" as const } : {}), ...(category === "character" ? { characterLayoutId: characterReferenceLayout(saved?.characterLayoutId).id, characterDesignTemplateId: characterDesignTemplate(saved?.characterDesignTemplateId).id } : {}) };
 }
 
 export function projectAssetImageConfig(config: AiConfig, preset: ProjectAssetImagePreset): AiConfig {
     if (!configuredModelMatchesCapability(config, preset.model, "image")) throw new Error("已保存的图片模型不可用，请在统一生图设置中重新选择");
     const profile = modelCapabilityConfigFor(config, preset.model).image;
     const selection = profile ? normalizeImageValue(profile, { ...preset, count: "1" }) : preset;
-    return { ...config, model: preset.model, imageModel: preset.model, size: selection.size, quality: selection.quality, count: "1", taskWorkflowProvider: "model" };
+    return { ...config, model: preset.model, imageModel: preset.model, size: selection.size, quality: selection.quality, count: "1", taskWorkflowProvider: "model", ...(preset.characterLayoutId || preset.characterDesignTemplateId ? { projectAssetImagePresets: { ...config.projectAssetImagePresets, character: { ...config.projectAssetImagePresets?.character, ...preset } } } : {}) };
 }
 
 export function activeProjectAssetImageIds(tasks: GenerationTask[]) {

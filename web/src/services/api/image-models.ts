@@ -91,7 +91,7 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
     if (isNativeDesktopRuntime()) {
         viaBackend = true;
     }
-    if (channel.interfaceType === "kanhai-video" || channel.id === "kanhai-video" || channel.interfaceType === "nono-video" || channel.id === "nono-video") viaBackend = true;
+    if (isJiasuVideoChannel(channel) || channel.interfaceType === "kanhai-video" || channel.id === "kanhai-video" || channel.interfaceType === "nono-video" || channel.id === "nono-video") viaBackend = true;
     if (!viaBackend) {
         if (channel.apiFormat !== "gemini") {
             const catalog = filterChannelCatalog(channel, await fetchOpenAIModelCatalog(channel, channel.catalogUrl)).sort((a, b) => a.id.localeCompare(b.id));

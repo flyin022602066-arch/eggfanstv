@@ -42,6 +42,29 @@ func TestJiasuPackagedJ1Model(t *testing.T) {
 	}
 }
 
+func TestJiasuH3PreservesNativeOutputAndReferences(t *testing.T) {
+	adapter := officialPackageAdapter(t, "jiasu-video.beeftv-plugin", "jiasu-video")
+	request := GenerationRequest{Capability: CapabilityVideo, Model: "minimax-h3", Prompt: "@图片1 @视频1 @音频1", Duration: 20, Resolution: "768p", AspectRatio: "16:9"}
+	for index := 0; index < 9; index++ {
+		request.Images = append(request.Images, MediaReference{URL: "https://cdn.example/image.png", Name: "图片1"})
+	}
+	for index := 0; index < 3; index++ {
+		request.Videos = append(request.Videos, MediaReference{URL: "https://cdn.example/video.mp4", Metadata: map[string]any{"durationMs": 3000}})
+		request.Audios = append(request.Audios, MediaReference{URL: "https://cdn.example/audio.mp3"})
+	}
+	spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: request})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := manifestTestBody(t, spec)
+	if body["duration"] != float64(20) || body["resolution"] != "768p" || len(body["images"].([]any)) != 9 || len(body["videos"].([]any)) != 3 || len(body["audios"].([]any)) != 3 {
+		t.Fatalf("H3 request changed: %#v", body)
+	}
+	if body["videos"].([]any)[0].(map[string]any)["duration_seconds"] != nil || body["params"] != nil || body["generate_audio"] != nil {
+		t.Fatalf("undocumented fields in native request: %#v", body)
+	}
+}
+
 func TestJiasuNamespacedOptionsPreserveFalseAndIsolateProviders(t *testing.T) {
 	adapter := officialPackageAdapter(t, "jiasu-video.beeftv-plugin", "jiasu-video")
 	spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
@@ -88,7 +111,7 @@ func TestJiasuPackagedSeedance25FullModalReferences(t *testing.T) {
 	}
 }
 
-func TestJiasuPackagedImageReferenceBoundaries(t *testing.T) {
+func TestJiasuPackagedImagesDoNotOverrideCatalogLimits(t *testing.T) {
 	adapter := officialPackageAdapter(t, "jiasu-video.beeftv-plugin", "jiasu-video")
 	for _, scenario := range []struct {
 		model   string
@@ -114,8 +137,12 @@ func TestJiasuPackagedImageReferenceBoundaries(t *testing.T) {
 				t.Fatalf("model ID or references changed: %#v", body)
 			}
 			request.Images = append(request.Images, MediaReference{URL: "https://cdn.example/overflow.png", Role: "reference_image"})
-			if _, err := adapter.BuildCreate(context.Background(), RequestContext{Request: request}); err == nil {
-				t.Fatal("image overflow accepted")
+			spec, err = adapter.BuildCreate(context.Background(), RequestContext{Request: request})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(manifestTestBody(t, spec)["images"].([]any)) != scenario.maximum+1 {
+				t.Fatal("plugin silently removed a reference")
 			}
 		})
 	}

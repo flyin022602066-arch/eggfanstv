@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, App, Button, Form, Input, Select } from "antd";
 import { LockKeyhole, UnlockKeyhole, UsersRound, X } from "lucide-react";
 import { CachedResourceImage } from "@/components/cached-resource-image";
-import { characterReferenceImage, characterReferenceLockPlan, characterReferenceNeedsReview, characterSelectionShots, referenceAssetId } from "@/lib/character-look-selection";
+import { characterReferenceImage, characterReferenceLockPlan, characterReferenceNeedsReview, characterReferenceStateKey, characterSelectionShots, referenceAssetId } from "@/lib/character-look-selection";
 import { captureUserScope } from "@/lib/user-scope-guard";
-import { getCharacterReferenceCatalog, saveCharacterReferenceChoices, type CharacterReferenceChoice } from "@/services/api/project-character-references";
-import { getProjectUnitWorkspace, listProjectAssets, type ProjectAsset, type ProjectDetail, type ShotAssetReference } from "@/services/api/projects";
+import { getCharacterReferenceCatalog, listProjectCharacters, saveCharacterReferenceChoices, type CharacterReferenceChoice } from "@/services/api/project-character-references";
+import { getProjectUnitWorkspace, type ProjectAsset, type ProjectDetail, type ShotAssetReference } from "@/services/api/projects";
 import { resourceStorageKey } from "@/services/api/resources";
 import { createAndBindProjectShotCharacter, identifyProjectCharacterReferences } from "@/services/project-character-references";
 import { useEffectiveConfig } from "@/stores/use-config-store";
@@ -25,22 +25,45 @@ export function WorkflowCharacterReferences({ detail, projectId, unitId, shotId,
     const [manageAsset, setManageAsset] = useState<ProjectAsset | null>(null);
     const [preview, setPreview] = useState<{ title: string; storageKey: string } | null>(null);
     const controller = useRef<AbortController | null>(null);
-    const query = useQuery({ queryKey: ["project", projectId, "character-reference-state", unitId], queryFn: async ({ signal }) => {
-        const [workspace, { assets }, catalog] = await Promise.all([getProjectUnitWorkspace(projectId, unitId, signal), listProjectAssets(projectId), getCharacterReferenceCatalog(projectId)]);
-        return { workspace, assets, catalog, shots: characterSelectionShots(workspace, assets) };
-    } });
-    const signature = `${detail.shots.find((shot) => shot.id === shotId)?.currentRevisionId || ""}:${detail.shotReferences.filter((ref) => ref.shotId === shotId).map((ref) => `${ref.id}:${ref.assetVersionId}:${ref.status}:${ref.selectionStatus}:${ref.selectionLocked}`).join(",")}`;
-    useEffect(() => { void queryClient.invalidateQueries({ queryKey: ["project", projectId, "character-reference-state", unitId] }); }, [signature, projectId, unitId, queryClient]);
+    const workspaceQuery = useQuery({ queryKey: ["project", projectId, "unit-workspace", unitId], queryFn: ({ signal }) => getProjectUnitWorkspace(projectId, unitId, signal, captureUserScope()), staleTime: 5_000 });
+    const assetsQuery = useQuery({ queryKey: ["project", projectId, "character-reference-assets"], queryFn: ({ signal }) => listProjectCharacters(projectId, captureUserScope(), signal), staleTime: 5_000 });
+    const catalogQuery = useQuery({ queryKey: ["project", projectId, "character-reference-catalog"], queryFn: ({ signal }) => getCharacterReferenceCatalog(projectId, captureUserScope(), signal), staleTime: 5_000 });
+    const data = useMemo(() => workspaceQuery.data && assetsQuery.data && catalogQuery.data ? { workspace: workspaceQuery.data, assets: assetsQuery.data.assets, catalog: catalogQuery.data } : undefined, [workspaceQuery.data, assetsQuery.data, catalogQuery.data]);
+    const queries = [workspaceQuery, assetsQuery, catalogQuery];
+    const query = {
+        data,
+        isPending: queries.some((item) => item.isPending),
+        isFetching: queries.some((item) => item.isFetching),
+        isError: queries.some((item) => item.isError),
+        error: queries.find((item) => item.isError)?.error,
+        refetch: () => Promise.all(queries.map((item) => item.refetch())),
+    };
+    const shots = useMemo(() => query.data ? characterSelectionShots(query.data.workspace, query.data.assets, shotId) : [], [query.data, shotId]);
+    const assetsById = useMemo(() => new Map(query.data?.assets.map((asset) => [asset.id, asset])), [query.data?.assets]);
+    const versionsByAsset = useMemo(() => {
+        const grouped = new Map<string, NonNullable<typeof query.data>["catalog"]["versions"]>();
+        for (const version of query.data?.catalog.versions || []) {
+            const versions = grouped.get(version.assetId) || [];
+            versions.push(version);
+            grouped.set(version.assetId, versions);
+        }
+        return grouped;
+    }, [query.data?.catalog.versions]);
     useEffect(() => () => { controller.current?.abort(); }, []);
     useEffect(() => { setAddingCharacter(false); setCreatingCharacter(false); createForm.resetFields(); }, [shotId, createForm]);
     const refresh = async () => { await queryClient.invalidateQueries({ queryKey: ["project", projectId] }); await onRefresh(); };
     const identify = useMutation({ mutationFn: (mode: "shot" | "chapter" | "pending") => { controller.current = new AbortController(); return identifyProjectCharacterReferences({ projectId, unitId, shotId: mode === "shot" ? shotId : undefined, pendingOnly: mode === "pending", config, signal: controller.current.signal, onProgress: setProgress }); }, onSuccess: async (result) => { await refresh(); message[result.pending ? "warning" : "success"](`已确定 ${result.resolved} 项造型，${result.pending} 项待确认${result.skippedBusy ? `；跳过 ${result.skippedBusy} 个生成中镜头` : ""}`); }, onError: (error) => { if (error.name !== "AbortError") message.error(error.message); }, onSettled: () => { controller.current = null; setProgress(""); } });
     const manual = useMutation({ mutationFn: async (input: { assetId: string; versionId: string; locked: boolean; status?: "resolved" | "pending" }) => {
         const scope = captureUserScope();
-        const [{ revision }, workspace] = await Promise.all([getCharacterReferenceCatalog(projectId, scope), getProjectUnitWorkspace(projectId, unitId)]);
+        const [catalog, workspace] = await Promise.all([getCharacterReferenceCatalog(projectId, scope), getProjectUnitWorkspace(projectId, unitId, undefined, scope)]);
+        const { revision } = catalog;
         const shot = workspace.shots.find((item) => item.id === shotId);
         if (!shot?.currentRevisionId) throw new Error("镜头没有可用脚本版本，请先保存脚本");
-        if (shot.currentRevisionId !== query.data?.shots.find((item) => item.shotId === shotId)?.revisionId || revision !== query.data?.catalog.revision) throw new Error("项目或镜头已变化，请刷新造型列表后重选");
+        if (shot.currentRevisionId !== shots.find((item) => item.shotId === shotId)?.revisionId) throw new Error("项目或镜头已变化，请刷新造型列表后重选");
+        if (!catalog.versions.some((version) => version.assetId === input.assetId && version.versionId === input.versionId)) throw new Error("所选角色造型已移除，请刷新造型列表后重选");
+        const currentReferences = workspace.shotReferences.filter((ref) => ref.shotId === shotId && ref.role === "reference" && referenceAssetId(ref) === input.assetId);
+        const displayedReferences = query.data?.workspace.shotReferences.filter((ref) => ref.shotId === shotId && ref.role === "reference" && referenceAssetId(ref) === input.assetId) || [];
+        if (characterReferenceStateKey(currentReferences) !== characterReferenceStateKey(displayedReferences)) throw new Error("该角色绑定已变化，请刷新造型列表后重选");
         const choice: CharacterReferenceChoice = { shotId, assetId: input.assetId, versionId: input.versionId, status: input.status || "resolved", source: "manual", locked: input.locked, reason: input.locked ? input.status === "pending" ? "用户手动指定出镜角色并锁定，待补参考图" : "用户手动指定并锁定造型" : "用户解除造型锁定，允许重新识别", expectedShotRevisionId: shot.currentRevisionId };
         return saveCharacterReferenceChoices(projectId, unitId, { expectedRevision: revision, choices: [choice] }, scope);
     }, onSuccess: async () => { setAddingCharacter(false); await refresh(); }, onError: (error) => { message.error(error.message); void refresh(); } });
@@ -48,11 +71,12 @@ export function WorkflowCharacterReferences({ detail, projectId, unitId, shotId,
         const scope = captureUserScope();
         const data = query.data;
         if (!data) throw new Error("请先读取角色造型列表");
-        const [catalog, workspace] = await Promise.all([getCharacterReferenceCatalog(projectId, scope), getProjectUnitWorkspace(projectId, unitId)]);
+        const [catalog, workspace] = await Promise.all([getCharacterReferenceCatalog(projectId, scope), getProjectUnitWorkspace(projectId, unitId, undefined, scope)]);
         const current = workspace.shots.find((item) => item.id === shotId);
         if (!current?.currentRevisionId) throw new Error("镜头没有可用脚本版本，请先保存脚本");
-        if (current.currentRevisionId !== data.shots.find((item) => item.shotId === shotId)?.revisionId || catalog.revision !== data.catalog.revision) throw new Error("项目或镜头已变化，请刷新造型列表后重选");
-        const currentShot = characterSelectionShots(workspace, data.assets).find((item) => item.shotId === shotId);
+        if (current.currentRevisionId !== shots.find((item) => item.shotId === shotId)?.revisionId) throw new Error("项目或镜头已变化，请刷新造型列表后重选");
+        const currentShot = characterSelectionShots(workspace, data.assets, shotId)[0];
+        if (characterReferenceStateKey(currentShot?.references || []) !== characterReferenceStateKey(shots[0]?.references || [])) throw new Error("本镜角色绑定已变化，请刷新造型列表后重选");
         if (currentShot?.busy) throw new Error("镜头正在生成，请稍后再锁定造型");
         const plan = characterReferenceLockPlan(currentShot, catalog.versions);
         if (!plan.choices.length) throw new Error("暂无可锁定造型，请检查是否已锁定、未绑定、缺少参考图或存在版本冲突");
@@ -67,7 +91,7 @@ export function WorkflowCharacterReferences({ detail, projectId, unitId, shotId,
     }, onError: (error) => { message.error(error.message); void refresh(); } });
     const create = useMutation({ mutationFn: async (values: { name: string; appearance: string }) => {
         if (disabled) throw new Error("镜头正在更新，请稍后再新增出镜角色");
-        return createAndBindProjectShotCharacter({ projectId, unitId, shotId, expectedShotRevisionId: query.data?.shots.find((item) => item.shotId === shotId)?.revisionId || "", name: values.name, appearance: values.appearance || "" });
+        return createAndBindProjectShotCharacter({ projectId, unitId, shotId, expectedShotRevisionId: shots[0]?.revisionId || "", name: values.name, appearance: values.appearance || "" });
     }, onSuccess: async (result) => {
         setCreatingCharacter(false); createForm.resetFields(); await refresh();
         if (result.bindingError) { setAddingCharacter(true); message.warning(result.bindingError, 8); }
@@ -75,23 +99,25 @@ export function WorkflowCharacterReferences({ detail, projectId, unitId, shotId,
     }, onError: (error) => { message.error(error.message); } });
     const busy = identify.isPending || manual.isPending || lockAll.isPending || create.isPending;
     useEffect(() => { onBusyChange(busy); return () => onBusyChange(false); }, [busy, onBusyChange]);
-    const shot = query.data?.shots.find((item) => item.shotId === shotId);
+    const shot = shots[0];
     const lockPlan = characterReferenceLockPlan(shot, query.data?.catalog.versions || []);
     const currentShot = query.data?.workspace.shots.find((item) => item.id === shotId);
     const currentRevision = query.data?.workspace.shotRevisions.find((item) => item.id === currentShot?.currentRevisionId);
     const closeUp = /特写|近景|close/iu.test(currentRevision?.shotSize || "");
     const unboundVersions = query.data?.catalog.versions.filter((version) => !shot?.references.some((reference) => referenceAssetId(reference) === version.assetId)) || [];
     return <section className="workflow-character-references" aria-label="角色造型参考">
+        <div className="mb-2 flex items-center justify-end gap-2">{query.isFetching && !query.isPending ? <span role="status" className="text-xs text-foreground/55">正在刷新，保留当前造型…</span> : null}<Button size="small" loading={query.isFetching} disabled={busy} onClick={() => { manual.reset(); lockAll.reset(); void queryClient.invalidateQueries({ queryKey: ["project", projectId, "character-reference-catalog"], refetchType: "none" }).then(() => query.refetch()); }}>刷新造型列表</Button></div>
         <div className="workflow-character-reference-toolbar"><span className="inline-flex items-center gap-1 text-xs"><UsersRound className="size-3.5" />角色造型</span><div className="flex flex-wrap gap-1"><Button size="small" icon={<LockKeyhole className="size-3" />} loading={lockAll.isPending} disabled={disabled || busy || query.isPending || query.isError || !lockPlan.choices.length} title="锁定当前镜头全部已选造型，保留当前版本；未绑定、缺图或版本冲突项将跳过" onClick={() => lockAll.mutate()}>一键锁定全部</Button><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("shot")}>识别本镜</Button><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("chapter")}>识别本章</Button><Button size="small" disabled={disabled || dirty || busy || query.isPending || query.isError} onClick={() => identify.mutate("pending")}>仅待确认</Button></div></div>
         <div className="mb-2"><div className="flex flex-wrap gap-1"><Button size="small" disabled={disabled || busy || !shot || shot.busy || query.isError || !unboundVersions.length} aria-expanded={addingCharacter} onClick={() => setAddingCharacter((value) => !value)}>手动绑定角色</Button><Button size="small" disabled={disabled || busy || !shot || shot.busy || query.isError} onClick={() => { create.reset(); setCreatingCharacter(true); }}>新增角色</Button></div>{addingCharacter ? <Select<string | undefined> className="mt-2 w-full" aria-label="从项目资产绑定角色" placeholder="选择角色与造型；缺图也可先绑定" value={undefined} showSearch optionFilterProp="label" disabled={disabled || busy || shot?.busy} options={unboundVersions.map((version) => ({ value: version.versionId, label: `${query.data?.assets.find((asset) => asset.id === version.assetId)?.title || version.title} · ${version.referenceProfile?.name || "角色参考图"} · v${version.version}${!characterReferenceImage(version) ? " · 待补图" : ""}` }))} onChange={(versionId) => { const version = unboundVersions.find((item) => item.versionId === versionId); if (version) manual.mutate({ assetId: version.assetId, versionId: version.versionId, locked: true, status: characterReferenceImage(version) ? "resolved" : "pending" }); }} /> : null}</div>
         {dirty ? <p className="mb-2 text-xs text-foreground/55">脚本有未保存修改；手动绑定与切换造型仍可操作，自动识别需先保存脚本。</p> : null}
         {identify.isPending ? <div className="mb-2 text-xs text-foreground/60">{progress || "正在读取剧情与造型目录…"}<Button type="link" size="small" onClick={() => controller.current?.abort()}>停止并保留原绑定</Button></div> : null}
         {manual.isError || identify.isError || lockAll.isError ? <Alert type="error" title="造型更新失败" description={(lockAll.error || manual.error || identify.error)?.message} /> : null}
-        {query.isError ? <Alert type="error" title="造型目录读取失败" description={query.error.message} action={<Button size="small" onClick={() => void query.refetch()}>重试</Button>} /> : query.isPending ? <p className="text-xs text-foreground/55">正在读取造型…</p> : !shot?.assetIds.length ? <p className="text-xs text-foreground/55">本镜暂无出镜角色，可手动绑定项目角色，或新增遗漏角色后补图。</p> : <div className="workflow-character-reference-grid">{shot.assetIds.map((assetId) => {
-            const asset = query.data.assets.find((item) => item.id === assetId);
+        {query.isError ? <Alert type="error" title="造型目录读取失败" description={query.error?.message} action={<Button size="small" onClick={() => void query.refetch()}>重试</Button>} /> : null}
+        {query.isPending ? <p className="text-xs text-foreground/55">正在读取造型…</p> : !query.data ? null : !shot?.assetIds.length ? <p className="text-xs text-foreground/55">本镜暂无出镜角色，可手动绑定项目角色，或新增遗漏角色后补图。</p> : <div className="workflow-character-reference-grid">{shot.assetIds.map((assetId) => {
+            const asset = assetsById.get(assetId);
             const refs = shot.references.filter((ref) => referenceAssetId(ref) === assetId);
             const ref = refs[0];
-            const versions = query.data.catalog.versions.filter((version) => version.assetId === assetId);
+            const versions = versionsByAsset.get(assetId) || [];
             const selected = versions.find((version) => version.versionId === ref?.assetVersionId);
             const image = selected && characterReferenceImage(selected, closeUp);
             const review = ref && characterReferenceNeedsReview(ref, shot.revisionId);

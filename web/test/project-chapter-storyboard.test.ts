@@ -80,6 +80,104 @@ describe("章节分镜写入分镜制作", () => {
         expect(review.rows).toEqual([row]);
     });
 
+    test("角色资产 ID 写错但姓名与版本归属唯一一致时恢复真实身份并可写入", () => {
+        const detail = projectDetail();
+        detail.assets[0]!.title = "Sylphie";
+        const version = { ...detail.assets[0]!.character!, assetId: "character-1", title: "Sylphie", updatedAt: "" };
+        const rows = [{ ...storyboardRow(), plotDescription: "Sylphie推门进入旧屋。", dialogue: "Sylphie: Hello.", videoMotionPrompt: "Sylphie推门", characters: [{ characterName: "Sylphie", characterAssetId: "mistyped-character-id", characterVersionId: version.versionId }] }];
+        const original = structuredClone(rows);
+        const review = storyboardProduction.reviewStoryboardCharacterReferences(rows, detail, [version]);
+        expect(review.issues).toHaveLength(0);
+        expect(review.rows[0]!.characters[0]).toMatchObject({ characterAssetId: version.assetId, characterVersionId: version.versionId });
+        expect(storyboardRowsToProjectShots(review.rows, detail, [version])[0]!.assetVersionIds).toContain(version.versionId);
+        expect(storyboardRowsToProjectShots(rows, detail, [version])[0]!.assetVersionIds).toContain(version.versionId);
+        expect(storyboardProduction.repairStoryboardCharacterReferences(rows, detail, [version]).issues).toHaveLength(0);
+        expect(review.rows[0]!.dialogue).toBe(rows[0]!.dialogue);
+        expect(rows).toEqual(original);
+    });
+
+    test("资产 ID 和版本 ID 都写错时仍能选择本角色造型并恢复两个 ID", () => {
+        const detail = projectDetail();
+        const version = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" };
+        const rows = [{ ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "mistyped-character-id", characterVersionId: "mistyped-version" }] }];
+        const review = storyboardProduction.reviewStoryboardCharacterReferences(rows, detail, [version]);
+        expect(review.issues[0]!.candidates).toEqual([version]);
+        const selected = storyboardProduction.reviewStoryboardCharacterReferences(rows, detail, [version], { "0:0": version.versionId });
+        expect(selected.issues).toHaveLength(0);
+        expect(selected.rows[0]!.characters[0]).toMatchObject({ characterAssetId: version.assetId, characterVersionId: version.versionId });
+        expect(storyboardRowsToProjectShots(selected.rows, detail, [version])[0]!.assetVersionIds).toContain(version.versionId);
+    });
+
+    test("不能仅凭版本归属或同名猜选角色，真实角色 ID 优先", () => {
+        const detail = projectDetail();
+        const own = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" };
+        const foreign = { ...own, assetId: "other-character", title: "张天昊", versionId: "foreign-version" };
+        detail.assets.push({ ...detail.assets[0]!, id: foreign.assetId, title: foreign.title, primaryVersionId: foreign.versionId, character: foreign });
+        const crossed = { ...storyboardRow(), characters: [{ characterName: foreign.title, characterAssetId: own.assetId, characterVersionId: foreign.versionId }] };
+        expect(storyboardProduction.reviewStoryboardCharacterReferences([crossed], detail, [own, foreign]).issues[0]!.candidates).toEqual([own]);
+        const unknown = { ...storyboardRow(), characters: [{ characterName: "不存在的人物", characterAssetId: "mistyped", characterVersionId: foreign.versionId }] };
+        expect(storyboardProduction.reviewStoryboardCharacterReferences([unknown], detail, [own, foreign]).issues).toHaveLength(1);
+        const manual = storyboardProduction.reviewStoryboardCharacterReferences([unknown], detail, [own, foreign], { "0:0": own.versionId });
+        expect(manual.issues).toHaveLength(0);
+        expect(manual.rows[0]!.characters[0]!.characterAssetId).toBe(own.assetId);
+        detail.assets[3]!.title = own.title;
+        const ambiguous = { ...storyboardRow(), characters: [{ characterName: own.title, characterAssetId: "mistyped", characterVersionId: own.versionId }] };
+        const review = storyboardProduction.reviewStoryboardCharacterReferences([ambiguous], detail, [own, { ...foreign, title: own.title }]);
+        expect(review.issues).toHaveLength(1);
+        expect(review.issues[0]!.candidates).toHaveLength(2);
+        const selected = storyboardProduction.reviewStoryboardCharacterReferences([ambiguous], detail, [own, { ...foreign, title: own.title }], { "0:0": own.versionId });
+        expect(selected.issues).toHaveLength(0);
+        expect(selected.rows[0]!.characters[0]!.characterAssetId).toBe(own.assetId);
+    });
+
+    test("错误角色 ID 可通过准确英文别名恢复但不模糊匹配相近姓名", () => {
+        const detail = projectDetail();
+        detail.assets[0]!.character!.definition.aliases = ["Sylphie"];
+        const own = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" };
+        const row = { ...storyboardRow(), characters: [{ characterName: " ＳＹＬＰＨＩＥ ", characterAssetId: "mistyped", characterVersionId: own.versionId }] };
+        expect(storyboardProduction.reviewStoryboardCharacterReferences([row], detail, [own]).issues).toHaveLength(0);
+        const similar = { ...row, characters: [{ ...row.characters[0]!, characterName: "Sylphiee" }] };
+        expect(storyboardProduction.reviewStoryboardCharacterReferences([similar], detail, [own]).issues).toHaveLength(1);
+    });
+
+    test("批量写入只修复同角色唯一可用版本，保留模型原结果", () => {
+        const detail = projectDetail();
+        const version = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" };
+        const rows = [{ ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: "mistyped-version" }] }];
+        const repaired = storyboardProduction.repairStoryboardCharacterReferences(rows, detail, [version]);
+        expect(repaired.issues).toHaveLength(0);
+        expect(repaired.repairs).toHaveLength(1);
+        expect(repaired.rows[0]!.characters[0]!.characterVersionId).toBe(version.versionId);
+        expect(rows[0]!.characters[0]!.characterVersionId).toBe("mistyped-version");
+        expect(storyboardRowsToProjectShots(repaired.rows, detail, [version])[0]!.assetVersionIds).toContain(version.versionId);
+    });
+
+    test("批量写入不能猜选多个造型或串用其他角色版本", () => {
+        const detail = projectDetail();
+        const own = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" };
+        const historical = { ...own, versionId: "school-version", version: 2 };
+        const foreign = { ...own, assetId: "other-character", title: "张天昊", versionId: "foreign-version" };
+        const row = { ...storyboardRow(), characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: "mistyped-version" }] };
+        expect(storyboardProduction.repairStoryboardCharacterReferences([row], detail, [own, historical]).issues).toHaveLength(1);
+        const missing = { ...row, characters: [{ characterName: "林默", characterAssetId: "character-1" }] };
+        expect(storyboardProduction.repairStoryboardCharacterReferences([missing], detail, [own, historical]).issues).toHaveLength(1);
+        const crossed = { ...row, characters: [{ ...row.characters[0]!, characterVersionId: foreign.versionId }] };
+        expect(storyboardProduction.repairStoryboardCharacterReferences([crossed], detail, [own, foreign]).issues).toHaveLength(1);
+        expect(storyboardProduction.repairStoryboardCharacterReferences([crossed], detail, [own, foreign]).repairs).toHaveLength(0);
+    });
+
+    test("多个造型只有镜头明确唯一命名时才自动修正，正确历史绑定不改", () => {
+        const detail = projectDetail();
+        const own = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "", referenceProfile: { lookId: "coat", name: "黑色风衣造型", description: "", matchHints: "", excludeHints: "", enabled: true, preferred: true, default: true } };
+        const school = { ...own, versionId: "school-version", version: 2, referenceProfile: { ...own.referenceProfile, lookId: "school", name: "蓝白校服造型", default: false } };
+        const row = { ...storyboardRow(), performanceBlocking: "林默以蓝白校服造型推门。", characters: [{ characterName: "林默", characterAssetId: "character-1", characterVersionId: "mistyped-version" }] };
+        const repaired = storyboardProduction.repairStoryboardCharacterReferences([row], detail, [own, school]);
+        expect(repaired.issues).toHaveLength(0);
+        expect(repaired.rows[0]!.characters[0]!.characterVersionId).toBe(school.versionId);
+        const valid = { ...row, characters: [{ ...row.characters[0]!, characterVersionId: own.versionId }] };
+        expect(storyboardProduction.repairStoryboardCharacterReferences([valid], detail, [own, school]).rows).toEqual([valid]);
+    });
+
     test("正确历史造型不被核对选项替换，只有无效引用可修正", () => {
         const detail = projectDetail();
         const current = { ...detail.assets[0]!.character!, assetId: "character-1", title: "林默", updatedAt: "" };

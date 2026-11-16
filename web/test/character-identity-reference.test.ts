@@ -31,7 +31,8 @@ test("later looks edit the earliest identity image, not their own drifted face o
     expect(submissions[0]?.referenceImages?.map((image) => image.storageKey)).toEqual(["resource:base-face"]);
     expect(submissions[0]?.metadata).toMatchObject({ characterIdentityVersionId: "base-image", characterIdentityResourceId: "base-face", characterVersionId: "combat" });
     const prompt = String((submissions[0]?.metadata?.promptTemplateVariables as Record<string, string>).角色设定);
-    for (const rule of ["同一人物", "基础版", "五官", "明确", "头部", "不含头部"]) expect(prompt).toContain(rule);
+    for (const rule of ["同一人物", "基础版", "五官", "明确", "头部", "本次所选角色参考图格式"]) expect(prompt).toContain(rule);
+    expect((submissions[0]?.metadata?.promptTemplateVariables as Record<string, string>).角色参考图格式).toBe("portrait-body-grid");
     expect(prompt).toContain("铠甲");
     const task = await prepareBackendGenerationTask(submissions[0]!);
     expect((task.input as { referenceImages: { storageKey: string }[] }).referenceImages.map((image) => image.storageKey)).toEqual(["resource:base-face"]);
@@ -48,6 +49,19 @@ test("library references establish the first identity and only supply clothing f
     expect(String((submissions[1]?.metadata?.promptTemplateVariables as Record<string, string>).角色设定)).toContain("不得替换基础版身份");
 });
 
+test("chosen reference templates reach backend task metadata without changing model or identity", async () => {
+    const { submissions, dependencies } = harness([version("base", 1, "daily", "base-face"), version("combat", 2, "combat")]);
+    const selectedConfig = { ...config, size: "16:9", quality: "high", projectAssetImagePresets: { character: { model, size: "16:9", quality: "high", extraPrompt: "", characterLayoutId: "source-design-sheet", characterDesignTemplateId: "distinct-2d-animation" } } };
+    await generateCharacterTurnaround({ ...input, config: selectedConfig }, dependencies);
+    const prepared = await prepareBackendGenerationTask(submissions[0]!);
+    const payload = prepared.input as { config: { model: string; size: string; quality: string }; metadata: { promptTemplateVariables: Record<string, string>; characterIdentityResourceId: string }; referenceImages: { storageKey: string }[] };
+    expect(payload.metadata.promptTemplateVariables).toMatchObject({ 角色参考图格式: "source-design-sheet", 角色形象模板: "distinct-2d-animation" });
+    expect(payload.metadata.promptTemplateVariables.角色设定).toContain("铠甲");
+    expect(payload.metadata.characterIdentityResourceId).toBe("base-face");
+    expect(payload.referenceImages.map((image) => image.storageKey)).toEqual(["resource:base-face"]);
+    expect(payload.config).toMatchObject({ model: "gpt-image-2", size: "16:9", quality: "high" });
+});
+
 test("later looks explicitly replace removed accessories and rebuilt body parts while preserving the base face", async () => {
     const base = version("base", 1, "early", "base-face");
     base.definition = { appearance: "同一青年，胸背为生锈接口", clothing: "黑色背心，戴红色爆炸颈环", state: "早期清道夫" };
@@ -58,7 +72,7 @@ test("later looks explicitly replace removed accessories and rebuilt body parts 
     const request = submissions[0]!;
     const variables = request.metadata!.promptTemplateVariables as Record<string, string>;
     const changes = variables.角色设定.split("【本次造型编辑清单")[1]!;
-    for (const rule of ["爆炸颈环已去除", "暗金核心", "合金脊椎", "全部移除", "五官", "优先于参考图", "不得只改变标题"]) expect(changes).toContain(rule);
+    for (const rule of ["爆炸颈环已去除", "暗金核心", "合金脊椎", "全部头部与身体视图移除", "五官", "优先于参考图", "不得只改变标题"]) expect(changes).toContain(rule);
     expect(changes).not.toContain("戴红色爆炸颈环");
     expect(request.referenceImages?.map((image) => image.storageKey)).toEqual(["resource:base-face"]);
     const prepared = await prepareBackendGenerationTask(request);

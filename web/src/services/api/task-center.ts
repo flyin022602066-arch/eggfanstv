@@ -56,6 +56,8 @@ export type GenerationTask = {
     createdAt: string;
     updatedAt: string;
     clientContext?: {
+        videoPromptPreflightStatus?: "changed" | "unchanged";
+        videoPromptRepairParentTaskId?: string;
         source?: string;
         sceneId?: string;
         conversationId?: string;
@@ -311,8 +313,8 @@ export function queryTaskTextReplay(id: string, after = 0) {
     return http.get<TaskTextReplay>(`/tasks/${encodeURIComponent(id)}/text-deltas`, { params: { after } });
 }
 
-export function retryGenerationTask(id: string) {
-    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`);
+export function retryGenerationTask(id: string, expectedScope?: CapturedUserScope) {
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`, undefined, { expectedScope });
 }
 
 export function cancelGenerationTask(id: string) {
@@ -330,8 +332,8 @@ export function stopVideoTaskLocally(id: string) {
     });
 }
 
-export function queryFailedVideoProviderTask(id: string) {
-    return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`, undefined, { timeout: 10 * 60 * 1000 });
+export function queryFailedVideoProviderTask(id: string, expectedScope?: CapturedUserScope) {
+    return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`, undefined, { timeout: 10 * 60 * 1000, expectedScope });
 }
 
 export type ImageResultRecovery = { task: GenerationTask; status: "pending" | "unavailable" | "ready"; message: string; recovered: boolean };

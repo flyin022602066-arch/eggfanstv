@@ -41,7 +41,7 @@ test("Gway Wan3 repairs stale saved limits and preserves 30 seconds through canv
 
 test("Gway Wan3 discount does not change other models or channels", () => {
     expect(defaultModelCapabilityConfig("jiasu-video", "dola-sd-2.0").video!.duration.max).toBe(15);
-    expect(defaultModelCapabilityConfig("jiasu-video", "minimax-h3").video!.duration.values).toEqual([15]);
+    expect(defaultModelCapabilityConfig("jiasu-video", "minimax-h3").video!.duration).toMatchObject({ selection: "range", min: 4, max: 30 });
     expect(defaultModelCapabilityConfig("jiasu-video", "wan3-Prime").video!.resolutions).toEqual(["480p", "720p", "1080p"]);
     expect(defaultModelCapabilityConfig("wan-task-gateway-video", "wan3.0-video").video!.duration.min).toBe(2);
     expect(defaultModelCapabilityConfig("nono-video", model).video!.resolutions).toEqual(["720p"]);

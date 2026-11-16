@@ -11,6 +11,15 @@ const assets = [
     { id: "old-video", title: "嬴政", category: "material", primaryVersionId: "video-v1" },
 ] as ProjectAsset[];
 
+test("a storyboard reference plan prevents incidental auto-binding without imposing a provider limit", () => {
+    const script = { plotDescription: "嬴政站在沙丘平台正殿，蜡烛在身后燃烧。", referenceAssetIds: ["yingzheng", "palace"], sceneAssetId: "palace", propNames: [] };
+    expect(matchProjectShotSequenceAssets(assets, [{ script }], { includeUnlistedProps: true })[0]!.map(({ asset }) => asset.id)).toEqual(["palace", "yingzheng"]);
+    const manual = { asset: assets[3]!, assetVersionId: "candle-v1", selectionSource: "manual" as const };
+    expect(matchProjectShotSequenceAssets(assets, [{ script, existing: [manual] }], { includeUnlistedProps: true })[0]!.map(({ asset }) => asset.id)).toContain("candle");
+    expect(matchProjectShotSequenceAssets(assets, [{ script: { ...script, referenceAssetIds: undefined } }], { includeUnlistedProps: true })[0]!.map(({ asset }) => asset.id)).toContain("candle");
+    expect(matchProjectShotSequenceAssets(assets, [{ script, existing: [manual], excludedAssetIds: ["candle"] }], { includeUnlistedProps: true })[0]!.map(({ asset }) => asset.id)).not.toContain("candle");
+});
+
 test("exact prop names win over another prop's generic alias", () => {
     const catalog = [
         { id: "phone", title: "手机", category: "prop", primaryVersionId: "phone-v1" },
@@ -29,6 +38,46 @@ test("explicitly bound prop IDs resolve shared aliases without choosing an unrel
     expect(matchProjectShotAssets(catalog, script).map(({ asset }) => asset.id)).toEqual(["phone-b"]);
     expect(matchProjectShotSequenceAssets(catalog, [{ script: { propNames: ["手机"] }, existing: [{ asset: catalog[1]!, assetVersionId: "phone-b-v1" }] }])[0]?.map(({ asset }) => asset.id)).toEqual(["phone-b"]);
     expect(() => matchProjectShotAssets(catalog, { propNames: ["手机"] })).toThrow("同名资产");
+});
+
+test("removing an exact prop never falls back to other props sharing its alias", () => {
+    const catalog = [
+        { id: "medicine-bowl", title: "药碗", category: "prop", primaryVersionId: "bowl-v1" },
+        { id: "sealed-bowl", title: "封存药碗", category: "prop", primaryVersionId: "sealed-v1", definitionJson: JSON.stringify({ aliases: ["药碗"] }) },
+        { id: "bowl-tray", title: "黑药瓷碗与托盘", category: "prop", primaryVersionId: "tray-v1", definitionJson: JSON.stringify({ aliases: ["药碗"] }) },
+    ] as ProjectAsset[];
+    for (const remaining of [catalog, catalog.slice(0, 2)]) {
+        expect(matchProjectShotAssets(remaining, { propNames: ["药碗"] }, { excludedAssetIds: ["medicine-bowl"] })).toEqual([]);
+    }
+    expect(matchProjectShotAssets(catalog, { propNames: ["药碗", "封存药碗"] }, { excludedAssetIds: ["medicine-bowl"] }).map(({ asset }) => asset.id)).toEqual(["sealed-bowl"]);
+    expect(matchProjectShotAssets(catalog, { propNames: ["药碗"], assetBindings: [{ nodeId: "bowl-tray", selectionSource: "manual" }] }, { excludedAssetIds: ["medicine-bowl"] }).map(({ asset }) => asset.id)).toEqual(["bowl-tray"]);
+});
+
+test("automatic prop discovery does not resurrect excluded identities through shared aliases", () => {
+    const catalog = [
+        { id: "medicine-bowl", title: "药碗", category: "prop", primaryVersionId: "bowl-v1" },
+        { id: "sealed-bowl", title: "封存药碗", category: "prop", primaryVersionId: "sealed-v1", definitionJson: JSON.stringify({ aliases: ["药碗"] }) },
+        { id: "bowl-tray", title: "黑药瓷碗与托盘", category: "prop", primaryVersionId: "tray-v1", definitionJson: JSON.stringify({ aliases: ["药碗"] }) },
+    ] as ProjectAsset[];
+    const options = { excludedAssetIds: ["medicine-bowl"], includeUnlistedProps: true };
+    expect(matchProjectShotAssets(catalog, { plotDescription: "桌上放着药碗。" }, options)).toEqual([]);
+    expect(matchProjectShotAssets(catalog, { plotDescription: "桌上放着封存药碗。" }, options).map(({ asset }) => asset.id)).toEqual(["sealed-bowl"]);
+});
+
+test("removed prop aliases remain excluded without hiding explicitly named other props", () => {
+    const catalog = [
+        { id: "medicine-bowl", title: "药碗", category: "prop", primaryVersionId: "bowl-v1", definitionJson: JSON.stringify({ aliases: ["汤药碗", "This bowl", "碗"] }) },
+        { id: "bowl-tray", title: "黑药瓷碗与托盘", category: "prop", primaryVersionId: "tray-v1", definitionJson: JSON.stringify({ aliases: ["汤药碗", "this bowl"] }) },
+        { id: "soup", title: "姜汤", category: "prop", primaryVersionId: "soup-v1", definitionJson: JSON.stringify({ aliases: ["碗"] }) },
+    ] as ProjectAsset[];
+    const options = { excludedAssetIds: ["medicine-bowl"], includeUnlistedProps: true };
+    for (const name of ["汤药碗", "This bowl", "碗"]) {
+        expect(matchProjectShotAssets(catalog, { propNames: [name] }, options)).toEqual([]);
+        expect(matchProjectShotAssets(catalog, { plotDescription: `${name}放在桌上。` }, options)).toEqual([]);
+    }
+    expect(matchProjectShotAssets(catalog, { propNames: ["黑药瓷碗与托盘", "姜汤"] }, options).map(({ asset }) => asset.id)).toEqual(["bowl-tray", "soup"]);
+    const exact = { id: "exact", title: "This bowl", category: "prop", primaryVersionId: "exact-v1" } as ProjectAsset;
+    expect(matchProjectShotAssets([...catalog, exact], { propNames: ["This bowl"] }, options).map(({ asset }) => asset.id)).toEqual(["exact"]);
 });
 
 test("uses a verified material definition to repair a stale token before binding", () => {

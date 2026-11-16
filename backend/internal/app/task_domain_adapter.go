@@ -239,6 +239,9 @@ func (a taskFeaturesAdapter) Require(name string) error {
 type taskPolicyAdapter struct{ s *Service }
 
 func (a taskPolicyAdapter) ActiveTaskLimit() (int, error) {
+	if a.s.IsLocalMode() {
+		return int(^uint(0) >> 1), nil
+	}
 	policy, err := a.s.RuntimePolicy()
 	if err != nil {
 		return 0, err

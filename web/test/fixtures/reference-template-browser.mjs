@@ -22,6 +22,7 @@ try {
     for (const theme of ['dark', 'light']) {
         const context = await browser.newContext({ viewport: { width: 1365, height: 950 } });
         const page = await context.newPage(); const errors = []; let generationRequests = 0; let uploadRequests = 0;
+        const library = () => page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: '参考模板库', exact: true }) });
         page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message));
         const originalRequests = [];
         await page.route('https://hruiccc.github.io/RuiC-PoseAtlas/**', async route => {
@@ -63,7 +64,7 @@ try {
         await library().getByRole('button', { name: '关闭参考模板库' }).click();
         await page.getByRole('button', { name: '移除姿势模板', exact: true }).click();
         await page.getByRole('button', { name: '打开参考模板库', exact: true }).click();
-        const library = () => page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: '参考模板库', exact: true }) });
+        await library().getByRole('button', { name: '内置示意', exact: true }).click();
         await library().getByText('36 个模板', { exact: true }).waitFor();
         await library().getByRole('button', { name: '我的模板', exact: true }).click();
         await library().getByText('还没有模板。', { exact: false }).waitFor();
@@ -98,13 +99,13 @@ try {
         await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
         await page.waitForFunction(() => document.querySelector('[aria-label="参考图数"]')?.textContent === '2');
         assert.ok(uploadRequests > 0, 'Temporary backend failure uses local image persistence');
-        assert.equal(await page.evaluate(() => window.referenceFixture.graph().nodes.length), 3);
+        assert.equal(await page.evaluate(() => window.referenceFixture.graph().nodes.length), 4);
         await page.screenshot({ path: evidenceDir + '/library-' + theme + '.png' });
         assert.ok(await library().locator('img').first().evaluate(img => img.getBoundingClientRect().height <= img.parentElement.getBoundingClientRect().height + 1), 'Thumbnail must stay inside its preview');
         await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
         await page.waitForTimeout(250);
         assert.equal(await page.getByLabel('参考图数').textContent(), '2');
-        assert.equal(await page.evaluate(() => window.referenceFixture.graph().nodes.length), 3, 'Retrying local uploads must reuse image nodes');
+        assert.equal(await page.evaluate(() => window.referenceFixture.graph().nodes.length), 4, 'Retrying local uploads must reuse image nodes');
         await library().getByRole('button', { name: '关闭参考模板库' }).click();
         await page.getByRole('button', { name: '检查生成输入' }).click();
         const snapshot = JSON.parse(await page.getByLabel('生成输入快照').textContent());
@@ -156,6 +157,7 @@ try {
         await page.evaluate(() => window.referenceFixture.resumeMaterialize());
         await page.waitForTimeout(350);
         assert.equal(await page.getByLabel('参考图数').textContent(), '0', 'Pending apply cannot attach images after project switch');
+        await library().getByRole('button', { name: '我的模板', exact: true }).click();
         await library().getByRole('button', { name: '查看模板：站姿白衣组合', exact: true }).click();
         const beforeModelChange = await page.evaluate(() => { window.referenceFixture.pauseMaterialize(); return window.referenceFixture.materializeStarted(); });
         await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
@@ -192,6 +194,7 @@ try {
         }
         await page.evaluate(() => window.referenceFixture.switchProject());
         await page.getByRole('button', { name: '打开姿势参考库', exact: true }).click();
+        await library().getByRole('button', { name: '内置示意', exact: true }).click();
         await library().getByRole('button', { name: '查看模板：自然站姿', exact: true }).click();
         assert.equal(await library().getByRole('button', { name: '删除模板', exact: true }).count(), 0);
         await library().getByRole('button', { name: '另存为我的模板', exact: true }).click();
@@ -219,6 +222,7 @@ try {
         const original = await page.evaluate(() => window.referenceFixture.graph().nodes[0]);
         const sourceEntry = page.getByRole('button', { name: '姿势 / 服装 / 人脸', exact: true });
         await sourceEntry.click();
+        await library().getByRole('button', { name: '内置示意', exact: true }).click();
         await library().getByRole('status').filter({ hasText: '不会覆盖或修改原图' }).waitFor();
         await library().getByRole('button', { name: '姿势', exact: true }).click();
         await library().getByRole('button', { name: '查看模板：自然站姿', exact: true }).click();
@@ -230,6 +234,7 @@ try {
         await page.waitForTimeout(200);
         assert.deepEqual(await page.evaluate(() => window.referenceFixture.graph()), { nodes: [original], connections: [] }, 'Canceled apply must not leave a partial editor');
         await sourceEntry.click();
+        await library().getByRole('button', { name: '内置示意', exact: true }).click();
         await library().getByRole('button', { name: '人脸 / 角色', exact: true }).click();
         await library().getByRole('button', { name: '查看模板：柔和椭圆脸', exact: true }).click();
         await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
@@ -251,10 +256,11 @@ try {
         await page.screenshot({ path: evidenceDir + '/source-editor-' + theme + '.png' });
         await page.setViewportSize({ width: 390, height: 844 });
         await page.waitForTimeout(100);
-        const compactEntry = page.getByRole('toolbar', { name: '节点快捷工具' }).getByRole('button', { name: '参考库', exact: true });
+        const compactEntry = page.getByRole('toolbar', { name: '节点快捷工具' }).getByRole('button', { name: '姿势 / 服装 / 人脸', exact: true });
         await compactEntry.waitFor();
         assert.ok(await compactEntry.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth; }), 'Reference library entry stays reachable on narrow canvases');
         await compactEntry.click();
+        await library().getByRole('button', { name: '内置示意', exact: true }).click();
         await library().getByRole('button', { name: '服装', exact: true }).click();
         await library().getByRole('button', { name: '查看模板：简约圆领便装', exact: true }).waitFor();
         await library().getByRole('button', { name: '关闭参考模板库' }).click();
@@ -265,4 +271,49 @@ try {
         await context.close();
         console.log(JSON.stringify({ theme, status: 'passed', generationRequests, screenshot: evidenceDir + '/library-' + theme + '.png' }));
     }
+    const context = await browser.newContext({ viewport: { width: 1365, height: 950 } });
+    const page = await context.newPage();
+    const resources = new Map(); const assets = new Map(); const events = []; let generationRequests = 0;
+    await page.route('https://hruiccc.github.io/**', route => route.fulfill({ status: 503, body: 'Offline fixture' }));
+    await page.route('**/api/**', async route => {
+        const request = route.request(); const path = new URL(request.url()).pathname;
+        const reply = data => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, data, msg: '' }) });
+        if (/tasks|generation/.test(path) || path.includes('/ai/')) { generationRequests++; throw new Error('Real generation forbidden'); }
+        if (request.method() === 'POST' && path === '/api/resources') {
+            const id = 'reference-' + (resources.size + 1);
+            const resource = { id, status: 'ready', kind: 'image', width: 768, height: 1024, size: 500, mimeType: 'image/png', publicUrl: '/api/resources/' + id + '/file' };
+            resources.set(id, resource); events.push('upload'); return reply({ resource });
+        }
+        if (path.startsWith('/api/resources/') && path.endsWith('/file')) return route.fulfill({ contentType: 'image/png', body: pngPixel(120, 140, 160) });
+        if (path.startsWith('/api/resources/')) return reply({ resource: resources.get(path.split('/').at(-1)) });
+        if (request.method() === 'PUT' && path.startsWith('/api/assets/')) {
+            const asset = request.postDataJSON().asset; assets.set(asset.id, asset); events.push('asset'); return reply({ asset });
+        }
+        if (path === '/api/fixture-save') {
+            const graph = request.postDataJSON();
+            for (const node of graph.nodes.filter(node => node.metadata?.storageKey?.startsWith('resource:'))) {
+                const asset = assets.get(node.metadata.assetId);
+                assert.ok(asset, 'The backend save guard requires an owned Asset, not just a Resource');
+                assert.equal(asset.data.storageKey, node.metadata.storageKey);
+            }
+            events.push('save'); return reply({ saved: true });
+        }
+        return reply([]);
+    });
+    await page.goto(url + '?theme=dark');
+    const library = () => page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: '参考模板库', exact: true }) });
+    for (const [role, name] of [['姿势', '自然站姿'], ['服装', '简约圆领便装']]) {
+        await page.getByRole('button', { name: '打开' + role + '参考库', exact: true }).click();
+        await library().getByRole('button', { name: '内置示意', exact: true }).click();
+        await library().getByRole('button', { name: '查看模板：' + name, exact: true }).click();
+        await library().getByRole('button', { name: '应用到当前节点', exact: true }).click();
+        await page.waitForFunction(count => window.referenceFixture.graph().connections.length === count, role === '姿势' ? 1 : 2);
+        await library().getByRole('button', { name: '关闭参考模板库' }).click();
+    }
+    const savedNodes = await page.evaluate(() => window.referenceFixture.verifySave());
+    assert.equal(savedNodes.filter(node => node.metadata?.referenceTemplateMediaId && node.metadata.assetId).length, 2);
+    assert.equal(assets.size, 2); assert.equal(events.at(-1), 'save'); assert.equal(generationRequests, 0);
+    await page.screenshot({ path: evidenceDir + '/resource-asset-saved.png' });
+    await context.close();
+    console.log(JSON.stringify({ status: 'resource-asset-save-passed', resources: resources.size, assets: assets.size, generationRequests }));
 } finally { await browser.close(); }

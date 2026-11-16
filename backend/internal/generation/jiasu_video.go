@@ -77,8 +77,8 @@ func ValidateJiasuVideoInput(Input Input) error {
 		if utf8.RuneCountInString(Input.Prompt) > 6000 {
 			return BadAuthRequest("极途 Gway MiniMax H3 提示词最多支持 6000 字符")
 		}
-		if len(Input.ReferenceVideos) > 3 || len(Input.ReferenceAudios) > 3 || len(Input.ReferenceImages)+len(Input.ReferenceVideos)+len(Input.ReferenceAudios) > 10 {
-			return BadAuthRequest("极途 Gway MiniMax H3 最多支持 3 段视频、3 段音频，全部素材合计最多 10 个")
+		if len(Input.ReferenceVideos) > 3 || len(Input.ReferenceAudios) > 3 {
+			return BadAuthRequest("极途 Gway MiniMax H3 最多支持 3 段视频、3 段音频")
 		}
 		var totalDurationMs int64
 		for _, video := range Input.ReferenceVideos {
@@ -97,16 +97,21 @@ func ValidateJiasuVideoInput(Input Input) error {
 				maxVideos, maxAudios = 10, 10
 			}
 		} else {
-			return BadAuthRequest("极途 Gway 渠道不支持当前模型")
+			maxImages = 0
 		}
 	}
-	if len(Input.ReferenceImages) > maxImages {
-		return BadAuthRequest("参考图片数量超过极途 Gway 模型限制")
+	if Input.VideoCapability != nil {
+		maxImages = Input.VideoCapability.References.MaxImages
+		maxVideos = Input.VideoCapability.References.MaxVideos
+		maxAudios = Input.VideoCapability.References.MaxAudios
 	}
-	if maxVideos > 0 && len(Input.ReferenceVideos) > maxVideos {
+	if (maxImages > 0 || Input.VideoCapability != nil) && len(Input.ReferenceImages) > maxImages {
+		return BadAuthRequest(fmt.Sprintf("极途 Gway %s 最多支持 %d 张参考图片，当前为 %d 张；请调整绑定或选择支持更多参考图的模型", Input.Config.Model, maxImages, len(Input.ReferenceImages)))
+	}
+	if (maxVideos > 0 || Input.VideoCapability != nil) && len(Input.ReferenceVideos) > maxVideos {
 		return BadAuthRequest(fmt.Sprintf("极途 Gway %s 最多支持 %d 段参考视频", Input.Config.Model, maxVideos))
 	}
-	if maxAudios > 0 && len(Input.ReferenceAudios) > maxAudios {
+	if (maxAudios > 0 || Input.VideoCapability != nil) && len(Input.ReferenceAudios) > maxAudios {
 		return BadAuthRequest(fmt.Sprintf("极途 Gway %s 最多支持 %d 段参考音频", Input.Config.Model, maxAudios))
 	}
 	for _, group := range [][]Media{Input.ReferenceImages, Input.ReferenceVideos, Input.ReferenceAudios} {

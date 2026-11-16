@@ -194,6 +194,10 @@ func (r *Runtime) dispatch(ctx context.Context, slots chan struct{}) {
 	if r.closed.Load() || ctx.Err() != nil || r.worker == nil || r.worker.IsDraining() {
 		return
 	}
+	if r.cfg.Unbounded {
+		r.dispatchUnbounded(ctx)
+		return
+	}
 	if r.policy == nil {
 		r.logf("task dispatch paused: stage=runtime_policy worker_id=%s error=%v", r.cfg.WorkerID, errors.New("调度策略未初始化"))
 		return
@@ -248,6 +252,29 @@ func (r *Runtime) dispatch(ctx context.Context, slots chan struct{}) {
 		if !started {
 			<-slots
 			slot.Release()
+			_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
+			return
+		}
+	}
+}
+
+func (r *Runtime) dispatchUnbounded(ctx context.Context) {
+	for !r.closed.Load() && ctx.Err() == nil && !r.worker.IsDraining() {
+		claimCtx, cancel := context.WithTimeout(ctx, r.cfg.ClaimTimeout)
+		task, err := r.repo.ClaimNext(claimCtx, r.cfg.NewOwner(), r.cfg.TaskLeaseTTL)
+		cancel()
+		if err != nil || task == nil {
+			if err != nil {
+				r.logf("task dispatch paused: stage=claim worker_id=%s error=%v", r.cfg.WorkerID, err)
+			}
+			return
+		}
+		if !r.worker.GoTask(func() {
+			outcome := r.runClaimed(context.Background(), task, nil)
+			if outcome.Err != nil && r.onExecError != nil {
+				r.onExecError(task, outcome.Err)
+			}
+		}) {
 			_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
 			return
 		}

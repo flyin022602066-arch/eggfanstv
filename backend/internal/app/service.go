@@ -26,8 +26,8 @@ import (
 	"infinite-canvas/backend/internal/plugins"
 	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/prompts"
-	"infinite-canvas/backend/internal/provider/hanbao"
 	"infinite-canvas/backend/internal/provider/doubaobrowser"
+	"infinite-canvas/backend/internal/provider/hanbao"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skills"
 	localtask "infinite-canvas/backend/internal/task"
@@ -281,6 +281,9 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 }
 
 func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
+	if task, err := s.repo.TaskForUser(userID, id); err == nil && s.IsLocalMode() && task.Status == model.TaskStatusFailed && videoPromptRepairEligible(task, errors.New(task.Error)) {
+		return s.queueVideoPromptRepair(task)
+	}
 	return s.taskDomain().Retry(userID, id)
 }
 

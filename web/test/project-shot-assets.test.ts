@@ -30,6 +30,39 @@ function fixture() {
     return { api, workspace, calls };
 }
 
+test("same-name props consolidate before reading the workspace for submission", async () => {
+    const { api, calls } = fixture();
+    await prepareProjectShotAssets({ projectId: "project", unitId: "chapter", shotId: "shot-1", script: {} }, {
+        ...api,
+        mergeSameNameProjectProps: async () => { calls.push("merge-props"); return { merged: 1, deferred: 0 }; },
+        getProjectUnitWorkspace: async () => { expect(calls[0]).toBe("merge-props"); return api.getProjectUnitWorkspace(); },
+    });
+    expect(calls).toEqual(["merge-props", "list-assets"]);
+});
+
+test("removed medicine bowl cannot block submission or reappear as an alias variant", async () => {
+    const { api, workspace, calls } = fixture();
+    const catalog = [
+        { id: "scene", title: "走廊", category: "environment", primaryVersionId: "scene-v1", storageKey: "resource:scene-picture" },
+        { id: "bowl", title: "药碗", category: "prop", primaryVersionId: "bowl-v1", storageKey: "resource:bowl-picture" },
+        { id: "sealed-bowl", title: "封存药碗", category: "prop", primaryVersionId: "sealed-v1", definitionJson: JSON.stringify({ aliases: ["药碗"] }) },
+        { id: "tray", title: "黑药瓷碗与托盘", category: "prop", primaryVersionId: "tray-v1", definitionJson: JSON.stringify({ aliases: ["药碗"] }) },
+    ].map((asset) => ({ ...asset, mediaType: "image" })) as ProjectAsset[];
+    api.listProjectAssets = async () => ({ assets: catalog });
+    workspace.shots = [{ id: "shot-1", unitId: "u", position: 0, currentRevisionId: "revision" }] as ProjectUnitWorkspace["shots"];
+    workspace.shotRevisions = [{ id: "revision", shotId: "shot-1", version: 1, plotDescription: "走廊桌上放着药碗。", actionBeatsJson: JSON.stringify([{ type: "asset_context", sceneAssetId: "scene", propNames: ["药碗"] }]) }] as ProjectUnitWorkspace["shotRevisions"];
+    workspace.shotReferences = catalog.slice(0, 2).map((asset) => ({ id: `ref-${asset.id}`, shotId: "shot-1", assetVersionId: asset.primaryVersionId, asset, role: "reference", status: asset.id === "bowl" ? "excluded" : "linked" })) as ShotAssetReference[];
+    for (const operation of ["chapter", "video"] as const) {
+        const result = operation === "chapter"
+            ? await prepareProjectUnitShotAssets({ projectId: "p", unitId: "u" }, api)
+            : await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-1", generationArtifactType: "video", script: { sceneAssetId: "scene", propNames: ["药碗"] } }, api);
+        expect(result.boundCount).toBe(0);
+        const context = buildShotAssetReferenceContext({ ...result.workspace, assets: catalog } as ProjectDetail, "shot-1");
+        expect(context.referenceImages.map((image) => image.storageKey)).toEqual(["resource:scene-picture"]);
+    }
+    expect(calls).toEqual([]);
+});
+
 test("manual exclusions survive chapter repair, new asset versions and submission without affecting other shots", async () => {
     const { api, workspace, calls } = fixture();
     const assets = [
@@ -65,8 +98,38 @@ test("excluded duplicate names cannot create ambiguity before matching the remai
     api.listProjectAssets = async () => ({ assets: [scene, ...props] });
     workspace.shotReferences = [{ id: "excluded", shotId: "shot-1", assetVersionId: "removed-v1", role: "reference", status: "excluded", asset: props[1] }] as ShotAssetReference[];
     const result = await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-1", script: { sceneAssetId: "scene", propNames: ["冰棍箱"] } }, api);
-    expect(result.boundCount).toBe(2);
-    expect(result.workspace.shotReferences.filter((reference) => reference.status === "linked").map((reference) => reference.assetVersionId)).toEqual(["scene-v1", "kept-v1"]);
+    expect(result.boundCount).toBe(1);
+    expect(result.workspace.shotReferences.filter((reference) => reference.status === "linked").map((reference) => reference.assetVersionId)).toEqual(["scene-v1"]);
+});
+
+test("an earlier ambiguous shot cannot block the selected shot after its prop was removed", async () => {
+    const { api, workspace, calls } = fixture();
+    const scene = { id: "scene", title: "电影院外", category: "environment", primaryVersionId: "scene-v1" } as ProjectAsset;
+    const props = ["first-box", "second-box", "third-box"].map((id) => ({ id, title: "冰棍箱", category: "prop", primaryVersionId: `${id}-v1` })) as ProjectAsset[];
+    api.listProjectAssets = async () => ({ assets: [scene, ...props] });
+    workspace.shots = [0, 1].map((position) => ({ id: `shot-${position + 1}`, position, description: "电影院外，冰棍箱放在门边。" })) as ProjectUnitWorkspace["shots"];
+    workspace.shotReferences = [
+        { id: "scene-ref", shotId: "shot-2", assetVersionId: "scene-v1", role: "reference", status: "linked", asset: scene },
+        ...props.map((asset) => ({ id: `excluded-${asset.id}`, shotId: "shot-2", assetVersionId: asset.primaryVersionId, role: "reference", status: "excluded", asset })),
+    ] as ShotAssetReference[];
+    const result = await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-2", generationArtifactType: "video", script: { propNames: ["冰棍箱"], sceneAssetId: "scene" } }, api);
+    expect(result.boundCount).toBe(0);
+    expect(calls).toEqual([]);
+});
+
+test("removing a prop excludes identical names but not another prop sharing its alias", async () => {
+    const { api, workspace } = fixture();
+    const props = [
+        { id: "removed", title: "云舒的手机", category: "prop", primaryVersionId: "removed-v1", definitionJson: JSON.stringify({ aliases: ["手机"] }) },
+        { id: "duplicate", title: "云舒的手机", category: "prop", primaryVersionId: "duplicate-v1" },
+        { id: "different", title: "周行旻的电话设备", category: "prop", primaryVersionId: "different-v1", definitionJson: JSON.stringify({ aliases: ["手机"] }) },
+    ] as ProjectAsset[];
+    api.listProjectAssets = async () => ({ assets: props });
+    workspace.shotReferences = [{ id: "excluded", shotId: "shot-1", assetVersionId: "removed-v1", role: "reference", status: "excluded", asset: props[0] }] as ShotAssetReference[];
+    const result = await prepareProjectShotAssets({ projectId: "p", unitId: "u", shotId: "shot-1", script: { propNames: ["云舒的手机", "周行旻的电话设备"] } }, api);
+    expect(result.workspace.shotReferences.filter((reference) => reference.status === "linked").map((reference) => reference.assetVersionId)).toEqual(["different-v1"]);
+    const context = buildShotAssetReferenceContext({ ...result.workspace, assets: props } as ProjectDetail, "shot-1");
+    expect(context.excludedAssetIds).toEqual(["removed", "duplicate"]);
 });
 
 test("removed reference pictures and stale asset tokens stay out of the submission without losing story text", () => {
@@ -151,6 +214,17 @@ test("existing explicit references retain their pinned version without auto-bind
     const result = await prepareProjectShotAssets({ projectId: "project-1", unitId: "chapter-1", shotId: "shot-1", script: { plotDescription: "嬴政" } }, api);
     expect(result.workspace.shotReferences[0]?.assetVersionId).toBe("character-v1");
     expect(calls).toEqual(["list-assets"]);
+});
+
+test("a manually selected prop version survives repair and supplies its own reference image", async () => {
+    const { api, workspace, calls } = fixture();
+    const asset = { id: "prop", title: "药箱", category: "prop", primaryVersionId: "new-prop", mediaType: "image", storageKey: "resource:new-image" } as ProjectAsset;
+    api.listProjectAssets = async () => ({ assets: [asset] });
+    workspace.shotReferences = [{ id: "manual-prop", shotId: "shot-1", assetVersionId: "old-prop", asset, role: "reference", status: "linked", selectionSource: "manual", selectionLocked: true, referencedVersion: { id: "old-prop", assetId: asset.id, version: 1, representations: [{ id: "old-rep", role: "primary", mediaType: "image", resourceId: "old-image" }] } } as ShotAssetReference];
+    await prepareProjectShotAssets({ projectId: "project", unitId: "chapter", shotId: "shot-1", script: { plotDescription: "拿出药箱", propNames: ["药箱"] } }, api);
+    const context = buildShotAssetReferenceContext({ ...workspace, assets: [asset] } as unknown as ProjectDetail, "shot-1");
+    expect(workspace.shotReferences[0]!.assetVersionId).toBe("old-prop"); expect(calls).toEqual([]);
+    expect(context.referenceImages[0]?.storageKey).toBe("resource:old-image");
 });
 
 test("an existing character does not prevent missing scene and visible prop bindings", async () => {

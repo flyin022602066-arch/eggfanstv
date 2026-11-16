@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, App, Button } from "antd";
 import { Check, Download, History, ImagePlus, Pencil, Plus, RefreshCw, ShieldCheck, Sparkles, Star, Trash2, Upload, UserRound } from "lucide-react";
@@ -39,14 +39,14 @@ export function ProjectCharacterLooksPanel({ project, asset, currentVersionId, o
     const [batchGenerating, setBatchGenerating] = useState(false);
     const [historyKey, setHistoryKey] = useState<string | null>(null);
     const [operationError, setOperationError] = useState("");
-    const catalog = useQuery({ queryKey: ["project", project.id, "character-reference-catalog"], queryFn: () => getCharacterReferenceCatalog(project.id) });
+    const catalog = useQuery({ queryKey: ["project", project.id, "character-reference-catalog"], queryFn: ({ signal }) => getCharacterReferenceCatalog(project.id, captureUserScope(), signal), staleTime: 5_000 });
     const tasks = useQuery({ queryKey: ["project", project.id, "character-look-tasks", asset.id], queryFn: () => listGenerationTasks(100, { projectId: project.id }), refetchInterval: 2500 });
     const taskSignature = tasks.data?.filter((task) => task.clientContext?.nodeId === `character-turnaround:${asset.id}`).map((task) => `${task.id}:${task.status}`).join(",");
     useEffect(() => { void queryClient.invalidateQueries({ queryKey: ["project", project.id, "character-reference-catalog"] }); }, [taskSignature, project.id, queryClient]);
-    const versions = catalog.data?.versions.filter((version) => version.assetId === asset.id) || [];
-    const groups = characterLookGroups(versions, focusedVersionId);
-    const busyKeys = activeCharacterLookKeys(tasks.data || [], versions);
-    const missing = missingCharacterLookImages(versions).filter((version) => !busyKeys.has(characterLookKey(version, versions)));
+    const versions = useMemo(() => catalog.data?.versions.filter((version) => version.assetId === asset.id) || [], [catalog.data, asset.id]);
+    const groups = useMemo(() => characterLookGroups(versions, focusedVersionId), [versions, focusedVersionId]);
+    const busyKeys = useMemo(() => activeCharacterLookKeys(tasks.data || [], versions), [tasks.data, versions]);
+    const missing = useMemo(() => missingCharacterLookImages(versions).filter((version) => !busyKeys.has(characterLookKey(version, versions))), [versions, busyKeys]);
     const group = characterAssetType(asset.title, asset.character?.definition || {}) === "group";
     const baseVersion = versions.slice().sort((left, right) => left.version - right.version).find((version) => group || !hasCombinedCharacterLooks(version.definition));
     let baseImage: ReturnType<typeof characterReferenceImage> | undefined;

@@ -1566,8 +1566,22 @@ func (r *Repository) UnassignCanvasFromProject(userID string, projectID string, 
 }
 
 func (r *Repository) ProjectAssets(userID string, projectID string) ([]model.Asset, error) {
+	return r.ProjectAssetsFiltered(userID, projectID, "", "", "")
+}
+
+func (r *Repository) ProjectAssetsFiltered(userID, projectID, category, mediaType, status string) ([]model.Asset, error) {
 	var assets []model.Asset
-	err := r.db.Table("assets").Select("assets.*").Joins("JOIN project_asset_links ON project_asset_links.asset_id = assets.id").Where("assets.user_id = ? AND project_asset_links.project_id = ?", userID, projectID).Order("assets.updated_at desc").Scan(&assets).Error
+	query := r.db.Table("assets").Select("assets.*").Joins("JOIN project_asset_links ON project_asset_links.asset_id = assets.id").Where("assets.user_id = ? AND project_asset_links.project_id = ?", userID, projectID)
+	if category != "" {
+		query = query.Where("assets.category = ?", category)
+	}
+	if mediaType != "" {
+		query = query.Where("assets.kind = ?", mediaType)
+	}
+	if status != "" {
+		query = query.Where("assets.status = ?", status)
+	}
+	err := query.Order("assets.updated_at desc").Scan(&assets).Error
 	return assets, err
 }
 

@@ -303,7 +303,7 @@ func (s *Service) CompilePrompt(userID string, operation string, values map[stri
 	}
 	creative := template.Content
 	if operation == OperationCharacterTurnaround {
-		if template.CreatedBy == "" && strings.TrimSpace(creative) == legacyCharacterTurnaroundTemplate {
+		if template.CreatedBy == "" && (strings.TrimSpace(creative) == legacyCharacterTurnaroundTemplate || strings.TrimSpace(creative) == "制作专业人物设定图。"+legacyHeadThreeBodyLayout+"背景使用纯净中性浅色和均匀设定稿光线，只负责分离轮廓，不得改变项目画风的绘画或渲染媒介。禁止文字、边框、道具说明、表情变化和额外人物。") {
 			creative = definition.DefaultContent
 		}
 		if groupCharacterPrompt(values) && creative == definition.DefaultContent {

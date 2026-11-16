@@ -87,4 +87,7 @@ func TestTaskLeaseFencesExpiredAndReclaimedWriters(t *testing.T) {
 	if stored.ProviderRequestID != "provider-receipt" || stored.ProviderCancelAttempts != 3 || stored.RouteRun != 2 {
 		t.Fatal("completion overwrote independently updated runtime fields")
 	}
+    if err := repo.DeferRunningTaskForProviderPoll(current.ID, current.LeaseOwner, "待确认", time.Minute); !errors.Is(err, ErrTaskStateConflict) { t.Fatalf("successful task regressed to pending: %v", err) }
+    after, err := repo.Task(current.ID)
+    if err != nil || after.Status != model.TaskStatusSucceeded || after.Stage != stored.Stage { t.Fatalf("success state changed: %+v %v", after, err) }
 }

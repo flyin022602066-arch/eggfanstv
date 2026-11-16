@@ -44,7 +44,8 @@ test("actual task payload carries one face reference plus script costume and pro
     expect(input.referenceImages.map((image) => image.storageKey)).toEqual(["resource:male-face"]);
     expect(input.config.model).toBe("gpt-image-2");
     expect(input.metadata.resolvedCharacterVersions).toEqual([{ assetId: "hero", versionId: "v1" }]);
-    for (const requirement of ["青色麻布长袍", "保留药囊", "面孔身份依据", "不照搬", "不混合男女主", "不含头部"]) expect(input.metadata.promptTemplateVariables.角色设定).toContain(requirement);
+    for (const requirement of ["青色麻布长袍", "保留药囊", "面孔身份依据", "不照搬", "不混合男女主", "本次所选角色参考图格式"]) expect(input.metadata.promptTemplateVariables.角色设定).toContain(requirement);
+    expect(input.metadata.promptTemplateVariables).toMatchObject({ 角色参考图格式: "portrait-body-grid", 角色形象模板: "project-style" });
 });
 
 test("each batch character uses its own face and fetches latest saved project reference", async () => {

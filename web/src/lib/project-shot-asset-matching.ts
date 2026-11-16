@@ -16,6 +16,7 @@ export type ShotAssetMatchInput = {
     sceneName?: string;
     sceneChange?: boolean;
     propNames?: string[];
+    referenceAssetIds?: string[];
     systemElements?: string[];
     systemPresentation?: import("./chapter-system-presentation").SystemPresentationSettings;
     chapterSourceText?: string;
@@ -36,7 +37,20 @@ export function matchProjectShotCharacters(assets: ProjectAsset[], input: ShotAs
 }
 
 export function matchProjectShotAssets(assets: ProjectAsset[], input: ShotAssetMatchInput, options: ShotAssetMatchOptions = {}): MatchedShotAsset[] {
-    const candidates = assets.filter((asset) => asset.primaryVersionId && !options.excludedAssetIds?.includes(asset.id));
+    options = { ...options, excludedAssetIds: expandExcludedProjectAssetIds(assets, options.excludedAssetIds || []) };
+    const catalog = assets.filter((asset) => asset.primaryVersionId);
+    const planned = input.referenceAssetIds ? new Set([...input.referenceAssetIds, ...(input.assetBindings || []).filter((binding) => binding.selectionSource === "manual" || binding.selectionLocked).map((binding) => binding.nodeId)]) : undefined;
+    const candidates = catalog.filter((asset) => !options.excludedAssetIds?.includes(asset.id) && (!planned || planned.has(asset.id)));
+    const propIdsByTitle = new Map<string, Set<string>>();
+    const excludedPropNames = new Set<string>();
+    for (const asset of catalog) {
+        if (asset.category !== "prop") continue;
+        if (options.excludedAssetIds?.includes(asset.id)) for (const name of assetNames(asset)) excludedPropNames.add(normalizeName(name));
+        const key = normalizeName(asset.title);
+        const ids = propIdsByTitle.get(key) || new Set<string>();
+        ids.add(asset.id);
+        propIdsByTitle.set(key, ids);
+    }
     const byId = new Map(candidates.map((asset) => [asset.id, asset]));
     const text = normalizeProjectAssetMentions([input.plotDescription, input.action, input.imagePrompt, input.videoPrompt, input.continuityNotes].filter(Boolean).join("\n"), assets).normalize("NFKC");
     const appearanceSource = normalizeProjectAssetMentions([input.plotDescription, input.action, input.imagePrompt, input.videoPrompt].filter(Boolean).join("\n"), assets, text);
@@ -63,7 +77,7 @@ export function matchProjectShotAssets(assets: ProjectAsset[], input: ShotAssetM
             for (const asset of bound) add(asset);
             return;
         }
-        const named = findNamedAsset(candidates, name, category, options);
+        const named = findNamedAsset(category === "prop" && !planned ? catalog : candidates, name, category, options);
         if (named && (category !== "character" || !hasAppearanceContext || visibleCharacters.has(named.id))) add(named);
         else if (category === "environment") {
             for (const location of sceneLocations(name, candidates)) add(findNamedAsset(candidates, location, category, options));
@@ -116,7 +130,10 @@ export function matchProjectShotAssets(assets: ProjectAsset[], input: ShotAssetM
         const visibleText = asset.category === "prop" && options.includeUnlistedProps
             ? [input.plotDescription, input.action, input.imagePrompt, input.videoPrompt].filter(Boolean).join("\n").normalize("NFKC")
             : text;
-        return assetNames(asset).some((name) => containsName(visibleText, name));
+        return assetNames(asset).some((name) => {
+            const exact = asset.category === "prop" ? propIdsByTitle.get(normalizeName(name)) : undefined;
+            return containsName(visibleText, name) && (exact ? exact.has(asset.id) : asset.category !== "prop" || !excludedPropNames.has(normalizeName(name)));
+        });
     });
     for (const asset of named) {
         if (matches.has(asset.id)) continue;
@@ -147,13 +164,17 @@ export function missingProjectShotAssets(assets: ProjectAsset[], input: ShotAsse
     return [...missing.values()];
 }
 
-export function matchProjectShotSequenceAssets(assets: ProjectAsset[], shots: Array<{ script: ShotAssetMatchInput; existing?: MatchedShotAsset[]; excludedAssetIds?: string[] }>, options: ShotAssetMatchOptions = {}): MatchedShotAsset[][] {
+export function matchProjectShotSequenceAssets(assets: ProjectAsset[], shots: Array<{ script: ShotAssetMatchInput; existing?: MatchedShotAsset[]; excludedAssetIds?: string[]; sceneOnly?: boolean }>, options: ShotAssetMatchOptions = {}): MatchedShotAsset[][] {
     let previousScenes: MatchedShotAsset[] = [];
-    return shots.map(({ script, existing = [], excludedAssetIds = [] }) => {
-        const matched = matchProjectShotAssets(assets, { ...script, assetBindings: [...(script.assetBindings || []), ...existing.filter(({ asset }) => asset.category === "prop").map(({ asset }) => ({ nodeId: asset.id }))] }, { ...options, excludedAssetIds });
-        const currentExisting = existing.filter((match) => match.asset.category !== "character" || !isAutomaticShotAssetReference(match) || matched.some(({ asset }) => asset.id === match.asset.id)).map((match) => ({
+    return shots.map(({ script, existing = [], excludedAssetIds = [], sceneOnly = false }) => {
+        excludedAssetIds = expandExcludedProjectAssetIds(assets, [...(options.excludedAssetIds || []), ...excludedAssetIds]);
+        const candidates = sceneOnly ? assets.filter((asset) => asset.category === "environment") : assets;
+        const source = sceneOnly && script.sceneAssetId && !candidates.some((asset) => asset.id === script.sceneAssetId) ? { ...script, sceneAssetId: undefined } : script;
+        const retained = existing.filter((match) => !script.referenceAssetIds || !isAutomaticShotAssetReference(match) || script.referenceAssetIds.includes(match.asset.id));
+        const matched = matchProjectShotAssets(candidates, { ...source, assetBindings: [...(script.assetBindings || []), ...retained.filter(({ asset }) => asset.category === "prop").map(({ asset, selectionSource, selectionLocked }) => ({ nodeId: asset.id, selectionSource, selectionLocked }))] }, { ...options, excludedAssetIds, ...(sceneOnly ? { onAmbiguousAsset: () => undefined } : {}) });
+        const currentExisting = retained.filter((match) => (!sceneOnly || match.asset.category === "environment") && !excludedAssetIds.includes(match.asset.id) && (match.asset.category !== "character" || !isAutomaticShotAssetReference(match) || matched.some(({ asset }) => asset.id === match.asset.id))).map((match) => ({
             ...match,
-            assetVersionId: match.asset.category === "environment" || match.asset.category === "prop" ? match.asset.primaryVersionId || match.assetVersionId : match.assetVersionId,
+            assetVersionId: match.asset.category === "environment" || match.asset.category === "prop" && isAutomaticShotAssetReference(match) ? match.asset.primaryVersionId || match.assetVersionId : match.assetVersionId,
         }));
         const pinnedScenes = currentExisting.filter(({ asset }) => asset.category === "environment");
         const declaredScenes = matched.filter(({ asset }) => asset.category === "environment");
@@ -161,8 +182,15 @@ export function matchProjectShotSequenceAssets(assets: ProjectAsset[], shots: Ar
         const scenes = pinnedScenes.length ? [...pinnedScenes, ...(sceneLocations(script.sceneName || "", assets).length > 1 ? declaredScenes : [])] : declaredScenes.length ? declaredScenes : transition ? [] : previousScenes;
         previousScenes = scenes;
         const byId = new Map([...matched.filter(({ asset }) => asset.category !== "environment" || scenes.some((scene) => scene.asset.id === asset.id)), ...scenes, ...currentExisting].map((match) => [match.asset.id, match]));
-        return Array.from(byId.values()).filter(({ asset }) => !excludedAssetIds.includes(asset.id));
+        return Array.from(byId.values()).filter(({ asset }) => !excludedAssetIds.includes(asset.id) && (!script.referenceAssetIds || script.referenceAssetIds.includes(asset.id) || retained.some((match) => match.asset.id === asset.id && !isAutomaticShotAssetReference(match))));
     });
+}
+
+export function expandExcludedProjectAssetIds(assets: ProjectAsset[], excludedAssetIds: string[]): string[] {
+    const excluded = new Set(excludedAssetIds);
+    const names = new Set(assets.filter((asset) => asset.category === "prop" && excluded.has(asset.id)).map((asset) => normalizeName(asset.title)).filter(Boolean));
+    for (const asset of assets) if (asset.category === "prop" && names.has(normalizeName(asset.title))) excluded.add(asset.id);
+    return [...excluded];
 }
 
 export function isAutomaticShotAssetReference(reference: { selectionSource?: string; selectionLocked?: boolean }) {
@@ -175,7 +203,7 @@ export function shotActionBeats(value: unknown): Array<Record<string, unknown>> 
     try { return shotActionBeats(JSON.parse(value)); } catch { return []; }
 }
 
-export function shotAssetContext(value: unknown): Pick<ShotAssetMatchInput, "sceneAssetId" | "sceneName" | "sceneChange" | "propNames" | "systemPresentation" | "systemElements"> {
+export function shotAssetContext(value: unknown): Pick<ShotAssetMatchInput, "sceneAssetId" | "sceneName" | "sceneChange" | "propNames" | "referenceAssetIds" | "systemPresentation" | "systemElements"> {
     const system = shotActionBeats(value).find((beat) => beat.type === "system_elements");
     const context = shotActionBeats(value).find((beat) => beat.type === "asset_context");
     const presentation = {
@@ -189,6 +217,7 @@ export function shotAssetContext(value: unknown): Pick<ShotAssetMatchInput, "sce
         ...(typeof context.sceneName === "string" ? { sceneName: context.sceneName } : {}),
         ...(typeof context.sceneChange === "boolean" ? { sceneChange: context.sceneChange } : {}),
         ...(Array.isArray(context.propNames) ? { propNames: context.propNames.filter((name): name is string => typeof name === "string") } : {}),
+        ...(Array.isArray(context.referenceAssetIds) ? { referenceAssetIds: context.referenceAssetIds.filter((id): id is string => typeof id === "string") } : {}),
     };
 }
 
@@ -224,7 +253,9 @@ function namedProjectAssets(assets: ProjectAsset[], name: string, category?: str
 }
 
 function findNamedAsset(assets: ProjectAsset[], name: string, category: string | undefined, options: ShotAssetMatchOptions) {
-    const named = namedProjectAssets(assets, name, category);
+    const identities = namedProjectAssets(assets, name, category);
+    if (category === "prop" && identities.some((asset) => options.excludedAssetIds?.includes(asset.id))) return undefined;
+    const named = identities.filter((asset) => !options.excludedAssetIds?.includes(asset.id));
     if (named.length > 1) return resolveAmbiguousAsset(named, name, category, options);
     return named[0];
 }

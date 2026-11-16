@@ -624,9 +624,9 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
             video.references.promptMaxChars = 6000;
             video.references.maxVideoDurationSeconds = 15;
             video.references.maxVideoTotalDurationSeconds = 15;
-            video.duration = { selection: "enum", values: [15], default: 15 };
-            video.resolutions = ["2k"];
-            video.defaultResolution = "2k";
+            video.duration = { selection: "range", min: 4, max: 30, step: 1, default: 30 };
+            video.resolutions = ["768p"];
+            video.defaultResolution = "768p";
         }
     }
     if (protocol === "nono-video") {
@@ -782,7 +782,7 @@ export function pluginWorkflowCapabilityConfig(protocol: ModelProtocol, workflow
 }
 
 export function modelCapabilityConfigFor(
-    config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> },
+    config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol; videoCapabilitiesVersion?: string }> }> },
     model: string,
 ) {
     const separator = model.indexOf("::");
@@ -843,26 +843,12 @@ export function modelCapabilityConfigFor(
     if (hasAutomaticVideoAudio(protocol) && merged.video) {
         merged.video = { ...merged.video, generateAudio: { supported: true, default: true } };
     }
-    if (protocol === "jiasu-video" && modelName.trim().toLowerCase() === "wan3-特惠" && merged.video && fallback.video) {
-        merged.video = { ...merged.video, duration: fallback.video.duration, ratios: fallback.video.ratios, defaultRatio: fallback.video.defaultRatio, resolutions: fallback.video.resolutions, defaultResolution: fallback.video.defaultResolution };
-    }
-    if (protocol === "jiasu-video" && isSeedance25Model(modelName) && merged.video && fallback.video) {
-        merged.video = {
-            ...merged.video,
-            references: {
-                ...merged.video.references,
-                maxImages: fallback.video.references.maxImages,
-                maxImageBytes: fallback.video.references.maxImageBytes,
-                maxTotalBytes: fallback.video.references.maxTotalBytes,
-                maxVideos: fallback.video.references.maxVideos,
-                maxAudios: fallback.video.references.maxAudios,
-            },
-            duration: fallback.video.duration,
-            resolutions: fallback.video.resolutions,
-            defaultResolution: fallback.video.defaultResolution,
-            operations: fallback.video.operations,
-            defaultOperation: fallback.video.defaultOperation,
-        };
+    if (protocol === "jiasu-video") {
+        const legacyVideo = capabilityConfig.video;
+        if (fallback.video && profile.videoCapabilitiesVersion === undefined && legacyVideo?.duration.selection === "range" && legacyVideo.duration.min === 1 && legacyVideo.duration.max === 15 && (legacyVideo.resolutions.length === 0 || legacyVideo.resolutions.join(",") === "480p,720p,1080p") && (modelName.trim().toLowerCase() === "wan3-特惠" || isSeedance25Model(modelName))) {
+            merged.video = fallback.video;
+        }
+        return merged;
     }
     const imageLimit = sdVideoImageReferenceLimit(protocol, modelName);
     if (merged.video && protocol !== "kanhai-video" && protocol !== "nono-video") {

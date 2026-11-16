@@ -85,4 +85,34 @@ func TestProjectPropMergeHTTPContract(t *testing.T) {
 	if err != nil || len(assets) != 1 || assets[0].ID != "target" {
 		t.Fatalf("read after merge = %+v, error = %v", assets, err)
 	}
+	for _, row := range []any{
+		&model.Asset{ID: "duplicate", UserID: owner.ID, Title: "佩剑", Category: model.AssetCategoryProp, PrimaryVersionID: "duplicate-version"},
+		&model.AssetVersion{ID: "duplicate-version", AssetID: "duplicate", Version: 1, DefinitionJSON: `{}`},
+		&model.ProjectAssetLink{ID: "duplicate-link", ProjectID: "project", AssetID: "duplicate"},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, projectID := range []string{"foreign", "project", "project"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/assets/merge-same-name-props", nil))
+		if projectID == "foreign" {
+			if recorder.Code != 404 {
+				t.Fatalf("foreign response: %d %s", recorder.Code, recorder.Body.String())
+			}
+			continue
+		}
+		var envelope struct {
+			Code int                                          `json:"code"`
+			Data localproject.MergeSameNameProjectPropsResult `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil || recorder.Code != 200 || envelope.Code != 0 {
+			t.Fatalf("auto merge HTTP: %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	assets, err = svc.ProjectAssets(owner.ID, "project")
+	if err != nil || len(assets) != 1 || assets[0].VersionCount != 2 {
+		t.Fatalf("automatic merge not applied: %+v, %v", assets, err)
+	}
 }

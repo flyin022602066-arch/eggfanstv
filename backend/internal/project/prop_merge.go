@@ -7,6 +7,14 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 )
 
+func (s *Service) MergeSameNameProjectProps(userID, projectID string) (MergeSameNameProjectPropsResult, error) {
+	if _, err := s.Active(userID, projectID); err != nil {
+		return MergeSameNameProjectPropsResult{}, err
+	}
+	merged, deferred, err := s.repo.MergeSameNameProjectProps(userID, projectID)
+	return MergeSameNameProjectPropsResult{Merged: merged, Deferred: deferred}, mapProjectWriteError(err)
+}
+
 func (s *Service) MergeProjectProp(userID, projectID, sourceID string, req MergeProjectPropRequest) (MergeProjectPropResult, error) {
 	if _, err := s.Active(userID, projectID); err != nil {
 		return MergeProjectPropResult{}, err

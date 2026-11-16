@@ -113,9 +113,10 @@ func newAppTaskRuntime(w *taskWorkerCoordinator) *taskruntime.Runtime {
 			_ = s.log(task.UserID, task.ID, "error", "后台任务处理失败", err.Error())
 		},
 		Config: taskruntime.Config{
-			WorkerID: s.workerID,
-			SlotTTL:  workerSlotLeaseDuration,
-			MaxSlots: maxChannelConcurrencyLimit,
+			Unbounded: s.IsLocalMode(),
+			WorkerID:  s.workerID,
+			SlotTTL:   workerSlotLeaseDuration,
+			MaxSlots:  maxChannelConcurrencyLimit,
 		},
 	})
 }

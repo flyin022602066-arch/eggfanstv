@@ -1,8 +1,8 @@
 import { isAutomaticShotAssetReference, matchProjectShotCharacters, matchProjectShotSequenceAssets, missingProjectShotAssets, shotAssetContext, type MatchedShotAsset, type ShotAssetMatchInput } from "@/lib/project-shot-asset-matching";
-import { createProjectAssetCandidates, getProjectUnitWorkspace, linkShotAsset, listProjectAssets, unlinkShotAsset, type ProjectAsset, type ProjectUnitWorkspace } from "@/services/api/projects";
+import { createProjectAssetCandidates, getProjectUnitWorkspace, linkShotAsset, listProjectAssets, mergeSameNameProjectProps, unlinkShotAsset, type ProjectAsset, type ProjectUnitWorkspace } from "@/services/api/projects";
 
-const defaultApi = { getProjectUnitWorkspace, linkShotAsset, listProjectAssets, unlinkShotAsset, createProjectAssetCandidates };
-type AssetPreparationApi = Omit<typeof defaultApi, "createProjectAssetCandidates"> & Partial<Pick<typeof defaultApi, "createProjectAssetCandidates">>;
+const defaultApi = { getProjectUnitWorkspace, linkShotAsset, listProjectAssets, unlinkShotAsset, createProjectAssetCandidates, mergeSameNameProjectProps };
+type AssetPreparationApi = Omit<typeof defaultApi, "createProjectAssetCandidates" | "mergeSameNameProjectProps"> & Partial<Pick<typeof defaultApi, "createProjectAssetCandidates" | "mergeSameNameProjectProps">>;
 
 export function projectUnitShotAssetPlan(workspace: ProjectUnitWorkspace, assets: ProjectAsset[], override?: { shotId: string; script: ShotAssetMatchInput }, options: { includeUnlistedProps?: boolean; unitId?: string } = {}) {
     const unitId = options.unitId || workspace.unit?.id;
@@ -22,7 +22,7 @@ export function projectUnitShotAssetPlan(workspace: ProjectUnitWorkspace, assets
             const assetId = reference.asset?.id || reference.referencedVersion?.assetId || assets.find((asset) => asset.primaryVersionId === reference.assetVersionId)?.id;
             return assetId ? [assetId] : [];
         });
-        return { script, existing, excludedAssetIds };
+        return { script, existing, excludedAssetIds, sceneOnly: Boolean(override && shot.id !== override.shotId) };
     });
     const matches = matchProjectShotSequenceAssets(assets, inputs, options);
     return shots.map((shot, index) => ({ shot, script: inputs[index]!.script, matches: matches[index]! }));
@@ -43,6 +43,7 @@ export async function prepareProjectUnitShotAssets(input: { projectId: string; u
 }
 
 async function prepareAssets(input: { projectId: string; unitId: string; shotId?: string; script?: ShotAssetMatchInput; generationArtifactType?: "storyboard" | "action_board" | "video" }, api: AssetPreparationApi) {
+    await api.mergeSameNameProjectProps?.(input.projectId);
     const workspace = await api.getProjectUnitWorkspace(input.projectId, input.unitId);
     const chapterSourceText = workspace.unit?.sourceText;
     if (workspace.unit?.id && workspace.unit.id !== input.unitId) throw new Error("章节工作区不匹配，请刷新后重试");
@@ -55,7 +56,7 @@ async function prepareAssets(input: { projectId: string; unitId: string; shotId?
     if (input.shotId && blockingTask) throw new Error(`当前镜头的${taskLabel(blockingTask.clientContext?.artifactType)}任务正在生成，请等待原任务结束，未提交新任务`);
     const { assets } = await api.listProjectAssets(input.projectId);
     const plan = projectUnitShotAssetPlan(workspace, assets, input.shotId ? { shotId: input.shotId, script: input.script || {} } : undefined, { includeUnlistedProps: !input.shotId, unitId: input.unitId })
-        .map((entry) => ({ ...entry, matches: entry.matches.map((match) => ({ ...match, assetVersionId: currentAssetVersion(match.asset, match.assetVersionId) })) }))
+        .map((entry) => ({ ...entry, matches: entry.matches.map((match) => ({ ...match, assetVersionId: match.asset.category === "prop" && !isAutomaticShotAssetReference(match) ? match.assetVersionId : currentAssetVersion(match.asset, match.assetVersionId) })) }))
         .filter(({ shot }) => (!input.shotId || shot.id === input.shotId) && (Boolean(input.shotId && input.generationArtifactType) || !activeShotIds.has(shot.id)));
     const skippedShotIds = chapterShots.filter((shot) => activeShotIds.has(shot.id) && shot.id !== input.shotId).map((shot) => shot.id);
     const unresolvedSceneShotIds = plan.filter(({ matches }) => !matches.some(({ asset }) => asset.category === "environment")).map(({ shot }) => shot.id);

@@ -76,7 +76,7 @@ export type GenerationFailureContext = {
 };
 
 export type GenerationFailureDiagnostics = {
-    source: "local_validation" | "upstream_http" | "upstream_response" | "local_result" | "local_response" | "local_runtime" | "client_result" | "unknown";
+    source: "local_validation" | "upstream_http" | "upstream_response" | "local_result" | "local_response" | "local_runtime" | "transport" | "client_result" | "unknown";
     version?: string;
     platform?: string;
     executionResult?: string;
@@ -387,7 +387,7 @@ export function formatGenerationDiagnostics(explanation: GenerationFailureExplan
         `原因：${sanitizeProviderText(explanation.reason)}`,
         explanation.action ? `下一步：${sanitizeProviderText(explanation.action)}` : "",
         `类别：${explanation.category}`,
-        `错误来源：${explanation.category === "local_storage" ? "本地任务存储" : ({ local_validation: "本地参数校验", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", local_runtime: "本地憨包组件", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
+        `错误来源：${explanation.category === "local_storage" ? "本地任务存储" : ({ local_validation: "本地参数校验", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", local_runtime: "本地憨包组件", transport: "网络传输", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
         `错误摘要：${sanitizeProviderText(evidence?.summary || context.errorSummary || explanation.summary || "") || "未记录"}`,
         evidence && ["upstream_http", "upstream_response"].includes(evidence.source) && sanitizeProviderCode(evidence.providerCode || "") ? `上游代码：${sanitizeProviderCode(evidence.providerCode || "")}` : "",
         evidence?.httpStatus && Number.isInteger(evidence.httpStatus) && evidence.httpStatus >= 100 && evidence.httpStatus <= 599 ? `HTTP 状态：${evidence.httpStatus}` : "",
@@ -980,6 +980,7 @@ function assetURIUnsupportedCopy(text: string): Classified | undefined {
 
 function containsContentSafety(normalized: string) {
     return (
+        (normalized.includes("违反") && (normalized.includes("内容政策") || normalized.includes("内容安全政策") || ((normalized.includes("防护限制") || normalized.includes("相关政策")) && /裸露|色情|情色/.test(normalized)))) ||
         normalized.includes("sensitive_words_detected") ||
         normalized.includes("content policy") ||
         normalized.includes("content safety") ||
@@ -996,7 +997,7 @@ function containsContentSafety(normalized: string) {
 function moderationCategoryFromMessage(normalized: string): GenerationErrorCategory {
     if (/prompt\s+(?:or|and)\s+(?:reference|input)|提示词或参考/.test(normalized)) return "moderation_input";
     if (normalized.includes("reference image") || normalized.includes("input image") || normalized.includes("参考图")) return "moderation_reference";
-    if (normalized.includes("output") && (normalized.includes("image") || normalized.includes("video") || normalized.includes("result"))) return "moderation_output";
+    if ((normalized.includes("output") && (normalized.includes("image") || normalized.includes("video") || normalized.includes("result"))) || /生成结果|生成的图片|生成的图像|生成的视频/.test(normalized)) return "moderation_output";
     return "moderation_input";
 }
 

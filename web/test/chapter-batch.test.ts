@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createChapterBatch, runChapterBatch, mergeChapterBatchAssets, chapterBatchRange } from "../src/lib/chapter-batch";
+import { createChapterBatch, resumeChapterBatch, runChapterBatch, mergeChapterBatchAssets, chapterBatchRange } from "../src/lib/chapter-batch";
 import type { CharacterBreakdown } from "../src/lib/canvas/canvas-character-reference";
 
 const empty = () => ({ characters: [], scenes: [], props: [] });
@@ -32,14 +32,57 @@ test("assets are sequential; reviewed assets commit before next extraction; stor
     expect(events.filter((event) => event.startsWith("review:"))).toHaveLength(2);
 });
 
-test("asset failure blocks later episodes but preserves completed work and resumes without extraction", async () => {
+test("resuming a linked batch as assets only never queries or generates its unfinished storyboards", async () => {
+    const previous = createChapterBatch("p", [{ id: "a", title: "第一集" }, { id: "b", title: "第二集" }], "linked");
+    previous.rows[0]!.assets = "completed"; previous.rows[0]!.storyboard = "failed"; previous.rows[0]!.taskIds.storyboard = "paid-task";
+    const state = resumeChapterBatch(previous, "assets"), calls: string[] = [];
+    await runChapterBatch(state, { save: async () => {}, shouldStop: () => false, extract: async (row) => { calls.push(row.id); return empty(); }, review: async () => empty(), confirm: async () => {}, storyboard: async () => { throw new Error("must not resume storyboard"); } });
+    expect(state.status).toBe("completed"); expect(state.mode).toBe("assets"); expect(calls).toEqual(["b"]);
+    expect(state.rows[0]!.storyboard).toBe("failed"); expect(state.rows[0]!.taskIds.storyboard).toBe("paid-task");
+    expect(previous.mode).toBe("linked"); expect(previous.rows[1]!.assets).toBe("pending");
+});
+
+test("resuming as storyboards only preserves unfinished extraction without executing it", async () => {
+    const previous = createChapterBatch("p", [{ id: "a", title: "第一集" }], "linked");
+    previous.rows[0]!.assets = "failed"; previous.rows[0]!.assetError = "复核中断";
+    const state = resumeChapterBatch(previous, "storyboards");
+    let submitted = 0;
+    await runChapterBatch(state, { save: async () => {}, shouldStop: () => false, extract: async () => { throw new Error("must not extract"); }, review: async () => { throw new Error("must not review"); }, confirm: async () => { throw new Error("must not confirm"); }, storyboard: async () => { submitted++; } });
+    expect(state.status).toBe("completed"); expect(submitted).toBe(1); expect(state.rows[0]!.assets).toBe("failed");
+    expect(state.rows[0]!.assetError).toBe("复核中断");
+});
+
+test("switching back to linked resumes omitted work and retains completed phases and task IDs", () => {
+    const previous = createChapterBatch("p", [{ id: "a", title: "第一集" }], "assets");
+    previous.rows[0]!.assets = "completed"; previous.rows[0]!.taskIds.extract = "saved-extraction"; previous.status = "completed";
+    const next = resumeChapterBatch(previous, "linked");
+    expect(next.id).toBe(previous.id); expect(next.rows[0]!.assets).toBe("completed"); expect(next.rows[0]!.storyboard).toBe("pending");
+    expect(next.rows[0]!.taskIds.extract).toBe("saved-extraction"); expect(next.status).toBe("paused");
+    const storyboards = createChapterBatch("p", [{ id: "a", title: "第一集" }], "storyboards");
+    expect(resumeChapterBatch(storyboards, "linked").rows[0]!.assets).toBe("pending");
+});
+
+test("asset failures retry immediately and preserve completed phases before the next episode", async () => {
     const state = createChapterBatch("p", [{ id: "a", title: "第一集" }, { id: "b", title: "第二集" }], "assets");
-    let extracts = 0, reviews = 0, fail = true;
-    const adapter = { save: async () => {}, shouldStop: () => false, extract: async () => { extracts++; return { ...empty(), props: [asset("钥匙")] }; }, review: async () => { reviews++; if (fail) throw new Error("复核网络断开"); return empty(); }, confirm: async () => {}, storyboard: async () => {} };
+    let extracts = 0, reviews = 0, confirms = 0; const delays: number[] = [];
+    const adapter = { save: async () => {}, shouldStop: () => false, waitForRetry: async (milliseconds: number) => { delays.push(milliseconds); }, extract: async () => { if (++extracts < 4) throw new Error("content_filter: empty result"); return { ...empty(), props: [asset("钥匙")] }; }, review: async () => { if (++reviews === 1) throw new Error("复核网络断开"); return empty(); }, confirm: async () => { if (++confirms === 1) throw new Error("入库断开"); }, storyboard: async () => {} };
     await runChapterBatch(state, adapter);
-    expect(state.status).toBe("paused"); expect(extracts).toBe(1); expect(state.rows[1]!.assets).toBe("pending");
-    fail = false; await runChapterBatch(state, adapter);
-    expect(extracts).toBe(2); expect(reviews).toBe(3); expect(state.status).toBe("completed");
+    expect(extracts).toBe(5); expect(reviews).toBe(3); expect(confirms).toBe(3); expect(state.status).toBe("completed");
+    expect(delays).toEqual([0, 0, 0, 0, 0]); expect(state.rows[0]!.assetRetries).toBe(5); expect(state.rows[0]!.assetError).toBeUndefined();
+});
+
+test("asset retry yields to the stop action without submitting another request", async () => {
+    const state = createChapterBatch("p", [{ id: "a", title: "第一集" }], "assets");
+    let stop = false, submitted = 0;
+    await runChapterBatch(state, { save: async () => {}, shouldStop: () => stop, extract: async () => { submitted++; setTimeout(() => { stop = true; }, 0); throw new Error("request failed"); }, review: async () => empty(), confirm: async () => {}, storyboard: async () => {} });
+    expect(submitted).toBe(1); expect(state.status).toBe("paused"); expect(state.rows[0]!.assetError).toContain("request failed");
+});
+
+test("asset identity conflicts preserve paid results instead of retrying generation", async () => {
+    const state = createChapterBatch("p", [{ id: "a", title: "第一集" }], "assets");
+    let extracts = 0;
+    await runChapterBatch(state, { save: async () => {}, shouldStop: () => false, extract: async () => { extracts++; return { ...empty(), props: [asset("旧信"), asset("新信")] }; }, review: async () => ({ ...empty(), props: [{ ...asset("信"), aliases: ["旧信", "新信"] }] }), confirm: async () => { throw new Error("must not confirm ambiguous assets"); }, storyboard: async () => {} });
+    expect(extracts).toBe(1); expect(state.status).toBe("paused"); expect(state.rows[0]!.assetError).toContain("手动核对");
 });
 
 test("stop finishes the submitted step but does not launch review, storyboard, or next episode", async () => {
@@ -49,10 +92,60 @@ test("stop finishes the submitted step but does not launch review, storyboard, o
     expect(state.status).toBe("paused"); expect(events).toEqual([]); expect(state.rows[0]!.extracted?.props).toHaveLength(1);
 });
 
-test("storyboard-only mode never extracts; one storyboard failure does not erase other episodes", async () => {
+test("storyboard failures automatically retry without a fixed attempt limit before processing the next episode", async () => {
     const state = createChapterBatch("p", [{ id: "a", title: "第一集" }, { id: "b", title: "第二集" }], "storyboards");
-    await runChapterBatch(state, { save: async () => {}, shouldStop: () => false, extract: async () => { throw new Error("must not extract"); }, review: async () => { throw new Error("must not review"); }, confirm: async () => { throw new Error("must not confirm"); }, storyboard: async (row) => { if (row.id === "a") throw new Error("写入冲突"); } });
-    expect(state.status).toBe("paused"); expect(state.rows[0]!.storyboardError).toBe("写入冲突"); expect(state.rows[1]!.storyboard).toBe("completed");
+    const calls: string[] = [], delays: number[] = [];
+    await runChapterBatch(state, { save: async () => {}, shouldStop: () => false, extract: async () => { throw new Error("must not extract"); }, review: async () => { throw new Error("must not review"); }, confirm: async () => { throw new Error("must not confirm"); }, waitForRetry: async (milliseconds: number) => { delays.push(milliseconds); }, storyboard: async (row) => { calls.push(row.id); if (calls.length < 7) throw new Error("上游暂时失败"); } });
+    expect(state.status).toBe("completed"); expect(state.rows[0]!.storyboardError).toBeUndefined(); expect(state.rows[1]!.storyboard).toBe("completed");
+    expect(calls).toEqual(["a", "a", "a", "a", "a", "a", "a", "b"]); expect(delays).toEqual([0, 0, 0, 0, 0, 0]);
+});
+
+test("storyboard retry clears the previous error before saving and starting the next attempt", async () => {
+    const state = createChapterBatch("p", [{ id: "a", title: "第10集" }], "storyboards");
+    const runningErrors: Array<string | undefined> = [];
+    let attempts = 0, retryError: string | undefined, activeError: string | undefined;
+    await runChapterBatch(state, {
+        save: async () => { if (state.rows[0]!.storyboard === "running") runningErrors.push(state.rows[0]!.storyboardError); },
+        shouldStop: () => false, extract: async () => empty(), review: async () => empty(), confirm: async () => {},
+        waitForRetry: async () => { retryError = state.rows[0]!.storyboardError; },
+        storyboard: async (row) => {
+            if (++attempts === 1) throw new Error("模型服务暂时不可用");
+            activeError = row.storyboardError;
+        },
+    });
+    expect(attempts).toBe(2); expect(retryError).toBe("模型服务暂时不可用"); expect(activeError).toBeUndefined();
+    expect(runningErrors).toEqual([undefined, undefined]); expect(state.status).toBe("completed");
+});
+
+test("asset retry clears the previous error before saving and starting the next attempt", async () => {
+    const state = createChapterBatch("p", [{ id: "a", title: "第10集" }], "assets");
+    const runningErrors: Array<string | undefined> = [];
+    let attempts = 0, activeError: string | undefined;
+    await runChapterBatch(state, {
+        save: async () => { if (state.rows[0]!.assets === "running") runningErrors.push(state.rows[0]!.assetError); },
+        shouldStop: () => false, review: async () => empty(), confirm: async () => {}, storyboard: async () => {},
+        extract: async (row) => {
+            if (++attempts === 1) throw new Error("资产请求暂时失败");
+            activeError = row.assetError;
+            return empty();
+        },
+    });
+    expect(attempts).toBe(2); expect(activeError).toBeUndefined(); expect(runningErrors.every((error) => error === undefined)).toBe(true);
+    expect(state.status).toBe("completed");
+});
+
+test("pausing during storyboard retry wait prevents another paid submission and preserves progress", async () => {
+    const state = createChapterBatch("p", [{ id: "a", title: "第一集" }], "storyboards");
+    let stop = false, submitted = 0;
+    await runChapterBatch(state, { save: async () => {}, shouldStop: () => stop, extract: async () => empty(), review: async () => empty(), confirm: async () => {}, waitForRetry: async () => { expect(state.rows[0]!.storyboard).toBe("retrying"); stop = true; }, storyboard: async () => { submitted++; throw new Error("生成失败"); } });
+    expect(submitted).toBe(1); expect(state.status).toBe("paused"); expect(stop).toBe(true); expect(state.rows[0]!.storyboardError).toContain("生成失败");
+});
+
+test("manual review errors do not loop or prevent a later episode from completing", async () => {
+    const state = createChapterBatch("p", [{ id: "a", title: "第一集" }, { id: "b", title: "第二集" }], "storyboards");
+    const calls: string[] = [];
+    await runChapterBatch(state, { save: async () => {}, shouldStop: () => false, extract: async () => empty(), review: async () => empty(), confirm: async () => {}, shouldRetryStoryboard: () => false, storyboard: async (row) => { calls.push(row.id); if (row.id === "a") throw new Error("请核对人工修改"); } });
+    expect(calls).toEqual(["a", "b"]); expect(state.status).toBe("paused"); expect(state.rows[0]!.storyboard).toBe("failed"); expect(state.rows[1]!.storyboard).toBe("completed");
 });
 
 test("review merges aliases and additional looks without replacing the base identity", () => {

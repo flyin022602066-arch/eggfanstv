@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, rm, lstat, realpath } from 'node:fs/promises';
-import { randomUUID, randomInt } from 'node:crypto';
+import { mkdir, rm, lstat, realpath, open } from 'node:fs/promises';
+import { randomUUID, randomInt, createHash } from 'node:crypto';
 import path from 'node:path';
 const HOME = 'https://www.doubao.com/chat/';
 const BASE = '/creativity/canvas_workspace/';
@@ -32,9 +32,12 @@ class Pipe {
     });
     child.on('exit', () => this.fail()); child.on('error', () => this.fail());
     child.stdio[3].on('error', () => this.fail());
+    child.stdio[4].on('error', () => this.fail());
+    child.stdio[4].on('end', () => this.fail());
   }
-  fail() { for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(Error('浏览器连接已断开')); } this.pending.clear(); }
+  fail() { this.closed = true; for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(Error('浏览器连接已断开')); } this.pending.clear(); }
   call(method, params = {}, sessionId, timeout = 60000) {
+    if (this.closed) return Promise.reject(Error('浏览器连接已断开'));
     return new Promise((resolve, reject) => {
       const id = this.next++, timer = setTimeout(() => { this.pending.delete(id); reject(Error('浏览器操作超时')); }, timeout);
       this.pending.set(id, { resolve, reject, timer });
@@ -147,7 +150,8 @@ export function collectResult(item, checkpoint) {
     if (!task.extras?.[key]) return { status: 'running' };
     if (checkpoint.taskIds[key] !== task.extras[key]) throw Error('原生成任务身份改变，停止接收');
   }
-  if (asset.status === 3 || task.code != null && Number(task.code) !== 0) {
+  const status = Number(asset.status);
+  if (status === 3) {
     const message = typeof task.message === 'string' ? task.message.slice(0, 8192)
       .replace(/https?:[/][/][^\s<>"']+/gi, '[链接已隐藏]')
       .replace(/\bBearer\s+[^\s;,]+/gi, 'Bearer [已隐藏]')
@@ -157,7 +161,7 @@ export function collectResult(item, checkpoint) {
     const quotaRejected = /(?:额度|积分|次数|余额).{0,8}(?:不足|耗尽|用完)|(?:insufficient|exhausted)[ _-]*(?:credits?|quota)|quota[ _-]*(?:empty|exceeded|exhausted)/i.test(message);
     return { status: 'failed', reason: reason + (message ? '：' + message : ''), ...(quotaRejected ? { quotaRejected: true } : {}) };
   }
-  if (asset.status !== 2) return { status: 'running' };
+  if (status !== 2) return { status: 'running' };
   let model = asset.video_info?.video_model;
   try { if (typeof model === 'string') model = JSON.parse(model); } catch { return { status: 'running' }; }
   const candidates = [asset.video_info?.video_url, asset.video_info?.play_url, asset.video_info?.download_url];
@@ -236,7 +240,7 @@ export class Engine {
       let document = await this.read(id, checkpoint);
       const session = document.idgen_session;
       const images = [];
-      for (const image of input.images) images.push(await this.evaluate(id, uploadImage, image, 150000));
+      for (const image of input.images) images.push(await this.evaluate(id, uploadImage, await this.referenceImage(image), 150000));
       operation(input, images);
       if (images.length) {
         const resource_list = images.map((image, index) => ({ uri: image.uri, resource_type: 2, meta: { image_meta: { data: { md5: '', identifier: 'eggfans:' + input.taskId + ':' + index }, parse_extra: {}, image_info: { width: image.width, height: image.height, format: image.format, file_name: 'reference-' + index } } } }));
@@ -257,6 +261,22 @@ export class Engine {
       const extras = accepted.binding_item.asset?.gen_task_info?.extras || {};
       checkpoint.taskIds = { canvas_id: extras.canvas_id, canvas_sub_id: extras.canvas_sub_id }; checkpoint.phase = 'accepted'; await persist({ ...checkpoint }); return checkpoint;
     } catch (error) { if (!generationAttempted || error.upstreamRejected === true) error.beforeGeneration = true; throw error; }
+  }
+  async referenceImage(reference) {
+    if (typeof reference === 'string') return reference;
+    if (!reference || !/^\.submit-[A-Za-z0-9_-]+\/\d+\.(png|jpeg|webp)$/.test(reference.file || '') || !['image/png', 'image/jpeg', 'image/webp'].includes(reference.mime) || !Number.isSafeInteger(reference.bytes) || reference.bytes < 1 || !/^[a-f0-9]{64}$/.test(reference.sha256 || '')) throw Error('参考图暂存引用无效');
+    const root = await realpath(this.directory);
+    const file = path.join(root, reference.file);
+    const parent = path.dirname(file);
+    if ((await lstat(parent)).isSymbolicLink() || (await realpath(parent)) !== parent || (await lstat(file)).isSymbolicLink() || (await realpath(file)) !== file) throw Error('参考图暂存路径越界或包含链接');
+    const handle = await open(file, 'r');
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size !== reference.bytes) throw Error('参考图暂存大小不匹配');
+      const data = await handle.readFile();
+      if (createHash('sha256').update(data).digest('hex') !== reference.sha256) throw Error('参考图暂存校验失败');
+      return 'data:' + reference.mime + ';base64,' + data.toString('base64');
+    } finally { await handle.close(); }
   }
   async read(id, checkpoint) {
     if (![checkpoint.conversationId, checkpoint.workspaceId].every(value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value))) throw Error('原任务工作区身份无效');

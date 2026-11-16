@@ -39,9 +39,10 @@ func (m *mockBrowser) Query(_ context.Context, user string, receipt doubaobrowse
 }
 func TestDoubaoBrowserSavesReceiptBeforeQueryAndResumesWithoutSubmission(t *testing.T) {
 	events := []string{}
+	stages := []string{}
 	port := &mockBrowser{events: &events, receipt: doubaobrowser.Receipt{TaskID: "fixture-task", ProfileID: "550e8400-e29b-41d4-a716-446655440000"}, queryErr: errors.New("fixture unavailable")}
 	recorder := &mockHanbaoReceipt{events: &events}
-	ctx := WithRuntime(context.Background(), Runtime{DoubaoBrowser: port, LocalVideoReceipts: recorder, Call: CallMeta{UserID: "fixture-owner", TaskID: "fixture-task"}})
+	ctx := WithRuntime(context.Background(), Runtime{DoubaoBrowser: port, LocalVideoReceipts: recorder, Stages: stageRecorder{events: &stages}, Call: CallMeta{UserID: "fixture-owner", TaskID: "fixture-task"}})
 	input := Input{Mode: "video", Prompt: "fixture", Config: Config{InterfaceType: doubaobrowser.Protocol, Model: "seedance_v2.0_std", VideoSeconds: "12", Size: "9:16"}}
 	if err := validatePreparedInput(ctx, input); err != nil {
 		t.Fatal("browser task incorrectly requires API Key:", err)
@@ -56,6 +57,9 @@ func TestDoubaoBrowserSavesReceiptBeforeQueryAndResumesWithoutSubmission(t *test
 	}
 	if port.request.Model != "seedance_v2.0_std" || port.request.Duration != 12 || port.request.Ratio != "9:16" || port.request.TaskID != "fixture-task" {
 		t.Fatalf("parameter loss: %+v", port.request)
+	}
+	if len(stages) == 0 || stages[0] != "正在准备豆包浏览器独立环境并提交生成" {
+		t.Fatalf("submission stage still claims a reserve gate: %v", stages)
 	}
 	ctx = WithCallMeta(ctx, CallMeta{UserID: "fixture-owner", TaskID: "fixture-task", ProviderRequestID: recorder.id})
 	_, _ = RunDoubaoBrowserVideoTask(ctx, input, VideoPollPolicy{})
@@ -94,5 +98,23 @@ func TestDoubaoBrowserFailureRetainsUpstreamCode(t *testing.T) {
 	_, status, err := QueryDoubaoBrowserVideoResult(ctx, EncodeDoubaoBrowserTask(port.receipt), VideoPollPolicy{})
 	if status != "failed" || err == nil || err.Error() != "豆包浏览器："+port.state.Reason {
 		t.Fatalf("status=%s error=%v", status, err)
+	}
+}
+
+func TestDoubaoBrowserProgressDistinguishesPreparationAndUncertainty(t *testing.T) {
+	for _, scenario := range []struct{ status, stage string }{
+		{"preparing", "浏览器正在准备画布和参考图，尚未提交生成"},
+		{"submission_pending", "提交状态待确认，保留原环境自动核对"},
+		{"running", "上游正在生成视频，自动查询原任务"},
+	} {
+		t.Run(scenario.status, func(t *testing.T) {
+			events, stages := []string{}, []string{}
+			port := &mockBrowser{events: &events, receipt: doubaobrowser.Receipt{TaskID: "fixture-task", ProfileID: "550e8400-e29b-41d4-a716-446655440000"}, state: doubaobrowser.Result{Status: scenario.status}}
+			ctx := WithRuntime(context.Background(), Runtime{DoubaoBrowser: port, Stages: stageRecorder{events: &stages}, Call: CallMeta{UserID: "fixture-owner", TaskID: "fixture-task"}})
+			result, status, err := QueryDoubaoBrowserVideoResult(ctx, EncodeDoubaoBrowserTask(port.receipt), VideoPollPolicy{})
+			if err != nil || result != nil || status != scenario.status || !reflect.DeepEqual(stages, []string{scenario.stage}) || port.submits != 0 {
+				t.Fatalf("incorrect original-task progress: result=%v status=%s stages=%v submits=%d error=%v", result, status, stages, port.submits, err)
+			}
+		})
 	}
 }

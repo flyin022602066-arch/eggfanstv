@@ -30,7 +30,7 @@ beforeAll(async () => {
     } });
 }, 90000);
 afterAll(() => server?.stop(true));
-for (const scenario of ["isolation", "single-look", "legacy"]) {
+for (const scenario of ["templates", "isolation", "single-look", "legacy"]) {
     test(`asset supplements ${scenario} stay scoped in Chromium`, async () => {
         const child = Bun.spawn([process.env.NODE_BINARY || "node", resolve(import.meta.dir, "fixtures/asset-image-prompt-scope-browser.mjs"), server.url.toString(), artifactDir, scenario], { stdout: "pipe", stderr: "pipe" });
         const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);

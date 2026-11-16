@@ -23,12 +23,12 @@ const cases = [
 ] as const;
 
 for (const [protocol, model, maximum] of cases) {
-    test(`${protocol} ${model} uses ${maximum} image references even with stale saved limits`, () => {
+    test(`${protocol} ${model} keeps its channel-specific reference policy`, () => {
         expect(defaultModelCapabilityConfig(protocol, model).video!.references.maxImages).toBe(maximum);
         const saved = defaultModelCapabilityConfig(protocol, model);
         saved.video!.references.maxImages = 6;
         const config = { channels: [{ id: "fixture", interfaceType: protocol, models: [model], modelProfiles: [{ model, protocol, capabilityConfig: saved }] }] };
-        expect(modelCapabilityConfigFor(config, `fixture::${model}`).video!.references.maxImages).toBe(maximum);
+        expect(modelCapabilityConfigFor(config, `fixture::${model}`).video!.references.maxImages).toBe(protocol === "jiasu-video" ? 6 : maximum);
     });
 }
 
@@ -45,11 +45,11 @@ test("video reference policy leaves image and text model limits unchanged", () =
 });
 
 for (const [protocol, model] of cases.filter((item) => item[2] === 30)) {
-    test(`${protocol} ${model} restores the 15000 character prompt limit`, () => {
+    test(`${protocol} ${model} keeps its channel-specific prompt policy`, () => {
         const saved = defaultModelCapabilityConfig(protocol, model);
         expect(saved.video!.references.promptMaxChars).toBe(15000);
         saved.video!.references.promptMaxChars = 8000;
         const config = { channels: [{ id: "fixture", interfaceType: protocol, models: [model], modelProfiles: [{ model, protocol, capabilityConfig: saved }] }] };
-        expect(modelCapabilityConfigFor(config, `fixture::${model}`).video!.references.promptMaxChars).toBe(15000);
+        expect(modelCapabilityConfigFor(config, `fixture::${model}`).video!.references.promptMaxChars).toBe(protocol === "jiasu-video" ? 8000 : 15000);
     });
 }

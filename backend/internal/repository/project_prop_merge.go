@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -25,6 +27,16 @@ func (r *Repository) ProjectPropMergeAliases(projectID, assetID string) ([]model
 func (r *Repository) MergeProjectProp(userID, projectID, sourceID, targetID string, expectedRevision int64) (int, error) {
 	mergedShots := 0
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		mergedShots, err = mergeProjectPropTx(tx, userID, projectID, sourceID, targetID, expectedRevision, false)
+		return err
+	})
+	return mergedShots, err
+}
+
+func mergeProjectPropTx(tx *gorm.DB, userID, projectID, sourceID, targetID string, expectedRevision int64, automatic bool) (int, error) {
+	mergedShots := 0
+	err := func() error {
 		project, err := requireActiveProjectTx(tx, userID, projectID)
 		if err != nil {
 			return err
@@ -82,6 +94,14 @@ func (r *Repository) MergeProjectProp(userID, projectID, sourceID, targetID stri
 			}
 		}
 		now := time.Now()
+		versionTargets := map[string]string{}
+		if automatic {
+			var copyErr error
+			versionTargets, copyErr = copyMergedPropVersionsTx(tx, versions, assets[sourceID], targetID, now)
+			if copyErr != nil {
+				return copyErr
+			}
+		}
 		if err := bumpProjectRevisionCASTx(tx, projectID, expectedRevision, now); err != nil {
 			return err
 		}
@@ -143,7 +163,13 @@ func (r *Repository) MergeProjectProp(userID, projectID, sourceID, targetID stri
 				byRole := map[string]model.ShotAssetReference{}
 				for _, ref := range refs {
 					existing, found := byRole[ref.Role]
-					if !found || ref.AssetVersionID == target.PrimaryVersionID || (!existing.SelectionLocked && ref.SelectionLocked) {
+					prefer := !found || ref.AssetVersionID == target.PrimaryVersionID || (!existing.SelectionLocked && ref.SelectionLocked)
+					if automatic && found {
+						manual := ref.SelectionLocked || ref.SelectionSource != "auto" && ref.SelectionSource != "rule"
+						previousManual := existing.SelectionLocked || existing.SelectionSource != "auto" && existing.SelectionSource != "rule"
+						prefer = manual && !previousManual || manual == previousManual && (ref.SelectionLocked && !existing.SelectionLocked || ref.SelectionLocked == existing.SelectionLocked && ref.AssetVersionID == target.PrimaryVersionID)
+					}
+					if prefer {
 						byRole[ref.Role] = ref
 					}
 				}
@@ -151,7 +177,13 @@ func (r *Repository) MergeProjectProp(userID, projectID, sourceID, targetID stri
 					return err
 				}
 				for _, ref := range byRole {
-					ref.ID, ref.AssetVersionID = kernel.NewID(), target.PrimaryVersionID
+					ref.ID = kernel.NewID()
+					manual := ref.SelectionLocked || ref.SelectionSource != "auto" && ref.SelectionSource != "rule"
+					if mapped := versionTargets[ref.AssetVersionID]; automatic && mapped != "" && manual {
+						ref.AssetVersionID = mapped
+					} else if !automatic || !manual {
+						ref.AssetVersionID = target.PrimaryVersionID
+					}
 					if changed {
 						ref.SelectionRevisionID = rewritten.ID
 					}
@@ -163,8 +195,10 @@ func (r *Repository) MergeProjectProp(userID, projectID, sourceID, targetID stri
 					}
 				}
 			}
-			if err := tx.Model(&model.ShotArtifact{}).Where("shot_id = ? AND status NOT IN ?", shot.ID, []string{"failed", "stale"}).Updates(map[string]any{"status": "stale", "selected": false, "updated_at": now}).Error; err != nil {
-				return err
+			if !automatic {
+				if err := tx.Model(&model.ShotArtifact{}).Where("shot_id = ? AND status NOT IN ?", shot.ID, []string{"failed", "stale"}).Updates(map[string]any{"status": "stale", "selected": false, "updated_at": now}).Error; err != nil {
+					return err
+				}
 			}
 			mergedShots++
 		}
@@ -202,11 +236,62 @@ func (r *Repository) MergeProjectProp(userID, projectID, sourceID, targetID stri
 			return err
 		}
 		return tx.Where("project_id = ? AND asset_id = ?", projectID, sourceID).Delete(&model.ProjectAssetLink{}).Error
-	})
+	}()
 	if err != nil {
 		return 0, err
 	}
 	return mergedShots, nil
+}
+
+func copyMergedPropVersionsTx(tx *gorm.DB, versions []model.AssetVersion, source model.Asset, targetID string, now time.Time) (map[string]string, error) {
+	sort.Slice(versions, func(left, right int) bool { return versions[left].Version < versions[right].Version })
+	maxVersion := 0
+	for _, version := range versions {
+		if version.AssetID == targetID && version.Version > maxVersion {
+			maxVersion = version.Version
+		}
+	}
+	mapping := map[string]string{}
+	for _, version := range versions {
+		if version.AssetID != source.ID {
+			continue
+		}
+		originalID := version.ID
+		maxVersion++
+		version.ID, version.AssetID, version.Version, version.UpdatedAt = kernel.NewID(), targetID, maxVersion, now
+		if err := tx.Create(&version).Error; err != nil {
+			return nil, err
+		}
+		mapping[originalID] = version.ID
+		var representations []model.AssetRepresentation
+		if err := tx.Where("asset_version_id = ?", originalID).Find(&representations).Error; err != nil {
+			return nil, err
+		}
+		if originalID == source.PrimaryVersionID && len(representations) == 0 && source.Kind == "image" {
+			var payload struct {
+				Data struct {
+					StorageKey string `json:"storageKey"`
+				} `json:"data"`
+			}
+			if json.Unmarshal([]byte(source.PayloadJSON), &payload) == nil && strings.HasPrefix(payload.Data.StorageKey, "resource:") {
+				var resource model.Resource
+				err := tx.Where("id = ? AND user_id = ?", strings.TrimPrefix(payload.Data.StorageKey, "resource:"), source.UserID).First(&resource).Error
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, err
+				}
+				if err == nil {
+					representations = append(representations, model.AssetRepresentation{ResourceID: resource.ID, MediaType: "image", Role: "primary", CreatedAt: now})
+				}
+			}
+		}
+		for _, representation := range representations {
+			representation.ID, representation.TaskID, representation.AssetVersionID = kernel.NewID(), "", version.ID
+			if err := tx.Omit("TaskID").Create(&representation).Error; err != nil {
+				return nil, err
+			}
+		}
+	}
+	return mapping, nil
 }
 
 func propDefinitionAliases(definition string) []string {

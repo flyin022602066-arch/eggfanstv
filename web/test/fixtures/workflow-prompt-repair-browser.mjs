@@ -1,0 +1,84 @@
+import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { chromium } from "playwright";
+
+const base = new URL(process.argv[2]);
+base.searchParams.set("assetCase", "ready");
+base.searchParams.set("promptCase", "true");
+const executablePath = [process.env.CHROME_PATH, "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"].find((path) => path && existsSync(path));
+const browser = await chromium.launch({ executablePath, headless: true });
+try {
+    for (const theme of ["dark", "light"]) {
+        base.searchParams.set("theme", theme);
+        const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
+        const errors = [], writes = [];
+        const original = "图片1中的角色发生冲突。";
+        const revised = "图片1中的角色平静告别，远景定格。".repeat(35);
+        const preflight = { status: "changed", originalPrompt: original, replacements: [{ original: "发生冲突", replacement: "平静告别", reason: "移除冲突细节" }] };
+        const task = { id: "repair-child", type: "canvas_video", status: "running", prompt: revised.slice(0, 500), attempts: 0, createdAt: "2026-11-16T01:00:00Z", updatedAt: "2026-11-16T01:00:00Z", clientContext: { shotId: "shot-a", artifactType: "video", videoPromptRepairParentTaskId: "repair-parent" } };
+        let tasks = [];
+        const assets = [{ id: "fixture-scene", title: "基地训练区", category: "environment", primaryVersionId: "version-scene", storageKey: "resource:picture-scene" }, { id: "fixture-prop", title: "训练护具", category: "prop", primaryVersionId: "version-prop", storageKey: "resource:picture-prop" }].map((asset) => ({ ...asset, mediaType: "image", status: "confirmed", usages: [], versionCount: 1 }));
+        const shots = ["a", "b"].map((name, position) => ({ id: `shot-${name}`, projectId: "preview-project", unitId: "preview-chapter", position, title: `镜头${position + 1}`, durationMs: 15000, currentRevisionId: `revision-${name}` }));
+        const shotRevisions = shots.map((shot) => ({ id: shot.currentRevisionId, shotId: shot.id, version: 1, durationMs: 15000, videoPrompt: "镜头1：起幅：角色走入基地训练区。→ 落幅：角色收好训练护具。", actionBeatsJson: JSON.stringify([{ type: "asset_context", sceneAssetId: "fixture-scene", propNames: ["训练护具"] }]) }));
+        const shotReferences = shots.flatMap((shot) => assets.map((asset) => ({ id: shot.id + asset.id, shotId: shot.id, assetVersionId: asset.primaryVersionId, role: "reference", status: "linked", asset })));
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.route("**/*", async (route) => {
+            const request = route.request(), url = new URL(request.url());
+            if (url.origin !== base.origin) return route.abort();
+            const ok = (data) => route.fulfill({ json: { code: 0, data, msg: "" } });
+            if (request.method() !== "GET") { writes.push(url.pathname); return route.abort(); }
+            if (url.pathname.endsWith("/tasks/repair-child")) return ok({ ...task, prompt: revised });
+            if (url.pathname.endsWith("/tasks/repair-parent")) return ok({ ...task, id: "repair-parent", status: "failed", prompt: original });
+            if (url.pathname.endsWith("/tasks/preflight-task")) return ok({ ...task, id: "preflight-task", prompt: revised, inputJson: JSON.stringify({ metadata: { videoPromptPreflight: preflight } }) });
+            if (url.pathname.endsWith("/tasks/preflight-unchanged")) return ok({ ...task, id: "preflight-unchanged", prompt: original, inputJson: JSON.stringify({ metadata: { videoPromptPreflight: { status: "unchanged", originalPrompt: original, replacements: [] } } }) });
+            if (url.pathname.endsWith("/workspace")) return ok({ unit: { id: "preview-chapter" }, shots, shotRevisions, shotReferences, assets, tasks, shotArtifacts: [] });
+            if (url.pathname === "/api/projects/preview-project/assets") return ok({ assets });
+            if (url.pathname.startsWith("/api/")) return ok({ assets: [], versions: [], revision: 1, skills: [], tasks: [], total: 0 });
+            return route.continue();
+        });
+        await page.goto(base.toString());
+        const editor = page.getByRole("textbox", { name: "最终提交提示词全文", exact: true });
+        await editor.waitFor({ timeout: 6000 }).catch(async (error) => { throw new Error(error.message + "\n" + JSON.stringify({errors,writes}) + "\n" + (await page.locator("body").innerText()).slice(-6500)); });
+        await page.waitForFunction(() => !document.querySelector('textarea[aria-label="最终提交提示词全文"]')?.readOnly);
+        await editor.fill(original);
+        tasks = [task];
+        await page.getByRole("button", { name: "刷新提示词任务", exact: true }).click();
+        await page.waitForFunction((expected) => document.querySelector('textarea[aria-label="最终提交提示词全文"]')?.value === expected, revised);
+        assert.equal(await editor.inputValue(), revised, "display full optimized prompt, never truncated task summary");
+        const authored = "后来手动编辑的最终稿，不能被自动覆盖。";
+        await editor.fill(authored);
+        await page.getByText("手动稿已保存到本机", { exact: true }).waitFor();
+        await page.reload();
+        await page.getByRole("button", { name: "刷新提示词任务", exact: true }).click();
+        await page.getByText("保留你后来修改的手动稿；下方是自动重提时实际使用的全文。", { exact: true }).waitFor();
+        assert.equal(await editor.inputValue(), authored);
+        await page.getByText("查看自动重提的实际提示词", { exact: true }).click();
+        assert.equal(await page.getByRole("textbox", { name: "自动优化实际提交提示词", exact: true }).inputValue(), revised);
+        await page.getByRole("button", { name: "shot-b", exact: true }).click();
+        assert.equal(await page.getByText("已自动合规优化并重新提交，资产绑定未改变", { exact: true }).count(), 0);
+        assert.notEqual(await editor.inputValue(), revised);
+        await page.getByRole("button", { name: "shot-a", exact: true }).click();
+        tasks = [{ ...task, id: "repair-blocked", status: "failed", createdAt: "2026-11-16T02:00:00Z", clientContext: { shotId: "shot-a", artifactType: "video" }, failureDiagnostics: { summary: "审核不通过；自动合规润色未提交：文本服务暂不可用" } }];
+        await page.getByRole("button", { name: "刷新提示词任务", exact: true }).click();
+        await page.getByText("自动优化未提交", { exact: true }).first().waitFor();
+        await page.getByText("文本服务暂不可用", { exact: true }).first().waitFor();
+        assert.equal(await editor.inputValue(), authored);
+        tasks = [{ ...task, id: "preflight-task", createdAt: "2026-11-16T03:00:00Z", clientContext: { shotId: "shot-a", artifactType: "video", videoPromptPreflightStatus: "changed" } }];
+        await page.getByRole("button", { name: "刷新提示词任务", exact: true }).click();
+        await page.getByText("提交前已自动合规检查并完成局部修改", { exact: true }).waitFor();
+        assert.equal(await editor.inputValue(), authored, "later manual edits stay intact after preflight");
+        await page.getByText("查看提交前局部修改", { exact: true }).click();
+        assert.equal(await page.locator("del").filter({ hasText: "发生冲突" }).count(), 1);
+        assert.equal(await page.locator("ins").filter({ hasText: "平静告别" }).count(), 1);
+        await page.getByRole("button", { name: "使用优化稿继续编辑", exact: true }).click();
+        assert.equal(await editor.inputValue(), revised);
+        tasks = [{ ...task, id: "preflight-unchanged", createdAt: "2026-11-16T04:00:00Z", clientContext: { shotId: "shot-a", artifactType: "video", videoPromptPreflightStatus: "unchanged" } }];
+        await page.getByRole("button", { name: "刷新提示词任务", exact: true }).click();
+        await page.getByText("提交前检查完成，无需修改，沿用原提示词", { exact: true }).waitFor();
+        assert.equal(await editor.inputValue(), revised);
+        assert.deepEqual(errors, []);
+        assert.deepEqual(writes, []);
+        await page.close();
+    }
+    console.log("PASS optimized full prompt sync, later manual draft protection, reload, shot isolation and visible repair failure; zero generation calls");
+} finally { await browser.close(); }

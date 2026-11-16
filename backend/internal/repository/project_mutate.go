@@ -940,6 +940,16 @@ func (r *Repository) ConfirmProjectAssetCandidateActive(userID string, candidate
 				return err
 			}
 		}
+		if candidate.Category == model.AssetCategoryProp && createAsset {
+			existing, err := sameNameProjectPropTx(tx, userID, candidate.ProjectID, candidate.Name)
+			if err != nil {
+				return err
+			}
+			if existing != nil {
+				*asset = *existing
+				link.AssetID, candidate.ResolvedAssetID, createAsset = existing.ID, existing.ID, false
+			}
+		}
 		if createAsset {
 			if err := tx.Create(asset).Error; err != nil {
 				return err

@@ -15,34 +15,10 @@ import (
 )
 
 func (s *Service) FilterProjectAssets(userID string, projectID string, filter ProjectAssetFilter) ([]AssetSummary, error) {
-	assets, err := s.ProjectAssets(userID, projectID)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]AssetSummary, 0, len(assets))
-	for _, asset := range assets {
-		if filter.Category != "" && string(asset.Category) != filter.Category {
-			continue
-		}
-		if filter.MediaType != "" && asset.MediaType != filter.MediaType {
-			continue
-		}
-		if filter.Status != "" && string(asset.Status) != filter.Status {
-			continue
-		}
-		if filter.Usage != "" && !containsString(asset.Usages, filter.Usage) {
-			continue
-		}
-		result = append(result, asset)
-	}
-	return result, nil
-}
-
-func (s *Service) ProjectAssets(userID string, projectID string) ([]AssetSummary, error) {
 	if _, err := s.Owned(userID, projectID); err != nil {
 		return nil, err
 	}
-	assets, err := s.repo.ProjectAssets(userID, projectID)
+	assets, err := s.repo.ProjectAssetsFiltered(userID, projectID, filter.Category, filter.MediaType, filter.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -52,9 +28,16 @@ func (s *Service) ProjectAssets(userID string, projectID string) ([]AssetSummary
 		if summaryErr != nil {
 			return nil, summaryErr
 		}
+		if filter.Usage != "" && !containsString(summary.Usages, filter.Usage) {
+			continue
+		}
 		result = append(result, summary)
 	}
 	return result, nil
+}
+
+func (s *Service) ProjectAssets(userID string, projectID string) ([]AssetSummary, error) {
+	return s.FilterProjectAssets(userID, projectID, ProjectAssetFilter{})
 }
 
 func (s *Service) LinkProjectAsset(userID string, projectID string, req LinkProjectAssetRequest) (AssetSummary, error) {

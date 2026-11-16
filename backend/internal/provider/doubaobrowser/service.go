@@ -33,6 +33,12 @@ func ValidReceipt(ref Receipt) bool {
 
 type BeforeSubmitError struct{ Cause error }
 
+type ReceiptNotFoundError struct{}
+
+func (ReceiptNotFoundError) Error() string {
+	return "未找到原任务浏览器回执；无法确认上游是否受理，已停止自动查询，可重新查询或仅本地停止；不会重新生成"
+}
+
 func (e BeforeSubmitError) Error() string { return e.Cause.Error() }
 func (e BeforeSubmitError) Unwrap() error { return e.Cause }
 
@@ -69,13 +75,14 @@ type reply struct {
 	BeforeGeneration bool            `json:"beforeGeneration"`
 }
 type worker struct {
-	cmd     *exec.Cmd
-	in      io.WriteCloser
-	mu      sync.Mutex
-	writes  sync.Mutex
-	pending map[int64]chan reply
-	next    int64
-	done    chan struct{}
+	cmd        *exec.Cmd
+	in         io.WriteCloser
+	mu         sync.Mutex
+	writes     sync.Mutex
+	pending    map[int64]chan reply
+	next       int64
+	done       chan struct{}
+	exitReason string
 }
 type Service struct {
 	directory string
@@ -189,7 +196,8 @@ func (s *Service) start(userID string) (*worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd.Stderr = io.Discard
+	diagnostics := &workerDiagnostics{}
+	cmd.Stderr = diagnostics
 	if err := cmd.Start(); err != nil {
 		return nil, errors.New("启动豆包浏览器运行层失败")
 	}
@@ -211,17 +219,46 @@ func (s *Service) start(userID string) (*worker, error) {
 				ch <- packet
 			}
 		}
-		_ = cmd.Wait()
+		scanErr := scanner.Err()
+		waitErr := cmd.Wait()
+		if waitErr != nil || scanErr != nil {
+			w.exitReason = diagnostics.reason()
+			if w.exitReason == "" {
+				w.exitReason = "浏览器工作进程异常退出"
+			}
+			if scanErr != nil {
+				w.exitReason = "浏览器工作进程响应读取中断"
+			}
+			code := -1
+			if cmd.ProcessState != nil {
+				code = cmd.ProcessState.ExitCode()
+			}
+			w.exitReason += fmt.Sprintf("；进程退出码=%d", code)
+			record, _ := json.Marshal(map[string]any{"reason": w.exitReason, "exitCode": code, "time": time.Now().UTC().Format(time.RFC3339Nano)})
+			_ = os.WriteFile(filepath.Join(directory, "worker-exit.json"), record, 0600)
+		}
 		close(w.done)
 	}()
 	return w, nil
 }
-func (s *Service) call(ctx context.Context, userID, method string, params any, result any) error {
+func (s *Service) call(ctx context.Context, userID, method string, params any, result any, finished ...func()) error {
+	var completion func()
+	if len(finished) > 0 {
+		completion = finished[0]
+	}
+	defer func() {
+		if completion != nil {
+			completion()
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	w, err := s.start(userID)
 	if err != nil {
+		if method == "submit" {
+			return BeforeSubmitError{Cause: err}
+		}
 		return err
 	}
 	w.mu.Lock()
@@ -230,22 +267,45 @@ func (s *Service) call(ctx context.Context, userID, method string, params any, r
 	ch := make(chan reply, 1)
 	w.pending[id] = ch
 	w.mu.Unlock()
-	defer func() { w.mu.Lock(); delete(w.pending, id); w.mu.Unlock() }()
+	retained := false
+	removePending := func() { w.mu.Lock(); delete(w.pending, id); w.mu.Unlock() }
+	defer func() {
+		if !retained {
+			removePending()
+		}
+	}()
 	body, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
 	if err != nil {
+		if method == "submit" {
+			return BeforeSubmitError{Cause: err}
+		}
 		return err
 	}
 	w.writes.Lock()
 	_, err = w.in.Write(append(body, '\n'))
 	w.writes.Unlock()
 	if err != nil {
+		s.retireWorker(userID, w)
 		return errors.New("浏览器运行层连接中断，提交结果可能未确认")
 	}
 	select {
 	case <-ctx.Done():
+		if completion != nil {
+			retained = true
+			callback := completion
+			completion = nil
+			go func() {
+				select {
+				case <-ch:
+				case <-w.done:
+				}
+				removePending()
+				callback()
+			}()
+		}
 		return ctx.Err()
 	case <-w.done:
-		return errors.New("浏览器运行层已退出，提交结果可能未确认")
+		return errors.New(defaultWorkerExit(w.exitReason))
 	case packet := <-ch:
 		if packet.Error != "" {
 			if method == "submit" && packet.BeforeGeneration {
@@ -261,6 +321,19 @@ func (s *Service) call(ctx context.Context, userID, method string, params any, r
 		return nil
 	}
 }
+
+func (s *Service) retireWorker(userID string, current *worker) {
+	s.mu.Lock()
+	if s.workers[userID] == current {
+		delete(s.workers, userID)
+	}
+	s.mu.Unlock()
+	_ = current.in.Close()
+	if current.cmd != nil && current.cmd.Process != nil {
+		_ = current.cmd.Process.Kill()
+	}
+}
+
 func (s *Service) Control(ctx context.Context, userID, action string, input any) (map[string]any, error) {
 	switch action {
 	case "status", "configure", "open", "clear":
@@ -273,7 +346,11 @@ func (s *Service) Control(ctx context.Context, userID, action string, input any)
 }
 func (s *Service) Submit(ctx context.Context, userID string, input Request) (Receipt, error) {
 	var result Receipt
-	err := s.call(ctx, userID, "submit", input, &result)
+	wire, cleanup, err := s.prepareSubmission(userID, input)
+	if err != nil {
+		return result, BeforeSubmitError{Cause: err}
+	}
+	err = s.call(ctx, userID, "submit", wire, &result, cleanup)
 	return result, err
 }
 func (s *Service) Query(ctx context.Context, userID string, input Receipt) (Result, error) {
@@ -282,12 +359,40 @@ func (s *Service) Query(ctx context.Context, userID string, input Receipt) (Resu
 	return result, err
 }
 func (s *Service) Lookup(ctx context.Context, userID, taskID string) (Receipt, error) {
-	var result Receipt
-	err := s.call(ctx, userID, "lookup", map[string]string{"taskId": taskID}, &result)
-	if err == nil && (result.TaskID != taskID || !ValidReceipt(result)) {
-		err = errors.New("原任务浏览器回执无效")
+	if err := ctx.Err(); err != nil {
+		return Receipt{}, err
 	}
-	return result, err
+	if strings.TrimSpace(userID) == "" || !taskIDPattern.MatchString(taskID) {
+		return Receipt{}, errors.New("原任务身份无效")
+	}
+	file := filepath.Join(s.directory, fmt.Sprintf("%x", sha256.Sum256([]byte(userID))), "pool.json")
+	stream, err := os.Open(file)
+	if os.IsNotExist(err) {
+		return Receipt{}, ReceiptNotFoundError{}
+	}
+	if err != nil {
+		return Receipt{}, errors.New("读取原任务浏览器回执失败")
+	}
+	defer stream.Close()
+	var pool struct {
+		Jobs map[string]struct {
+			Receipt Receipt `json:"receipt"`
+		} `json:"jobs"`
+	}
+	if err := json.NewDecoder(stream).Decode(&pool); err != nil {
+		return Receipt{}, errors.New("原任务浏览器回执文件损坏，无法核对")
+	}
+	if err := ctx.Err(); err != nil {
+		return Receipt{}, err
+	}
+	job, exists := pool.Jobs[taskID]
+	if !exists {
+		return Receipt{}, ReceiptNotFoundError{}
+	}
+	if job.Receipt.TaskID != taskID || !ValidReceipt(job.Receipt) {
+		return Receipt{}, errors.New("原任务浏览器回执无效")
+	}
+	return job.Receipt, nil
 }
 func (s *Service) Close() {
 	s.mu.Lock()

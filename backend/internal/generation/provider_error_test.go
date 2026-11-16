@@ -177,6 +177,25 @@ func TestClassifyHTTPUsesStructuredCodeBeforeStatus(t *testing.T) {
 	}
 }
 
+func TestClassifyHTTPChineseImageOutputRejection(t *testing.T) {
+	for _, message := range []string{
+		"非常抱歉，生成的图片可能违反了关于裸露、色情或情色内容的防护限制。如果你认为此判断有误，请重试或修改提示语。",
+		"非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。",
+	} {
+		body, err := json.Marshal(map[string]any{"error": map[string]any{"code": "upstream_error", "message": message + " (request id: image-policy-123)"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		failure := generation.ClassifyHTTP(400, "400 Bad Request", string(body))
+		if failure.Category != generation.CategoryModerationOutput || failure.Uncertain || failure.RequestID != "image-policy-123" {
+			t.Fatalf("lost explicit moderation: %+v", failure)
+		}
+		if persisted := generation.ClassifyText(failure.UserMessage()); persisted.Category != failure.Category || persisted.RequestID != failure.RequestID {
+			t.Fatalf("lost persisted rejection: %+v", persisted)
+		}
+	}
+}
+
 func TestClassifyHTTPDistinguishesMissingRouteFromInvalidParams(t *testing.T) {
 	for _, testCase := range []struct {
 		name     string

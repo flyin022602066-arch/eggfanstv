@@ -108,6 +108,9 @@ func LoadChannelModelCatalog(ctx context.Context, fetcher CatalogFetcher, baseUR
 	if IsNonoBaseURL(baseURL) {
 		return ParseNonoVideoCatalog(data)
 	}
+	if isGwayBaseURL(baseURL) {
+		return parseGwayVideoCatalog(data, apiFormat)
+	}
 	catalog, err := ParseChannelModelCatalog(data, apiFormat)
 	if err != nil {
 		return nil, err

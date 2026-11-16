@@ -26,6 +26,7 @@ try {
         const target = new URL(request.url());
         if (target.origin !== url.origin) { unexpected.push(target.origin); return route.abort(); }
         const reply = (data) => route.fulfill({ json: { code: 0, data, msg: "" } });
+        if (request.method() === "POST" && target.pathname.endsWith("/assets/merge-same-name-props")) return reply({ merged: 0, deferred: 0 });
         if (target.pathname.endsWith("/workspace")) return reply(workspace());
         if (target.pathname === "/api/projects/preview-project/assets") return reply({ assets });
         if (request.method() === "POST" && target.pathname === "/api/projects/preview-project/shots") {
@@ -42,7 +43,7 @@ try {
             submissions.push(request.postDataJSON());
             return route.fulfill({ status: 400, json: { code: 400, msg: "离线模拟提交失败", reason: "fixture_rejected" } });
         }
-        if (target.pathname.startsWith("/api/") && request.method() === "GET") return reply({ assets: [], versions: [], skills: [], tasks: [], total: 0 });
+        if (target.pathname.startsWith("/api/") && request.method() === "GET") return reply({ assets: [], versions: [], revision: 1, skills: [], tasks: [], total: 0 });
         if (request.method() !== "GET") { unexpected.push(request.method() + " " + target.pathname); return route.abort(); }
         return route.continue();
     });
@@ -54,7 +55,9 @@ try {
     await editor.fill(authored);
     await page.getByText("手动稿已保存到本机", { exact: true }).waitFor();
     await page.getByRole("button", { name: "生成镜头视频", exact: true }).click();
-    await page.getByText("离线模拟提交失败", { exact: true }).first().waitFor();
+    await page.getByText("离线模拟提交失败", { exact: true }).first().waitFor().catch(async (error) => {
+        throw new Error(error.message + "\nBrowser errors: " + JSON.stringify(errors) + "\nUnexpected requests: " + JSON.stringify(unexpected) + "\nPage: " + (await page.locator("body").innerText()).slice(0, 6000));
+    });
     assert.equal(submissions.length, 1);
     assert.equal(submissions[0].prompt, authored, "actual task payload must preserve the clicked manual text byte-for-byte");
     await page.waitForTimeout(500);

@@ -1,4 +1,4 @@
-import { canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset, type CanvasAssetSource } from "@/lib/canvas/canvas-node-asset";
+import { bindMissingCanvasResourceAssets, canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset, type CanvasAssetSource } from "@/lib/canvas/canvas-node-asset";
 import { canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { readImageMeta } from "@/lib/image-utils";
 import { parseAssetRecord } from "@/lib/asset-record";
@@ -146,6 +146,24 @@ export function ensureCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions) {
     const request = runGenerationConsumer(options.signal, (signal) => persistCanvasNodeAsset({ ...options, signal, expectedScope: expected })).finally(() => pendingAssetSyncs.delete(key));
     pendingAssetSyncs.set(key, request);
     return request;
+}
+
+export async function ensureCanvasResourceAssetBindings(
+    options: Pick<EnsureCanvasNodeAssetOptions, "canvasId" | "domainProjectId" | "signal" | "expectedScope"> & { nodes: CanvasNodeData[] },
+    ensure: typeof ensureCanvasNodeAsset = ensureCanvasNodeAsset,
+) {
+    const expectedScope = options.expectedScope ?? captureUserScope();
+    const check = () => { throwIfAborted(options.signal); assertUserScope(expectedScope); };
+    check();
+    const nodes = await bindMissingCanvasResourceAssets(options.nodes, [], async node => {
+        check();
+        const result = await ensure({ canvasId: options.canvasId, domainProjectId: options.domainProjectId, node, source: "canvas-upload", signal: options.signal, expectedScope });
+        check();
+        if (!result.confirmed) throw new Error(`参考素材“${node.title || node.id}”尚未完成入库，未开始生成，请重试素材同步`);
+        return result;
+    });
+    check();
+    return nodes;
 }
 
 async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Promise<CanvasNodeAssetResult> {

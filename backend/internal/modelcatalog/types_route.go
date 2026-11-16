@@ -222,6 +222,7 @@ type FailureInfo struct {
 	RetryAfter    time.Duration
 	SlotCode      string
 	ImageThrottle bool
+	ImageRejected bool
 	ImageRecovery bool
 	Canceled      bool
 }

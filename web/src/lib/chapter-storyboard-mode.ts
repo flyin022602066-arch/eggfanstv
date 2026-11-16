@@ -89,8 +89,10 @@ export function chapterStoryboardCinematographyRequirements(skills: Array<{ skil
 
 export function chapterStoryboardRequirements(mode: ChapterStoryboardMode, dialogueMode: ChapterDialogueConstraintMode = "paced", systemPresentation?: SystemPresentationSettings, directorFormat?: "shots-v1", durationSeconds: 15 | 30 = 30): string {
     const presentation = normalizeSystemPresentationSettings(systemPresentation);
+    const referenceBudget = mode === "standard" ? "【常规精细分镜参考预算】每个实际视频生成单元的角色、场景、道具参考图合计不超过9张，不是每类9张。同一图片重复引用只计一次，不同造型分别计图。先规划可见人物、场景和剧情必要道具，不将旁及的普通陈设全部绑定为参考。超量时沿完整话轮、动作承接及场景转换点合理拆镜或重排相邻单元，不能直接截掉必要角色、关键道具、原话或剧情，不靠省略绑定掩盖实际需要；每个重排单元重新核对实际资产。" : "";
     if ((mode === "continuous_30s" || durationSeconds === 15) && directorFormat === "shots-v1") return [
         storyboardDialogueLanguageRule,
+        referenceBudget,
         durationSeconds === 15
             ? "【结构化逐镜交付：15秒起落版】仅使用本次选定技能及directorScript合同，不另写videoMotionPrompt、timeBeats或第二套剧本。首次回复完整交付全章，每个生成单元固定15秒，整集通常90–180秒、可参考6–12段；数量由原文因果与自然表演决定，短章不补戏凑数、长章不删关键剧情。按整体设定、逐镜起幅→过程→落幅、声音及结尾约束组织，不使用固定时间轴。不要只写结尾，不按字数机械分段，不前详后略。"
             : "【结构化逐镜交付】仅使用本次选定技能的导演规则及下方 directorScript 合同，不另写 videoMotionPrompt、timeBeats 或另一套剧本。首次回复一次完成整章，按原文因果与真实表演组织通常3–6个30秒单元、总计90–180秒；不要只写结尾，不按原文字数机械分段。所有单元的逐镜详稿同等完整，不能前详后略。",
@@ -107,6 +109,7 @@ export function chapterStoryboardRequirements(mode: ChapterStoryboardMode, dialo
     ].join("\n");
     return [
         "【本次交付与技能应用】",
+        referenceBudget,
         storyboardDialogueLanguageRule,
         "本次交付阶段已经确定为完整分镜制作：遵循所选 skill 的导演、摄影、表演与连续性规则，在第一次回复中一次完成可直接生成的分镜 JSON。技能中的默认先分析、分阶段交付、只输出文学剧本或默认不输出完整分镜不适用于本次明确任务；不返回待扩写提纲，不要求用户再调用一次润色才能得到完整镜头脚本。",
         ...(mode === "continuous_30s" ? [

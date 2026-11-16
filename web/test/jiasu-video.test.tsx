@@ -91,7 +91,7 @@ describe("isolated Jiasu video channel", () => {
         const task = await prepareBackendGenerationTask({ mode: "video", config, prompt: "scene" });
         expect((task.input as { config: { videoSeconds: string } }).config.videoSeconds).toBe("30");
         expect(defaultModelCapabilityConfig("jiasu-video", "dola-sd-2.0").video!.duration.max).toBe(15);
-        expect(defaultModelCapabilityConfig("jiasu-video", "minimax-h3").video!.duration.values).toEqual([15]);
+        expect(defaultModelCapabilityConfig("jiasu-video", "minimax-h3").video!.duration).toMatchObject({ selection: "range", min: 4, max: 30 });
     });
     test("keeps configured models video-only with their model-specific limits", () => {
         for (const model of models) {
@@ -246,10 +246,10 @@ describe("isolated Jiasu video channel", () => {
         })).rejects.toThrow("100 MiB");
     });
 
-    test("H3 uses its own fixed output settings and rejects video duration overflow", async () => {
+    test("H3 supports the current output settings and rejects reference video duration overflow", async () => {
         const config = buildGenerationConfig(jiasuConfig("minimax-h3"), undefined, "video");
-        expect(config.videoSeconds).toBe("15");
-        expect(defaultModelCapabilityConfig("jiasu-video", "minimax-h3").video!.resolutions).toEqual(["2k"]);
+        expect(config.videoSeconds).toBe("30");
+        expect(defaultModelCapabilityConfig("jiasu-video", "minimax-h3").video!.resolutions).toEqual(["768p"]);
         await expect(prepareBackendGenerationTask({ mode: "video", config, prompt: "scene", referenceVideos: [{ id: "one", name: "视频1", type: "video/mp4", url: "https://cdn.example/1.mp4", durationMs: 8000 }, { id: "two", name: "视频2", type: "video/mp4", url: "https://cdn.example/2.mp4", durationMs: 8000 }] })).rejects.toThrow("总时长");
     });
 

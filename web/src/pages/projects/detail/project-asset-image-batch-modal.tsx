@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Progress, Switch } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal/app-modal";
 import { projectAssetImageCategoryLabels, type ProjectAssetImageCategory } from "@/lib/project-asset-image-preferences";
+import { characterDesignTemplate, characterReferenceLayout } from "@/lib/character-reference-templates";
 import type { Project, ProjectAsset } from "@/services/api/projects";
 import { configuredModelMatchesCapability, modelDisplayName, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { planProjectAssetImageBatch, projectAssetImageConfig, projectAssetImagePrompt, resolveProjectAssetImagePreset } from "./project-asset-image";
@@ -60,6 +61,7 @@ export function ProjectAssetImageBatchModal({ project, category, unitId = "", sc
         {category === "character" ? <p className="mb-4 text-xs text-foreground/55">不同角色并发提交，每套造型一个任务；同一造型的历史版本不重复生成。只有同一角色的其他造型需要等待基础图，以继承同一人脸；其余角色照常提交。开启“仅生成缺图资产”仍会补齐缺失造型。</p> : null}
         {query.data?.faceBindingIssue ? <Alert className="mb-4" type="warning" showIcon title="主角人脸参考尚未完成绑定" description={query.data.faceBindingIssue} action={onFaceSettings ? <Button size="small" disabled={submitting} onClick={onFaceSettings}>设置人脸参考</Button> : undefined} /> : null}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-active p-3 text-xs"><span>模型：{preset.model ? modelDisplayName(config, preset.model) : "未选择"} · 尺寸：{preset.size} · 画质：{preset.quality.toUpperCase()}</span><Button size="small" disabled={submitting} onClick={onSettings}>修改本类参数</Button></div>
+        {category === "character" ? <p className="mb-4 text-xs text-foreground/55">参考图格式：{characterReferenceLayout(preset.characterLayoutId).name} · 形象模板：{characterDesignTemplate(preset.characterDesignTemplateId).name}。群体与拟人化系统继续使用各自专用规则。</p> : null}
         {!available ? <Alert className="mb-4" type="warning" showIcon title="请先在统一生图设置中选择可用图片模型，并配置渠道 Key" /> : null}
         <label className="mb-4 flex items-center gap-3 text-sm"><Switch aria-label="仅生成缺图资产" checked={missingOnly} disabled={submitting || Boolean(result)} onChange={setMissingOnly} />仅生成缺图资产</label>
         {!missingOnly ? <Alert className="mb-4" type="warning" showIcon title="将重新生成已有图片，产生新的模型调用；旧图片版本会保留" /> : null}

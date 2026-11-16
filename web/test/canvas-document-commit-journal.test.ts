@@ -7,6 +7,8 @@ let activeEpoch = 1;
 let failNextSetItem = false;
 let failSetItemOn = 0;
 let setItemCount = 0;
+let checkResourceBindings = false;
+const bindingEvents: string[] = [];
 
 function assertMockExpectedScope(config?: { expectedScope?: { userScope: string; epoch: number } }) {
     if (!config?.expectedScope) return;
@@ -91,6 +93,7 @@ mock.module("@/lib/user-scope", () => ({
 mock.module("@/services/api/request", () => ({
     ApiError,
     apiBaseURL: "/api",
+    apiClient: { defaults: { headers: { common: {} } } },
     compactApiParams: (params: Record<string, unknown>) => params,
     http: {
         get: async (_path: string, config?: { expectedScope?: { userScope: string; epoch: number } }) => {
@@ -186,6 +189,22 @@ mock.module("@/services/canvas-sync-drafts", () => ({ preserveCanvasSyncDraft: a
 mock.module("@/stores/use-asset-store", () => ({ useAssetStore: { getState: () => ({ assets: [] }) } }));
 mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => true }));
 mock.module("@/services/api/resources", () => ({ resourceIdFromStorageKey: () => "" }));
+mock.module("@/lib/canvas/canvas-node-asset", () => ({
+    canvasNodeToAsset: () => null,
+    canvasNodesMissingResourceAssetBinding: (nodes: Array<{ metadata?: { storageKey?: string; assetId?: string } }>) => checkResourceBindings ? nodes.filter(node => node.metadata?.storageKey?.startsWith("resource:") && !node.metadata.assetId) : [],
+    bindCanvasNodeResourceAsset: (node: { metadata?: { storageKey?: string; assetId?: string } }, sources: Array<{ metadata?: { storageKey?: string; assetId?: string } }>) => {
+        if (!checkResourceBindings || node.metadata?.assetId) return node;
+        const source = sources.find(source => source.metadata?.assetId && source.metadata.storageKey === node.metadata?.storageKey);
+        return source ? { ...node, metadata: { ...node.metadata, assetId: source.metadata?.assetId } } : node;
+    },
+}));
+mock.module("@/services/project-asset-sync", () => ({
+    ensureCanvasResourceAssetBindings: async (options: { nodes: Array<{ metadata?: object }> }) => {
+        bindingEvents.push("asset");
+        expect(server.postStarted).toBe(0);
+        return options.nodes.map(node => ({ ...node, metadata: { ...node.metadata, assetId: "asset-pose" } }));
+    },
+}));
 
 const { persistCanvasDocument, refreshLocalCanvasProjectIfChanged, resetLocalCanvasBackendSaveState, syncLocalCanvasProjectToBackend, hasUnconfirmedCanvasEdits, selectPreferredCanvasProject, deleteLocalCanvasProjects, adoptServerConfirmedGenerationPatch, openLocalCanvasProjectFromBackend, setCanvasProjectionStoreFlushForTest, CanvasStaleScopeError, CanvasBackendSubmitPausedError, CanvasProjectionError } = await import("@/services/local-workspace-repository");
 const { setActiveUserScope } = await import("@/lib/user-scope");
@@ -235,6 +254,18 @@ async function seedConfirmed(doc: ReturnType<typeof canvas> = canvas("基线", 1
     useCanvasStore.setState({ projects: [doc as never] });
 }
 
+test("旧参考节点自动保存必须先入库绑定，不能先提交无资产的画布", async () => {
+    await seedConfirmed(canvas("基线"));
+    checkResourceBindings = true;
+    bindingEvents.length = 0;
+    try {
+        useCanvasStore.getState().updateProject("c1", { nodes: [node("pose", "姿势参考", { metadata: { storageKey: "resource:pose", referenceTemplateMediaId: "pose" } })] as never });
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(bindingEvents).toEqual(["asset"]);
+        expect((server.document as { nodes: Array<{ metadata: { assetId: string } }> }).nodes[0].metadata.assetId).toBe("asset-pose");
+    } finally { checkResourceBindings = false; }
+});
+
 test("真实保存途中删除图片节点会再次提交删除，且不启动生成", async () => {
     const { persistCanvasGenerationTarget } = await import("@/services/canvas-generation-target");
     const target = node("image-target", "新图片");
@@ -273,6 +304,86 @@ test("多张图片的真实保存串行读取最新画布，不覆盖已完成�
     expect(document.nodes.find((item) => item.id === first.id)?.metadata).toMatchObject({ taskId: "task-a", status: "success", content: "/a.png" });
     expect(document.connections).toEqual(connections);
     expect(document.nodes.map((item) => item.id)).toEqual([first.id, second.id]);
+});
+
+test("后台生成结果先写入时，新图片保存自动对齐版本且保留人工编辑和删除", async () => {
+    const { persistCanvasGenerationTarget } = await import("@/services/canvas-generation-target");
+    const original = node("image-a", "A", { metadata: { taskId: "task-a", status: "loading", prompt: "原提示词" } });
+    const deleted = node("deleted", "已手动删除");
+    const added = node("image-b", "B", { metadata: { status: "loading" } });
+    await seedConfirmed(canvas("基线", 1, { nodes: [original, deleted] }));
+    useCanvasStore.getState().updateProject("c1", { nodes: [{ ...original, position: { x: 40, y: 80 }, metadata: { ...original.metadata, prompt: "用户新提示词" } }, added] as never });
+    server.revision = 2;
+    server.document = canvas("基线", 2, { nodes: [{ ...original, metadata: { ...original.metadata, status: "success", taskStatus: "succeeded", content: "/api/resources/result-a/file", storageKey: "resource:result-a", assetId: "asset-a" } }, deleted] });
+    server.failNext = { status: 409, reason: "stale_revision" };
+    await persistCanvasGenerationTarget({ projectId: "c1", nodeId: added.id, expectedScope: captureUserScope() });
+    const saved = server.document as unknown as { nodes: Array<{ id: string; position: unknown; metadata: Record<string, unknown> }> };
+    expect(saved.nodes.map((item) => item.id)).toEqual(["image-a", "image-b"]);
+    expect(saved.nodes[0]).toMatchObject({ position: { x: 40, y: 80 }, metadata: { prompt: "用户新提示词", status: "success", content: "/api/resources/result-a/file" } });
+    expect(canvasBackendSubmitPaused("c1")).toBe(false);
+    expect(server.commits.at(-1)?.expectedRevision).toBe(2);
+    expect(server.postStarted).toBe(2);
+});
+
+test("轮询后台成功结果时保留尚未保存的连接和新节点，不误报外部修改", async () => {
+    const original = node("image-a", "A", { metadata: { taskId: "task-a", status: "loading" } });
+    const added = node("image-b", "B");
+    await seedConfirmed(canvas("基线", 1, { nodes: [original] }));
+    useCanvasStore.getState().updateProject("c1", { nodes: [original, added] as never, connections: [connection("new-edge", original.id, added.id)] });
+    server.revision = 2;
+    server.document = canvas("基线", 2, { nodes: [{ ...original, metadata: { ...original.metadata, status: "success", taskStatus: "succeeded", content: "/api/resources/result-a/file" } }] });
+    await refreshLocalCanvasProjectIfChanged("c1");
+    const live = useCanvasStore.getState().openProject("c1")!;
+    expect(live.nodes.map((item) => item.id)).toEqual(["image-a", "image-b"]);
+    expect(live.nodes[0]?.metadata?.content).toBe("/api/resources/result-a/file");
+    expect(live.connections.map((item) => item.id)).toEqual(["new-edge"]);
+    expect(canvasBackendSubmitPaused("c1")).toBe(false);
+    await syncLocalCanvasProjectToBackend("c1");
+    expect(server.commits.at(-1)?.expectedRevision).toBe(2);
+});
+
+test("生成结果夹带真实外部提示词修改时不重试覆盖", async () => {
+    const original = node("image-a", "A", { metadata: { taskId: "task-a", status: "loading", prompt: "原提示词" } });
+    const added = node("image-b", "B");
+    await seedConfirmed(canvas("基线", 1, { nodes: [original] }));
+    useCanvasStore.getState().updateProject("c1", { nodes: [original, added] as never });
+    server.revision = 2;
+    server.document = canvas("基线", 2, { nodes: [{ ...original, metadata: { ...original.metadata, status: "success", content: "/result.png", prompt: "其他编辑器的提示词" } }] });
+    server.failNext = { status: 409, reason: "stale_revision" };
+    await expect(syncLocalCanvasProjectToBackend("c1")).rejects.toThrow();
+    expect(server.postStarted).toBe(1);
+    expect(server.commits).toHaveLength(0);
+    expect(canvasBackendSubmitPaused("c1")).toBe(true);
+    expect(useCanvasStore.getState().openProject("c1")?.nodes.map((item) => item.id)).toEqual(["image-a", "image-b"]);
+    expect(useCanvasStore.getState().openProject("c1")?.nodes[0]?.metadata?.prompt).toBe("原提示词");
+});
+
+test("结果版本对齐仅重试一次，持续冲突保留本地草稿", async () => {
+    const original = node("image-a", "A", { metadata: { taskId: "task-a", status: "loading" } });
+    const added = node("image-b", "B");
+    await seedConfirmed(canvas("基线", 1, { nodes: [original] }));
+    useCanvasStore.getState().updateProject("c1", { nodes: [original, added] as never });
+    server.revision = 2;
+    server.document = canvas("基线", 2, { nodes: [{ ...original, metadata: { ...original.metadata, status: "success", content: "/result.png" } }] });
+    server.failNext = { status: 409, reason: "stale_revision" };
+    let release!: () => void;
+    server.hold = new Promise<void>((resolve) => { release = resolve; });
+    const saving = syncLocalCanvasProjectToBackend("c1").catch((error: unknown) => error);
+    await waitUntil(() => server.postStarted === 1);
+    server.hold = new Promise<void>((resolve) => {
+        const releaseSecond = resolve;
+        release();
+        release = releaseSecond;
+    });
+    await waitUntil(() => server.postStarted === 2, 400);
+    server.failNext = { status: 409, reason: "stale_revision" };
+    release();
+    expect(await saving).toBeInstanceOf(ApiError);
+    expect(server.postStarted).toBe(2);
+    expect(server.commits).toHaveLength(0);
+    expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
+    expect(useCanvasStore.getState().openProject("c1")?.nodes.map((item) => item.id)).toEqual(["image-a", "image-b"]);
+    expect(useCanvasStore.getState().openProject("c1")?.nodes[0]?.metadata?.content).toBe("/result.png");
 });
 
 async function holdJournalWrite() {

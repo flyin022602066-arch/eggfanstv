@@ -23,7 +23,7 @@ beforeAll(async () => {
         const path = new URL(request.url).pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (path === "/styles.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
-        return new Response('<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head><body><div id="root"></div><script type="module" src="/harness.js"></script></body></html>', { headers: { "Content-Type": "text/html" } });
+        return new Response('<html><head><meta charset="utf-8"><title>区间批量离线验证</title><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head><body><div id="root"></div><script type="module" src="/harness.js"></script></body></html>', { headers: { "Content-Type": "text/html" } });
     } });
 }, 60000);
 afterAll(() => server?.stop(true));

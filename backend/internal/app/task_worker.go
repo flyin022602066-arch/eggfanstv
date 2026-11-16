@@ -44,6 +44,7 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 	s.startTextReplayCleanup(ctx)
 	s.startProviderCancellationReconciliation(ctx)
 	s.startGenerationDeliveryRecovery(ctx)
+	s.startDoubaoBrowserReceiptRecovery()
 	// 旧内置 Agent 的后台调度已整体从产品生命周期移出：
 	//   - 不再启动记忆自动压缩（它会按周期调用用户的文本模型）；
 	//   - 不再按运行模式启动 advanceCloudAgents 轮次调度。
@@ -106,15 +107,36 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 	if err := s.repo.UpdateTaskProgressForLease(task.ID, task.LeaseOwner, task.Stage, task.Progress); err != nil {
 		return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: fmt.Errorf("更新任务进度失败，任务暂未调用上游：%w", err)}
 	}
+	if requested, cause := requestedVideoPromptRepair(task); requested {
+		return s.videoPromptRepairOutcome(ctx, task, cause, terminal)
+	}
+	if task.PollStage == "browser_receipt_lookup" && strings.HasPrefix(task.Model, "doubao-browser::") {
+		if err := s.resumeDoubaoBrowserReceipt(ctx, task); err != nil {
+			return s.deferDoubaoBrowserReceiptRecovery(task, err)
+		}
+	}
 	routeAttempt, err := s.beginTaskRouteAttempt(task)
 	if err != nil {
 		uncertain := isRouteDispatchUncertain(err)
+		if uncertain && strings.HasPrefix(task.Model, "doubao-browser::") {
+			if updateErr := s.repo.UpdateTaskProviderState(task.ID, task.ProviderRequestID, "browser_receipt_lookup", nil); updateErr != nil {
+				return taskruntime.Outcome{Kind: taskruntime.KindUncertain, Err: updateErr}
+			}
+			deferErr := s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, "提交状态待确认，正在自动核对原任务", 15*time.Second, task.FailureDiagnostics)
+			return taskruntime.Outcome{Kind: taskruntime.KindSuspended, Err: deferErr, Applied: deferErr == nil, ProviderAccepted: true}
+		}
 		termErr := terminal.markPreparationFailure(task, "路由准备失败", err, uncertain, "路由准备失败，上游请求未发出")
 		kind := taskruntime.KindFailed
 		if uncertain {
 			kind = taskruntime.KindUncertain
 		}
 		return taskruntime.Outcome{Kind: kind, Err: termErr, Applied: terminalWriteApplied(termErr, err)}
+	}
+	if routeAttempt == nil || routeAttempt.DispatchState == "not_sent" {
+		if err := s.preflightVideoPrompt(ctx, task); err != nil {
+			termErr := terminal.markPreparationFailure(task, "最终提示词检查未通过（视频未提交）", err, false, "提交前合规编辑未完成，原稿保留；未发起视频生成")
+			return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: termErr, Applied: terminalWriteApplied(termErr, err)}
+		}
 	}
 	routeResult, stateErr := s.routeExecutor().execute(ctx, task, routeAttempt)
 	if stateErr != nil {
@@ -146,6 +168,16 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 			return leaseLostOutcome(session, providerAccepted)
 		}
 		decryptedInput, decryptErr := s.decryptTaskInputJSON(task.InputJSON)
+		var browserUnknown providerSubmissionUnknownError
+		if strings.HasPrefix(task.Model, "doubao-browser::") && errors.As(err, &browserUnknown) {
+			captureTaskFailureDiagnostics(task, err, "local_runtime")
+			task.FailureDiagnostics.ExecutionResult = "pending"
+			if updateErr := s.repo.UpdateTaskProviderState(task.ID, task.ProviderRequestID, "browser_receipt_lookup", nil); updateErr != nil {
+				return taskruntime.Outcome{Kind: taskruntime.KindUncertain, Err: updateErr, ProviderAccepted: true}
+			}
+			deferErr := s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, "连接暂时中断，正在自动核对原任务提交状态", 15*time.Second, task.FailureDiagnostics)
+			return taskruntime.Outcome{Kind: taskruntime.KindSuspended, Err: deferErr, Applied: deferErr == nil, ProviderAccepted: true}
+		}
 		var archiveErr doubaoArchiveError
 		if errors.As(err, &archiveErr) {
 			if deferErr := s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, "视频已下载，等待本地 output 归档", 30*time.Second, task.FailureDiagnostics); deferErr != nil {
@@ -175,6 +207,11 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 			if errors.As(err, &pendingErr) {
 				stage = "等待上游任务同步"
 				message = "上游任务状态暂未同步，将继续回查原任务"
+				if strings.HasPrefix(task.Model, "doubao-browser::") {
+					captureTaskFailureDiagnostics(task, err, "local_runtime")
+					stage = "浏览器原任务查询失败，稍后重查"
+					message = "豆包浏览器原任务查询暂不可用，保留回执继续查询；尚不能确认上游生成状态"
+				}
 				if hanbaoTask {
 					stage = "查询暂不可用，稍后继续查询原任务"
 					message = "憨包本轮查询未确认结果，将继续查询原回执，不代表生成失败"
@@ -199,6 +236,9 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		var imageRecovery imageRecoveryError
 		if errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &imageRecovery) {
 			err = errors.New(taskTimeoutMessage(task.Type))
+		}
+		if videoPromptRepairEligible(task, err) && !providerSucceeded {
+			return s.videoPromptRepairOutcome(ctx, task, err, terminal)
 		}
 		return executionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest)
 	}

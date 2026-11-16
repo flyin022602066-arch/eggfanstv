@@ -20,6 +20,25 @@ test("Windows socket disconnects explain saved historical errors without exposin
     }
 });
 
+test("unconfirmed image transmission keeps network evidence separate from upstream rejection", () => {
+    const text = formatGenerationDiagnostics(explainGenerationError({ code: "submission_uncertain" }), {
+        failureDiagnostics: { source: "transport", summary: "connection reset by peer", executionResult: "pending" },
+    });
+    expect(text).toContain("错误来源：网络传输");
+    expect(text).toContain("错误摘要：connection reset by peer");
+    expect(text).toContain("生成执行：等待回查");
+    expect(text).not.toContain("自动恢复已停止");
+});
+
+test("Chinese image policy rejection is not an unconfirmed image request", () => {
+    for (const message of ["非常抱歉，生成的图片可能违反了关于裸露、色情或情色内容的防护限制。", "非常抱歉，生成的图片可能违反了我们的内容政策。"]) {
+        const failure = explainGenerationError({ status: 400, error: { code: "upstream_error", message } });
+        expect(failure.category).toBe("moderation_output");
+        expect(failure.uncertain).toBe(false);
+        expect(failure.message).toContain("内容安全审核");
+    }
+});
+
 test("local task persistence errors keep their cause through API and saved details", () => {
     const error = new ApiError("本地任务保存失败，尚未提交生成", { status: 500, reason: "local_storage_failed" });
     const result = explainGenerationError(error);

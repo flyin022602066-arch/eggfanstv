@@ -57,7 +57,7 @@ export async function generateCharacterTurnaround(input: { projectId: string; as
     if (presetIdentity && input.referenceImage) throw new Error("已启用主角预设作为身份参考，请移除另外选择的生图参考，避免混合两张人脸");
     const identityImage = presetIdentity ? undefined : identity.image;
     const generationDefinition = group ? input.definition : characterLookGenerationDefinition(identity.base!, identity.target!, input.definition);
-    const promptTemplateVariables = characterTurnaroundVariables(input.name, generationDefinition, input.promptOverride, input.projectStyle);
+    const promptTemplateVariables = characterTurnaroundVariables(input.name, generationDefinition, input.promptOverride, input.projectStyle, input.config.projectAssetImagePresets?.character);
     const peerDesigns = new Map<string, string>();
     for (const version of catalog.versions.slice().sort((left, right) => left.version - right.version)) {
         if (version.assetId === input.assetId || peerDesigns.has(version.assetId) || hasCombinedCharacterLooks(version.definition)) continue;
@@ -82,7 +82,7 @@ export async function generateCharacterTurnaround(input: { projectId: string; as
     return dependencies.submitTask({
         projectId: input.projectId,
         mode: "image",
-        prompt: promptTemplateTaskPlaceholder(group ? "群体演员设定图" : "角色三视图"),
+        prompt: promptTemplateTaskPlaceholder(group ? "群体演员设定图" : "角色设定图"),
         config: generationConfig,
         expectedScope,
         referenceImages: identityImage ? [{ id: `character-identity-${identityImage.resourceId}`, name: `${input.name}基础版身份参考`, type: "image/*", dataUrl: "", storageKey: `resource:${identityImage.resourceId}` }, ...(input.referenceImage && input.referenceImage.storageKey !== `resource:${identityImage.resourceId}` ? [input.referenceImage] : [])] : input.referenceImage ? [input.referenceImage] : facePreset ? [characterFaceReference(facePreset)] : [],

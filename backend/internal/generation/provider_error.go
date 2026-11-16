@@ -645,6 +645,7 @@ func ClassifyText(raw string) Failure {
 	if matched := matchPersistedCategory(text); matched != CategoryUnknown {
 		failure.Category = matched
 		failure.FromCode = true
+		failure.RequestID, failure.TaskID = persistedReferenceIDs(text)
 		if matched == CategoryTimeout || matched == CategoryDownloadFailed || matched == CategorySubmissionUncertain {
 			failure.Uncertain = true
 		}
@@ -1032,6 +1033,12 @@ func categoryFromProviderMessage(raw string) (FailureCategory, bool) {
 }
 
 func containsContentSafety(normalized string) bool {
+	if strings.Contains(normalized, "违反") && (strings.Contains(normalized, "内容政策") || strings.Contains(normalized, "内容安全政策") || (strings.Contains(normalized, "防护限制") || strings.Contains(normalized, "相关政策")) && (strings.Contains(normalized, "裸露") || strings.Contains(normalized, "色情") || strings.Contains(normalized, "情色"))) {
+		return true
+	}
+	if strings.Contains(normalized, "审核不通过") || strings.Contains(normalized, "审核未通过") {
+		return true
+	}
 	if strings.Contains(normalized, "sensitive_words_detected") || strings.Contains(normalized, "content policy") || strings.Contains(normalized, "content safety") || strings.Contains(normalized, "safety policy") || strings.Contains(normalized, "data inspection") || strings.Contains(normalized, "prohibited_content") || strings.Contains(normalized, "内容安全审核") || strings.Contains(normalized, "内容审核未通过") {
 		return true
 	}
@@ -1045,7 +1052,7 @@ func containsContentSafety(normalized string) bool {
 }
 
 func moderationCategoryFromMessage(normalized string) FailureCategory {
-	if strings.Contains(normalized, "output") && (strings.Contains(normalized, "image") || strings.Contains(normalized, "video") || strings.Contains(normalized, "result")) || strings.Contains(normalized, "生成结果") {
+	if strings.Contains(normalized, "output") && (strings.Contains(normalized, "image") || strings.Contains(normalized, "video") || strings.Contains(normalized, "result")) || strings.Contains(normalized, "生成结果") || strings.Contains(normalized, "生成的图片") || strings.Contains(normalized, "生成的图像") || strings.Contains(normalized, "生成的视频") {
 		return CategoryModerationOutput
 	}
 	if strings.Contains(normalized, "reference image") || strings.Contains(normalized, "input image") || strings.Contains(normalized, "参考图") || strings.Contains(normalized, "参考图片") {

@@ -39,23 +39,12 @@ func (s *Service) ProjectUnitWorkspace(userID string, projectID string, unitID s
 	if err != nil {
 		return ProjectUnitWorkspace{}, err
 	}
-	recent, err := s.TasksWithOptions(userID, TaskListOptions{Limit: 100, ProjectID: projectID})
+	storedTasks, err := s.repo.ProjectUnitGenerationTasks(userID, projectID, unitID)
 	if err != nil {
 		return ProjectUnitWorkspace{}, err
 	}
-	active, err := s.TasksWithOptions(userID, TaskListOptions{Limit: 100, ProjectID: projectID, ActiveOnly: true})
-	if err != nil {
-		return ProjectUnitWorkspace{}, err
-	}
-	seen := make(map[string]struct{}, len(recent)+len(active))
-	projectTasks := make([]TaskSummary, 0, len(recent)+len(active))
-	for _, task := range append(active, recent...) {
-		if _, exists := seen[task.ID]; exists {
-			continue
-		}
-		seen[task.ID] = struct{}{}
-		projectTasks = append(projectTasks, task)
-	}
+	projectTasks := taskSummariesForOutput(storedTasks)
+	s.attachTaskSummaryDeliveries(storedTasks, projectTasks)
 	shotIDs := make(map[string]struct{}, len(workspace.Shots))
 	for _, shot := range workspace.Shots {
 		shotIDs[shot.ID] = struct{}{}

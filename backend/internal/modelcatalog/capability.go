@@ -221,8 +221,8 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		if modelName == "minimax-h3" {
 			video.References.PromptMaxChars = 6000
 			video.References.MaxVideoDuration, video.References.MaxVideoTotalDuration = 15, 15
-			video.Duration = VideoDurationConfig{Selection: "enum", Values: []int{15}, Default: 15}
-			video.Resolutions, video.DefaultResolution = []string{"2k"}, "2k"
+			video.Duration = VideoDurationConfig{Selection: "range", Min: 4, Max: 30, Step: 1, Default: 30}
+			video.Resolutions, video.DefaultResolution = []string{"768p"}, "768p"
 		}
 	case "towo-sd25-video":
 		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
@@ -431,6 +431,13 @@ func applyModelSpecificVideoCapability(profile *VideoCapabilityConfig, protocol 
 	if normalizedProtocol == "hanbao-video" || normalizedProtocol == "doubao-browser-video" {
 		return DefaultModelCapabilityConfigForModel(normalizedProtocol, modelName).Video
 	}
+	if normalizedProtocol == "jiasu-video" {
+		value.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
+		if value.Duration.Selection == "range" && value.Duration.Min == 1 && value.Duration.Max == 15 && strings.Join(value.Resolutions, ",") == "480p,720p,1080p" && (normalizedModel == "wan3-特惠" || isSeedance25Model(normalizedModel)) {
+			return DefaultModelCapabilityConfigForModel(normalizedProtocol, modelName).Video
+		}
+		return &value
+	}
 	if maximum, ok := sdVideoImageReferenceLimit(normalizedProtocol, normalizedModel); ok {
 		value.References.MaxImages = maximum
 		if maximum == 30 {
@@ -444,29 +451,6 @@ func applyModelSpecificVideoCapability(profile *VideoCapabilityConfig, protocol 
 		value := *profile
 		value.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
 		profile = &value
-	}
-	if normalizedProtocol == "jiasu-video" && normalizedModel == "wan3-特惠" {
-		defaults := DefaultModelCapabilityConfigForModel(normalizedProtocol, normalizedModel).Video
-		value := *profile
-		value.Duration = defaults.Duration
-		value.Ratios, value.DefaultRatio = defaults.Ratios, defaults.DefaultRatio
-		value.Resolutions, value.DefaultResolution = defaults.Resolutions, defaults.DefaultResolution
-		return &value
-	}
-	if normalizedProtocol == "jiasu-video" && isSeedance25Model(normalizedModel) {
-		defaults := DefaultModelCapabilityConfigForModel(normalizedProtocol, normalizedModel).Video
-		value := *profile
-		value.References.MaxImages = defaults.References.MaxImages
-		value.References.MaxImageBytes = defaults.References.MaxImageBytes
-		value.References.MaxTotalBytes = defaults.References.MaxTotalBytes
-		value.References.MaxVideos = defaults.References.MaxVideos
-		value.References.MaxAudios = defaults.References.MaxAudios
-		value.Duration = defaults.Duration
-		value.Resolutions = defaults.Resolutions
-		value.DefaultResolution = defaults.DefaultResolution
-		value.Operations = defaults.Operations
-		value.DefaultOperation = defaults.DefaultOperation
-		return &value
 	}
 	if model.ChannelInterfaceType(normalizedProtocol) != model.ChannelInterfaceAgnesVideo {
 		return profile

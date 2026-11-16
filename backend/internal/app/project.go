@@ -84,6 +84,21 @@ func (s *Service) ProjectDetail(userID string, id string) (ProjectDetail, error)
 	if err != nil {
 		return ProjectDetail{}, err
 	}
+	storedTasks, err := s.repo.ProjectUnitGenerationTasks(userID, core.Project.ID, "")
+	if err != nil {
+		return ProjectDetail{}, err
+	}
+	scopedTasks := taskSummariesForOutput(storedTasks)
+	s.attachTaskSummaryDeliveries(storedTasks, scopedTasks)
+	seen := make(map[string]bool, len(tasks))
+	for _, task := range tasks {
+		seen[task.ID] = true
+	}
+	for _, task := range scopedTasks {
+		if !seen[task.ID] {
+			tasks = append(tasks, task)
+		}
+	}
 	return ProjectDetail{
 		Project: core.Project, Units: core.Units, Canvases: core.Canvases, CanvasUnitLinks: core.CanvasUnitLinks,
 		Assets: assets, AssetFolders: core.AssetFolders, Workflows: workflows, Shots: core.Shots,

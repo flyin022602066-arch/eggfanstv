@@ -26,7 +26,7 @@ test("browser channel is separate, video only, fixed and does not receive gatewa
         expect(video.duration.max).toBe(model === "seedance_v2.5" ? 30 : 15);
         expect(video.references.maxImages).toBe(10);
         expect(video.references.maxVideos).toBe(0); expect(video.references.maxAudios).toBe(0);
-        expect(video.references.promptMaxChars).toBe(4000);
+        expect(video.references.promptMaxChars).toBe(8000);
     }
 });
 

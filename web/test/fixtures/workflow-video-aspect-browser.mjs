@@ -22,7 +22,7 @@ try {
         }
         const fixture = Object.keys(media).find((name) => target.pathname.includes(name));
         if (fixture) return route.fulfill({ contentType: "video/webm", body: Buffer.from(media[fixture], "base64") });
-        if (target.pathname.startsWith("/api/")) return route.fulfill({ json: { code: 0, data: { assets: [], skills: [], tasks: [], total: 0 }, msg: "" } });
+        if (target.pathname.startsWith("/api/")) return route.fulfill({ json: { code: 0, data: { assets: [], versions: [], revision: 1, shots: [], shotRevisions: [], shotArtifacts: [], shotReferences: [], skills: [], tasks: [], total: 0 }, msg: "" } });
         return route.continue();
     });
     await page.goto(url);

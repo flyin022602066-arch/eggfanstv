@@ -60,6 +60,10 @@ func captureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 	}
 	if len(d.Requests) > 0 && (d.Source == "unknown" || d.Source == "upstream_http" || d.Source == "upstream_response") {
 		last := d.Requests[len(d.Requests)-1]
+		if task.Type == "canvas_image" && last.Dispatched && (last.Outcome == "transport_error" || last.Outcome == "timeout") && failure.Uncertain {
+			d.Source, d.Summary = "transport", firstNonEmpty(last.Summary, d.Summary)
+			d.ExecutionResult = "pending"
+		}
 		if last.Dispatched && (last.Outcome == "http_error" || last.Outcome == "business_error") {
 			if last.Outcome == "http_error" {
 				d.Source = "upstream_http"

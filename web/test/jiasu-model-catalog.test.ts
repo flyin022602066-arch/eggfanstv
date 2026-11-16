@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import axios from "axios";
+import { apiClient } from "../src/services/api/request";
 
 import { fetchChannelModels } from "../src/services/api/image";
 import { mergeFetchedChannelModelProfiles } from "../src/lib/channel-model-catalog";
@@ -7,33 +7,33 @@ import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-s
 import { modelCapabilityConfigFor } from "../src/lib/model-capabilities";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, resolveModelRequestConfig, selectableModelsByCapability } from "../src/stores/use-config-store";
 
-const originalAxiosRequest = axios.request;
+const originalBackendAdapter = apiClient.defaults.adapter;
 
 afterEach(() => {
-    axios.request = originalAxiosRequest;
+    apiClient.defaults.adapter = originalBackendAdapter;
 });
 
 describe("Jiasu model catalog", () => {
-    test("resolves the pricing page to its JSON API and lists video models only", async () => {
+    test("uses backend catalog parsing and lists video models only", async () => {
         let requestUrl = "";
-        let upstreamUrl = "";
-        axios.request = (async (request) => {
+        let catalogUrl = "";
+        apiClient.defaults.adapter = async (request) => {
             requestUrl = String(request.url || "");
-            const headers = request.headers as { get?: (name: string) => string | undefined; [key: string]: unknown };
-            upstreamUrl = headers.get?.("X-Canvas-Upstream-URL") || String(headers["x-canvas-upstream-url"] || headers["X-Canvas-Upstream-URL"] || "");
+            catalogUrl = JSON.parse(request.data).catalogUrl;
             return {
+                config: request, status: 200, statusText: "OK", headers: {},
                 data: {
-                    success: true,
-                    data: [
-                        { model_name: "sd-2.5-J2", supported_endpoint_types: ["openai-video"] },
-                        { model_name: "sd-2.5-j2-V", supported_endpoint_types: ["openai-video"] },
-                        { model_name: "sd-2.5-J3-doubao", supported_endpoint_types: ["openai-video"] },
-                        { model_name: "gpt-image-2-4k", supported_endpoint_types: ["image-generation"] },
-                        { model_name: "minimax-h3", supported_endpoint_types: ["openai-video"], quota_type: 2, model_price: 0.05 },
-                    ],
+                    code: 0,
+                    data: { models: [
+                        { id: "sd-2.5-J2", supportedEndpointTypes: ["openai-video"] },
+                        { id: "sd-2.5-j2-V", supportedEndpointTypes: ["openai-video"] },
+                        { id: "sd-2.5-J3-doubao", supportedEndpointTypes: ["openai-video"] },
+                        { id: "gpt-image-2-4k", supportedEndpointTypes: ["image-generation"] },
+                        { id: "minimax-h3", supportedEndpointTypes: ["openai-video"], videoBilling: { enabled: true, unit: "per_second", tiers: [{ key: "", price_per_second: 0.05 }] } },
+                    ] },
                 },
             };
-        }) as typeof axios.request;
+        };
 
         const channel = createModelChannel({
             id: "jiasu-video",
@@ -49,8 +49,8 @@ describe("Jiasu model catalog", () => {
         const result = await fetchChannelModels(channel);
 
         expect(channel.catalogUrl).toBe("https://www.gway.dev/pricing");
-        expect(requestUrl).toBe("/api/ai/custom");
-        expect(upstreamUrl).toBe("https://www.gway.dev/api/pricing?surface=plaza");
+        expect(requestUrl).toBe("/ai/models");
+        expect(catalogUrl).toBe("https://www.gway.dev/pricing");
         expect(result.models).toEqual(expect.arrayContaining(["minimax-h3", "sd-2.5-J2", "sd-2.5-j2-V"]));
         expect(result.models).toHaveLength(4);
         expect(result.catalog.map((item) => item.id)).toEqual(result.models);

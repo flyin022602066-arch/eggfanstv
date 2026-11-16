@@ -20,6 +20,7 @@ func (s *Service) ProjectUnitSummaries(userID string, projectID string) (UnitSum
 	}
 	var units []model.ProjectUnit
 	var canvasCounts map[string]int64
+	videoProgress := make(map[string]UnitVideoProgress)
 	var group errgroup.Group
 	group.Go(func() error {
 		var err error
@@ -31,10 +32,20 @@ func (s *Service) ProjectUnitSummaries(userID string, projectID string) (UnitSum
 		canvasCounts, err = s.repo.ProjectUnitCanvasCounts(projectID)
 		return err
 	})
+	group.Go(func() error {
+		counts, err := s.repo.ProjectUnitVideoProgress(projectID)
+		if err != nil {
+			return err
+		}
+		for id, count := range counts {
+			videoProgress[id] = UnitVideoProgress{ShotCount: count.ShotCount, ReadyVideoCount: count.ReadyVideoCount}
+		}
+		return nil
+	})
 	if err := group.Wait(); err != nil {
 		return UnitSummaries{}, err
 	}
-	return UnitSummaries{Units: units, CanvasCounts: canvasCounts}, nil
+	return UnitSummaries{Units: units, CanvasCounts: canvasCounts, VideoProgress: videoProgress}, nil
 }
 
 func (s *Service) ProjectOverview(userID string, projectID string) (Overview, error) {

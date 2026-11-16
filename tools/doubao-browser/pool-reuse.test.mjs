@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Pool } from './pool.mjs';
+import { Pool, TARGET } from './pool.mjs';
 
 const request = { taskId: 'first', model: 'seedance_v2.5', prompt: 'fixture', duration: 5, ratio: '16:9', images: [] };
 async function fixture(t, patch = {}) {
@@ -51,7 +51,7 @@ test('cleanup skips an unknown submission instead of blocking or deleting the wh
   const { pool, cleared } = await fixture(t, { submit: async () => { throw Error('lost reply'); } });
   const receipt = await pool.submit(request);
   const result = await pool.clearAll();
-  assert.equal(result.cleared, 99);
+  assert.equal(result.cleared, TARGET - 1);
   assert.equal(result.skipped, 1);
   assert.equal(cleared.includes(receipt.profileId), false);
   assert.equal((await pool.status()).busy, 1);
@@ -76,7 +76,7 @@ test('verified local delivery allows cleanup and restores availability durably w
   await pool.delivered(receipt);
   assert.equal((await pool.status()).pending, 0);
   const result = await pool.clearAll();
-  assert.equal(result.cleared, 100);
+  assert.equal(result.cleared, TARGET);
   assert.equal(result.skipped, 0);
   assert.equal((await pool.status()).used, 0);
   const restarted = new Pool(directory, engine);
@@ -114,16 +114,16 @@ test('legacy failed jobs are repaired without releasing an active task or succes
 test('automatic low-water cleanup reuses completed delivered environments but never pending deliveries', async t => {
   const { pool, cleared } = await fixture(t, { query: async () => ({ status: 'success', videoUrl: 'https://v.douyinvod.com/fixture.mp4' }) });
   const identities = [];
-  for (let index = 0; index < 105; index++) {
+  for (let index = 0; index < TARGET + 5; index++) {
     const receipt = await pool.submit({ ...request, taskId: 'rotation-' + index });
     identities.push(receipt.profileId);
     await pool.query(receipt);
     await pool.delivered(receipt);
   }
-  assert.equal(new Set(identities).size, 100);
-  assert.equal((await pool.status()).total, 100);
+  assert.equal(new Set(identities).size, TARGET);
+  assert.equal((await pool.status()).total, TARGET);
   assert.ok(cleared.length > 0);
-  assert.equal((await pool.status()).succeeded, 105);
+  assert.equal((await pool.status()).succeeded, TARGET + 5);
 });
 
 test('cleanup failure never returns a dirty environment to scheduling', async t => {
@@ -176,17 +176,17 @@ test('a late old-task query cannot free or stop the same profile assigned to a n
   assert.deepEqual(stopped, []);
 });
 
-test('one returned failure stays reusable across more than 100 total failed generations', async t => {
+test('one returned failure stays reusable across more than 300 total failed generations', async t => {
   const { pool, submitted } = await fixture(t);
-  for (let index = 0; index < 105; index++) {
+  for (let index = 0; index < TARGET + 5; index++) {
     const receipt = await pool.submit({ ...request, taskId: 'failed-rotation-' + index });
     await pool.query(receipt);
   }
-  assert.equal(submitted.length, 105);
-  assert.equal(new Set(submitted.map(([id]) => id)).size, 100);
+  assert.equal(submitted.length, TARGET + 5);
+  assert.equal(new Set(submitted.map(([id]) => id)).size, TARGET);
   assert.equal((await pool.status()).used, 0);
   assert.equal((await pool.status()).busy, 0);
-  assert.equal((await pool.status()).failed, 105);
+  assert.equal((await pool.status()).failed, TARGET + 5);
 });
 
 test('invalid persisted task identity cannot escape the delivery marker directory', async t => {

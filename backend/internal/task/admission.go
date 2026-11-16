@@ -113,7 +113,7 @@ func (s *Service) admit(userID string, req CreateRequest) (*model.Task, error) {
 		}
 	}
 
-	task := model.Task{
+    task := model.Task{
 		ID:        s.newID(),
 		UserID:    userID,
 		TraceID:   req.TraceID,
@@ -127,7 +127,10 @@ func (s *Service) admit(userID string, req CreateRequest) (*model.Task, error) {
 		Operation: req.Operation,
 		Provider:  req.Provider,
 		Model:     req.Model,
-	}
+    }
+    if taskType == "canvas_video" || strings.HasPrefix(taskType, "video_") {
+        task.Stage, task.Progress = "待提交生成", 0
+    }
 	if textReplay {
 		task.Status = model.TaskStatusTextReplay
 		task.Stage = "文本持久化（前端自管）"

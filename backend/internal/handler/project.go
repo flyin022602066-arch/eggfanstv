@@ -720,6 +720,23 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		ok(c, gin.H{"id": c.Param("assetId")})
 	})
+	r.POST("/projects/:id/assets/merge-same-name-props", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.MergeSameNameProjectProps(user.ID, c.Param("id"))
+		if err != nil {
+			if app.IsProjectNotFound(err) {
+				fail(c, http.StatusNotFound, err)
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
 	r.POST("/projects/:id/assets/:assetId/merge-prop", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

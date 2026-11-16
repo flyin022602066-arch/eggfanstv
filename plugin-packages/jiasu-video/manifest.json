@@ -2,10 +2,10 @@
   "apiVersion": "beeftv.plugin/v2",
   "id": "jiasu-video",
   "name": "极途 Gway",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "Eggfans TV",
   "description": "极途 Gway 独立视频协议，支持 dola-sd-2.5、dola-sd-2.0、minimax-h3、sd-2.5-j2-V、sd-2.5-J2。",
-  "documentation": "# 极途 Gway\n\n独立的视频渠道，支持 `dola-sd-2.5`、`dola-sd-2.0`、`minimax-h3`、`sd-2.5-j2-V`、`sd-2.5-J2` 和 `wan3-特惠`。在模型配置中单独填写该渠道的 URL、API Key 和请求头，默认地址为 `https://ai.jiasuapi.com`。\n\n创建与查询采用佳速原生协议，不复用 Eggfans Seedance 或 Eggfans SD2 的请求结构。参考图片、视频、音频只提交公网 URL；本地素材在生成前自动通过 Uguu 获取链接，已保存链接失效时按现有临时素材流程重新上传。不会调用私域人像库，不提交 `asset://` 或 SD2 的 `native_face`。\n\n视频设置提供佳速专属「人脸处理」选项：服务端默认、保持原图、轻度处理、素描处理。节点记录自己的选择，新节点继承最近选择。\n\n佳速的 `dola-sd-2.5`、`dola-sd-2.0` 默认启用本地自动人脸遮罩。视频节点的「人脸遮罩」可以预览多张参考图、移动或缩放人脸框、手动补框，也可选择马赛克或关闭。调整与开关会保存，原始图片保留。预览阶段不上传图床，开始生成后先保存处理副本，再由视频任务准备有效公网 URL；链接失效时重新上传处理副本。此功能不应用于 H3、Eggfans SD2 或 Seedance URI 通道，也不替代服务端的 `face` 参数。\n\n完整请求和模型限制见 [docs/interface.md](docs/interface.md)。\n\n`wan3-特惠` 支持 5–30 秒、默认 5 秒，分辨率固定 `1080p`，比例支持 `16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`21:9`。已保存的通用 15 秒能力画像按该模型合同纠正；提交保持原生 `images`、`videos`、`audios` 数组和模型 ID，不套用其他渠道参数。\n\n`sd-2.5-j2-V` 和 `sd-2.5-J2` 均支持 30 张图片、10 段视频和 10 段音频参考；V 版参考素材总大小上限为 100 MiB。两者时长为 5–30 秒，V 版固定 720p，J2 版提供 480p、720p、1080p。`dola-sd-2.5` 时长支持选择 1–30 秒，30 秒以 `duration: 30` 提交。`dola-sd-2.0` 保留 1–15 秒，H3 保持固定 15 秒。\n\n---\n\n# 极途 Gway 视频接口\n\n## 接口和鉴权\n\n- 默认 Base URL：`https://ai.jiasuapi.com`，可以编辑。\n- 创建：`POST /v1/video/generations`，JSON。\n- 查询：`GET /v1/videos/tasks/{task_id}`。\n- 鉴权：该渠道自己的 `Authorization: Bearer <API Key>`。\n- 参考：[创建视频](https://aijiasu.apifox.cn/api-510583244)、[查询视频](https://aijiasu.apifox.cn/api-511071739)、[H3 专用说明](https://aijiasu.apifox.cn/api-520050937)。\n\n## 请求参数\n\n| 字段 | 来源与说明 |\n| --- | --- |\n| `model` | 原样使用 `dola-sd-2.5`、`dola-sd-2.0`、`minimax-h3`、`sd-2.5-j2-V`、`sd-2.5-J2`、`sd-2.0-mini-J1`、`wan3-特惠`；不替换为文档示例的模型 ID |\n| `prompt` | 提示词，支持 `@图片N`、`@视频N`、`@音频N` 或 `@素材名称` |\n| `duration` | 节点时长（秒）；H3 按专用文档固定提交 15 |\n| `ratio` | 通用 `16:9`、`9:16`、`1:1`；`wan3-特惠` 另支持 `4:3`、`3:4`、`21:9` |\n| `resolution` | Dola/J2 为 `480p`、`720p`、`1080p`；J2-V 固定 `720p`；H3 固定 `2k`；`wan3-特惠` 固定 `1080p` |\n| `images` | `[{url,name?,type?}]`；普通参考图省略 type，首帧为 `first_frame`，尾帧为 `end_frame` |\n| `videos` | `[{url,name?}]`；J2/J2-V 最多 10 段；H3 额外提交实际 `duration_seconds`（毫秒元数据除以 1000），可带 `mime` |\n| `audios` | `[{url,name?}]`；J2/J2-V 最多 10 段；H3 可带 `mime` |\n| `face` | 服务端默认时省略；保持原图为 `{enabled:false}`；其余为 `{enabled:true,mode:\"light\"或\"heavy\"}` |\n\n不发送旧通道的 `content`、`image_refs`、`video_refs`、`audio_refs`、`first_image`、`last_image`、`native_face`。可选的 `materials` 与三个媒体数组含义重叠，插件统一使用媒体数组，避免重复提交同一素材。\n\n## 模型能力\n\n佳速视频模型按渠道默认同步生成声音。界面显示“同步声音已开启”，已有配置中误存的声音不支持标记自动修正；此接口未公开 `generate_audio` 开关字段，因此请求保持原生字段，由渠道默认生成声音，不混入其他协议参数。\n\n`wan3-特惠` 的 `duration` 为 5–30 的整数，默认 5，选择 30 秒时原样提交 `duration: 30`。缺省分辨率为 `1080p`，比例支持 `16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`21:9`。前后端均纠正该模型误存的通用 15 秒、720p 能力画像，不影响其他模型。三类参考素材统一使用 `{url,name?}` 数组，不重复发送 `materials`。\n\n`sd-2.0-mini-J1` 使用同一创建与查询协议，模型 ID 原样提交；本地和插件校验均允许该模型，参考上限为 10 张图片、3 段视频和 3 段音频。\n\n`sd-2.5-j2-V` 与 `sd-2.5-J2` 支持全模态参考：最多 30 张图、10 段视频、10 段音频。佳速 V 版素材总量超过 100 MiB 时，应用会先将参考图片压缩至约原体积一半后上传提交；本地不会按总字节数拦截，若上游明确拒绝素材体积，则压缩图片后自动重试一次。两者时长参数范围为 5–30 秒；V 版分辨率固定为 720p，J2 版提供 480p、720p、1080p。\n\n模型名称含 SD2.5（包含 `sd-2.5`、`seedance-2.5` 等写法）的参考图上限统一为 30 张；其他视频模型至少支持 10 张参考图。`dola-sd-2.5` 参考音频为 10 段；各模型的视频、音频数量限制分别校验。\n\nH3 专用文档规定：输出 15 秒、2k，最多 3 段参考视频、3 段参考音频，图片/视频/音频合计最多 10 个；视频必须有真实时长，合计不超过 15 秒。缺少时长或超限时本地拒绝提交。\n\n`dola-sd-2.5` 工作区时长范围为 1–30 秒、默认 5 秒，选择 30 秒时以 `duration: 30` 原样提交；`dola-sd-2.0` 保留 1–15 秒。模型能力由本地目录和接口参数分别约束；实际生成未在此修复中执行。\n\n使用首帧或尾帧时不能同时提交音频，系统会提示调整参考方式，不静默丢弃素材。媒体名称与顺序保持一致。\n\n## 任务与结果\n\n### 本地参考图预处理\n\n仅佳速 `dola-sd-2.5`、`dola-sd-2.0` 在创建任务前执行离线人脸检测。默认使用半透明网格，可在视频节点「人脸遮罩」中切换马赛克或关闭，并逐图调整框。检测失败会要求手动框选或关闭，不静默上传未处理图片；未检出人脸时可手动补框，否则使用原图。\n\n原件与处理副本分开保存；处理副本按用户、原图内容、遮罩样式和区域缓存，重开可复用。预览只在本地运行，开始生成后才保存处理副本并在视频任务中上传图床。失效链接重新上传对应副本，保持图片引用名称和顺序。`videoJiasuFaceMask` 与 `jiasuFaceMasks` 是宿主本地设置，不进入上游 JSON；`images[].url` 为处理后的公网地址。服务端 `face` 选项保持独立。\n\n创建读取 `id`，不拿本地任务 ID 查询上游。状态 `queued` 为等待，`in_progress` 为处理中，`completed` 为成功，`failed` 为失败。完成后从 `result_urls` 读取视频；失败显示 `error.message`。宿主下载并保存生成结果。\n\n## Gway 专属参考素材上传\n\n上传会话的 `items` 按每批 1–20 项提交，`name`、`content_type`、`size`、`kind` 分别填写素材名称、实际 MIME、原文件字节数和 image/video/audio 类型。超过 20 项自动分批，大文件组合按内存占用提前切批；上传批次限制不作为模型参考数量限制。响应逐项对应各自的 `upload_id`、`put.url` 与 `put.headers`，完成确认后才将 URL 写回原位置。\n\n仅 `jiasu-video` 且上游主机为 `gway.dev` 或 `www.gway.dev` 时，宿主使用本渠道 API Key 调用 `POST /v1/media/uploads`，按预签名地址 PUT 原文件，并在 `complete` 成功后使用公开链接。上传会话失败且原文件不超过官方直传上限 32 MiB 时，尝试 `POST /v1/media/upload` 的 `file`、`kind` 表单；专属上传仍不可用才回退 Uguu。取消操作不会触发兜底上传。\n\n此流程不修改原始图片、不改变生成请求参数，不影响其他渠道，也不会把 Gway 密钥转发到预签名对象存储地址。\n\n<!-- BEEFTV_PLUGIN_MANIFEST_START -->\n## Manifest 完整接口定义\n\n以下 JSON 与插件包内实际 `manifest.json` 逐字段一致，覆盖插件身份、权限、配置、鉴权、参数、校验、创建、Agent、查询、取消、结果下载、响应和 Agent 响应映射。`documentation` 字段的值就是当前完整文档；为避免文档在自身内部无限递归，JSON 中仅用等义占位文本表示正文。\n\n```json\n{\n  \"apiVersion\": \"beeftv.plugin/v2\",\n  \"id\": \"jiasu-video\",\n  \"name\": \"极途 Gway\",\n  \"version\": \"1.0.2\",\n  \"author\": \"Eggfans TV\",\n  \"description\": \"极途 Gway 独立视频协议，支持 dola-sd-2.5、dola-sd-2.0、minimax-h3、sd-2.5-j2-V、sd-2.5-J2。\",\n  \"documentation\": \"<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>\",\n  \"permissions\": [\n    \"generation.run\",\n    \"media.read\"\n  ],\n  \"configuration\": {\n    \"fields\": [\n      {\n        \"name\": \"apiKey\",\n        \"type\": \"secret\",\n        \"label\": \"API Key\",\n        \"required\": true\n      }\n    ]\n  },\n  \"contributes\": {\n    \"providers\": [\n      {\n        \"id\": \"jiasu-video\",\n        \"label\": \"极途 Gway\",\n        \"capabilities\": [\n          \"video\"\n        ],\n        \"scopes\": [\n          \"admin.system-channel\",\n          \"user.custom-channel\",\n          \"canvas\",\n          \"creation\",\n          \"agent\"\n        ],\n        \"baseUrl\": \"https://ai.jiasuapi.com\",\n        \"requiresPublicMediaUrls\": true,\n        \"auth\": {\n          \"type\": \"bearer\",\n          \"field\": \"apiKey\"\n        },\n        \"parameters\": [\n          {\n            \"name\": \"model\",\n            \"description\": \"佳速视频模型 ID：dola-sd-2.5、dola-sd-2.0、minimax-h3、sd-2.5-j2-V 或 sd-2.5-J2，按模型目录原样提交。\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"model\"\n          },\n          {\n            \"name\": \"prompt\",\n            \"description\": \"视频提示词；@引用名称必须与提交素材 name 对齐。\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"prompt\"\n          },\n          {\n            \"name\": \"duration\",\n            \"description\": \"输出时长（秒）；dola 未传采用模型默认值，H3 固定 15 秒。\",\n            \"type\": \"integer\",\n            \"mapping\": \"duration\"\n          },\n          {\n            \"name\": \"ratio\",\n            \"description\": \"画面比例：16:9、9:16 或 1:1。\",\n            \"type\": \"string\",\n            \"mapping\": \"aspectRatio\",\n            \"values\": [\n              \"16:9\",\n              \"9:16\",\n              \"1:1\"\n            ]\n          },\n          {\n            \"name\": \"resolution\",\n            \"description\": \"dola 为 480p、720p 或 1080p；H3 固定 2k。\",\n            \"type\": \"string\",\n            \"mapping\": \"resolution\"\n          },\n          {\n            \"name\": \"images\",\n            \"description\": \"图片 URL 与可选名称；首尾帧映射到 images[].type 的 first_frame/end_frame。\",\n            \"type\": \"array\",\n            \"mapping\": \"images\"\n          },\n          {\n            \"name\": \"videos\",\n            \"description\": \"视频 URL 与可选名称；J2/J2-V 最多 10 段参考视频；H3 每项需携带实际 duration_seconds，总计不超过 15 秒。\",\n            \"type\": \"array\",\n            \"mapping\": \"videos\"\n          },\n          {\n            \"name\": \"audios\",\n            \"description\": \"音频 URL 与可选名称；J2/J2-V 最多 10 段参考音频；不能与图片首尾帧同时使用。\",\n            \"type\": \"array\",\n            \"mapping\": \"audios\"\n          },\n          {\n            \"name\": \"face\",\n            \"description\": \"佳速独立人脸处理选项：enabled=false 保持原图，enabled=true 配合 light/heavy，省略采用服务端默认。\",\n            \"type\": \"object\",\n            \"mapping\": \"providerOptions.jiasu-video.face\"\n          }\n        ],\n        \"validations\": [\n          {\n            \"assert\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$eq\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    \"minimax-h3\"\n                  ]\n                },\n                \"then\": {\n                  \"$lte\": [\n                    {\n                      \"$add\": [\n                        {\n                          \"$coalesce\": [\n                            {\n                              \"$ref\": \"request.videos.0.metadata.durationMs\"\n                            },\n                            0\n                          ]\n                        },\n                        {\n                          \"$coalesce\": [\n                            {\n                              \"$ref\": \"request.videos.1.metadata.durationMs\"\n                            },\n                            0\n                          ]\n                        },\n                        {\n                          \"$coalesce\": [\n                            {\n                              \"$ref\": \"request.videos.2.metadata.durationMs\"\n                            },\n                            0\n                          ]\n                        }\n                      ]\n                    },\n                    15000\n                  ]\n                },\n                \"else\": true\n              }\n            },\n            \"message\": \"佳速 H3 参考视频总时长不能超过 15 秒\"\n          },\n          {\n            \"assert\": {\n              \"$eq\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$concatArrays\": [\n                          {\n                            \"$ref\": \"request.images\"\n                          },\n                          {\n                            \"$ref\": \"request.videos\"\n                          },\n                          {\n                            \"$ref\": \"request.audios\"\n                          }\n                        ]\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$in\": [\n                          {\n                            \"$first\": {\n                              \"$split\": [\n                                {\n                                  \"$ref\": \"media.url\"\n                                },\n                                \"://\"\n                              ]\n                            }\n                          },\n                          {\n                            \"$if\": {\n                              \"condition\": {\n                                \"$eq\": [\n                                  {\n                                    \"$ref\": \"request.model\"\n                                  },\n                                  \"minimax-h3\"\n                                ]\n                              },\n                              \"then\": [\n                                \"https\"\n                              ],\n                              \"else\": [\n                                \"http\",\n                                \"https\"\n                              ]\n                            }\n                          }\n                        ]\n                      }\n                    }\n                  }\n                },\n                {\n                  \"$add\": [\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.images\"\n                      }\n                    },\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.videos\"\n                      }\n                    },\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.audios\"\n                      }\n                    }\n                  ]\n                }\n              ]\n            },\n            \"message\": \"佳速视频只接受公网 URL，H3 素材必须使用 HTTPS\"\n          },\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$ref\": \"request.images\"\n                  }\n                },\n                {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$or\": [\n                        {\n                          \"$gt\": [\n                            {\n                              \"$len\": {\n                                \"$split\": [\n                                  {\n                                    \"$lower\": {\n                                      \"$ref\": \"request.model\"\n                                    }\n                                  },\n                                  \"sd2.5\"\n                                ]\n                              }\n                            },\n                            1\n                          ]\n                        },\n                        {\n                          \"$gt\": [\n                            {\n                              \"$len\": {\n                                \"$split\": [\n                                  {\n                                    \"$lower\": {\n                                      \"$ref\": \"request.model\"\n                                    }\n                                  },\n                                  \"sd-2.5\"\n                                ]\n                              }\n                            },\n                            1\n                          ]\n                        },\n                        {\n                          \"$gt\": [\n                            {\n                              \"$len\": {\n                                \"$split\": [\n                                  {\n                                    \"$lower\": {\n                                      \"$ref\": \"request.model\"\n                                    }\n                                  },\n                                  \"seedance-2.5\"\n                                ]\n                              }\n                            },\n                            1\n                          ]\n                        },\n                        {\n                          \"$gt\": [\n                            {\n                              \"$len\": {\n                                \"$split\": [\n                                  {\n                                    \"$lower\": {\n                                      \"$ref\": \"request.model\"\n                                    }\n                                  },\n                                  \"seedance-2-5\"\n                                ]\n                              }\n                            },\n                            1\n                          ]\n                        },\n                        {\n                          \"$gt\": [\n                            {\n                              \"$len\": {\n                                \"$split\": [\n                                  {\n                                    \"$lower\": {\n                                      \"$ref\": \"request.model\"\n                                    }\n                                  },\n                                  \"seedance2.5\"\n                                ]\n                              }\n                            },\n                            1\n                          ]\n                        }\n                      ]\n                    },\n                    \"then\": 30,\n                    \"else\": 10\n                  }\n                }\n              ]\n            },\n            \"message\": \"佳速参考图片超过模型限制（SD2.5 为 30 张，其余为 10 张）\"\n          },\n          {\n            \"assert\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$in\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    [\n                      \"dola-sd-2.5\",\n                      \"sd-2.5-j2-V\",\n                      \"sd-2.5-J2\"\n                    ]\n                  ]\n                },\n                \"then\": {\n                  \"$lte\": [\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.audios\"\n                      }\n                    },\n                    10\n                  ]\n                },\n                \"else\": true\n              }\n            },\n            \"message\": \"佳速 dola-sd-2.5、J2 和 J2-V 最多支持 10 段参考音频\"\n          },\n          {\n            \"assert\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$eq\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    \"minimax-h3\"\n                  ]\n                },\n                \"then\": {\n                  \"$and\": [\n                    {\n                      \"$lte\": [\n                        {\n                          \"$len\": {\n                            \"$ref\": \"request.videos\"\n                          }\n                        },\n                        3\n                      ]\n                    },\n                    {\n                      \"$lte\": [\n                        {\n                          \"$len\": {\n                            \"$ref\": \"request.audios\"\n                          }\n                        },\n                        3\n                      ]\n                    },\n                    {\n                      \"$lte\": [\n                        {\n                          \"$add\": [\n                            {\n                              \"$len\": {\n                                \"$ref\": \"request.images\"\n                              }\n                            },\n                            {\n                              \"$len\": {\n                                \"$ref\": \"request.videos\"\n                              }\n                            },\n                            {\n                              \"$len\": {\n                                \"$ref\": \"request.audios\"\n                              }\n                            }\n                          ]\n                        },\n                        10\n                      ]\n                    }\n                  ]\n                },\n                \"else\": true\n              }\n            },\n            \"message\": \"佳速 H3 最多支持 3 视频、3 音频，全部参考素材合计最多 10 个\"\n          },\n          {\n            \"assert\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$in\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    [\n                      \"sd-2.5-j2-V\",\n                      \"sd-2.5-J2\"\n                    ]\n                  ]\n                },\n                \"then\": {\n                  \"$lte\": [\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.videos\"\n                      }\n                    },\n                    10\n                  ]\n                },\n                \"else\": true\n              }\n            },\n            \"message\": \"佳速 J2/J2-V 最多支持 10 段参考视频\"\n          },\n          {\n            \"assert\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$eq\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    \"minimax-h3\"\n                  ]\n                },\n                \"then\": {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.videos\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$gt\": [\n                              {\n                                \"$ref\": \"media.metadata.durationMs\"\n                              },\n                              0\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.videos\"\n                      }\n                    }\n                  ]\n                },\n                \"else\": true\n              }\n            },\n            \"message\": \"佳速 H3 每段参考视频必须提供实际时长\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"first_frame\",\n                                \"last_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.audios\"\n                      }\n                    },\n                    0\n                  ]\n                }\n              ]\n            },\n            \"message\": \"佳速首尾帧模式不能同时提交参考音频\"\n          },\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$ref\": \"request.images\"\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$eq\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"first_frame\"\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"佳速最多只能设置一个首帧\"\n          },\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$ref\": \"request.images\"\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$eq\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"last_frame\"\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"佳速最多只能设置一个尾帧\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$eq\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              \"last_frame\"\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$eq\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              \"first_frame\"\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    1\n                  ]\n                }\n              ]\n            },\n            \"message\": \"佳速使用尾帧时必须设置首帧\"\n          }\n        ],\n        \"create\": {\n          \"method\": \"POST\",\n          \"path\": \"/v1/video/generations\",\n          \"contentType\": \"application/json\",\n          \"body\": {\n            \"model\": {\n              \"$ref\": \"request.model\"\n            },\n            \"prompt\": {\n              \"$ref\": \"request.prompt\"\n            },\n            \"duration\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$eq\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    \"minimax-h3\"\n                  ]\n                },\n                \"then\": 15,\n                \"else\": {\n                  \"$omitEmpty\": {\n                    \"$ref\": \"request.duration\"\n                  }\n                }\n              }\n            },\n            \"ratio\": {\n              \"$coalesce\": [\n                {\n                  \"$ref\": \"request.aspectRatio\"\n                },\n                \"16:9\"\n              ]\n            },\n            \"resolution\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$eq\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    \"minimax-h3\"\n                  ]\n                },\n                \"then\": \"2k\",\n                \"else\": {\n                  \"$coalesce\": [\n                    {\n                      \"$ref\": \"request.resolution\"\n                    },\n                    {\n                      \"$if\": {\n                        \"condition\": {\n                          \"$eq\": [\n                            {\n                              \"$lower\": {\n                                \"$ref\": \"request.model\"\n                              }\n                            },\n                            \"wan3-特惠\"\n                          ]\n                        },\n                        \"then\": \"1080p\",\n                        \"else\": \"720p\"\n                      }\n                    }\n                  ]\n                }\n              }\n            },\n            \"images\": {\n              \"$omitEmpty\": {\n                \"$map\": {\n                  \"from\": {\n                    \"$ref\": \"request.images\"\n                  },\n                  \"as\": \"media\",\n                  \"in\": {\n                    \"url\": {\n                      \"$ref\": \"media.url\"\n                    },\n                    \"name\": {\n                      \"$omitEmpty\": {\n                        \"$ref\": \"media.name\"\n                      }\n                    },\n                    \"type\": {\n                      \"$if\": {\n                        \"condition\": {\n                          \"$eq\": [\n                            {\n                              \"$ref\": \"media.role\"\n                            },\n                            \"first_frame\"\n                          ]\n                        },\n                        \"then\": \"first_frame\",\n                        \"else\": {\n                          \"$if\": {\n                            \"condition\": {\n                              \"$eq\": [\n                                {\n                                  \"$ref\": \"media.role\"\n                                },\n                                \"last_frame\"\n                              ]\n                            },\n                            \"then\": \"end_frame\"\n                          }\n                        }\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"videos\": {\n              \"$omitEmpty\": {\n                \"$map\": {\n                  \"from\": {\n                    \"$ref\": \"request.videos\"\n                  },\n                  \"as\": \"media\",\n                  \"in\": {\n                    \"url\": {\n                      \"$ref\": \"media.url\"\n                    },\n                    \"name\": {\n                      \"$omitEmpty\": {\n                        \"$ref\": \"media.name\"\n                      }\n                    },\n                    \"duration_seconds\": {\n                      \"$if\": {\n                        \"condition\": {\n                          \"$eq\": [\n                            {\n                              \"$ref\": \"request.model\"\n                            },\n                            \"minimax-h3\"\n                          ]\n                        },\n                        \"then\": {\n                          \"$divide\": [\n                            {\n                              \"$ref\": \"media.metadata.durationMs\"\n                            },\n                            1000\n                          ]\n                        }\n                      }\n                    },\n                    \"mime\": {\n                      \"$if\": {\n                        \"condition\": {\n                          \"$eq\": [\n                            {\n                              \"$ref\": \"request.model\"\n                            },\n                            \"minimax-h3\"\n                          ]\n                        },\n                        \"then\": {\n                          \"$omitEmpty\": {\n                            \"$ref\": \"media.mimeType\"\n                          }\n                        }\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"audios\": {\n              \"$omitEmpty\": {\n                \"$map\": {\n                  \"from\": {\n                    \"$ref\": \"request.audios\"\n                  },\n                  \"as\": \"media\",\n                  \"in\": {\n                    \"url\": {\n                      \"$ref\": \"media.url\"\n                    },\n                    \"name\": {\n                      \"$omitEmpty\": {\n                        \"$ref\": \"media.name\"\n                      }\n                    },\n                    \"mime\": {\n                      \"$if\": {\n                        \"condition\": {\n                          \"$eq\": [\n                            {\n                              \"$ref\": \"request.model\"\n                            },\n                            \"minimax-h3\"\n                          ]\n                        },\n                        \"then\": {\n                          \"$omitEmpty\": {\n                            \"$ref\": \"media.mimeType\"\n                          }\n                        }\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"face\": {\n              \"$omitEmpty\": {\n                \"$ref\": \"request.providerOptions.jiasu-video.face\"\n              }\n            }\n          }\n        },\n        \"poll\": {\n          \"method\": \"GET\",\n          \"path\": \"/v1/videos/tasks/{{taskId}}\"\n        },\n        \"response\": {\n          \"taskId\": {\n            \"$ref\": \"response.id\"\n          },\n          \"status\": {\n            \"$ref\": \"response.status\"\n          },\n          \"message\": {\n            \"$ref\": \"response.error.message\"\n          },\n          \"videos\": {\n            \"$ref\": \"response.result_urls\"\n          },\n          \"resultEphemeral\": true\n        }\n      }\n    ]\n  }\n}\n```\n<!-- BEEFTV_PLUGIN_MANIFEST_END -->\n",
+  "documentation": "# 极途 Gway\n\n独立的视频渠道，使用极途模型目录中的公开视频模型名，不按旧模型名称限定支持范围。在模型配置中单独填写该渠道的 URL、API Key 和请求头，默认地址为 `https://www.gway.dev`。\n\n创建与查询采用佳速原生协议，不复用 Eggfans Seedance 或 Eggfans SD2 的请求结构。参考图片、视频、音频只提交公网 URL；本地素材在生成前自动通过 Uguu 获取链接，已保存链接失效时按现有临时素材流程重新上传。不会调用私域人像库，不提交 `asset://` 或 SD2 的 `native_face`。\n\n视频设置提供佳速专属「人脸处理」选项：服务端默认、保持原图、轻度处理、素描处理。节点记录自己的选择，新节点继承最近选择。\n\n佳速的 `dola-sd-2.5`、`dola-sd-2.0` 默认启用本地自动人脸遮罩。视频节点的「人脸遮罩」可以预览多张参考图、移动或缩放人脸框、手动补框，也可选择马赛克或关闭。调整与开关会保存，原始图片保留。预览阶段不上传图床，开始生成后先保存处理副本，再由视频任务准备有效公网 URL；链接失效时重新上传处理副本。此功能不应用于 H3、Eggfans SD2 或 Seedance URI 通道，也不替代服务端的 `face` 参数。\n\n完整请求和模型限制见 [docs/interface.md](docs/interface.md)。\n\n模型拉取同时读取官方 `api_parameters` 中的时长、比例、分辨率和各类参考数量，保存后不再按模型名称覆盖这些具体规格。更新后在模型配置中重新拉取极途模型，以替换旧的能力配置。目录自身与上游实际限制不一致时，以真实上游错误为准；不会为通过校验而静默删除参考素材或重排编号。\n\nH3 不再强制改写为 15 秒、2k；`minimax-h3` 的缺省能力为 4–30 秒、768p，实际输出使用节点选择与拉取到的对应型号规格。创建保持原生顶层 `duration`、`ratio`、`resolution` 和媒体数组，不套用其他渠道的请求结构。\n\n---\n\n# 极途 Gway 视频接口\n\n## 接口和鉴权\n\n- 默认 Base URL：`https://www.gway.dev`，可以编辑。\n- 创建：`POST /v1/video/generations`，JSON。\n- 查询：`GET /v1/videos/tasks/{task_id}`。\n- 鉴权：该渠道自己的 `Authorization: Bearer <API Key>`。\n- 参考：[极途官方接口文档](https://www.gway.dev/api-docs#video-create)。\n\n## 请求参数\n\n| 字段 | 来源与说明 |\n| --- | --- |\n| `model` | 原样使用目录中的公开视频模型名，不替换为文档示例 ID，不限制旧名称白名单 |\n| `prompt` | 提示词，支持 `@图片N`、`@视频N`、`@音频N` 或 `@素材名称` |\n| `duration` | 节点选择的整数秒，使用对应模型实时规格，不强制改写 H3 为 15 秒 |\n| `ratio` | 使用对应模型目录提供的比例 |\n| `resolution` | 使用对应型号的分辨率，保留节点选择；`minimax-h3` 缺省 `768p`，不强制改写为 `2k` |\n| `images` | `[{url,name?,type?}]`；普通参考图省略 type，首帧为 `first_frame`，尾帧为 `end_frame` |\n| `videos` | `[{url,name?}]`；不混入其他渠道参数 |\n| `audios` | `[{url,name?}]`；不混入其他渠道参数 |\n| `face` | 服务端默认时省略；保持原图为 `{enabled:false}`；其余为 `{enabled:true,mode:\"light\"或\"heavy\"}` |\n\n不发送旧通道的 `content`、`image_refs`、`video_refs`、`audio_refs`、`first_image`、`last_image`、`native_face`。可选的 `materials` 与三个媒体数组含义重叠，插件统一使用媒体数组，避免重复提交同一素材。\n\n## 模型能力\n\n佳速视频模型按渠道默认同步生成声音。界面显示“同步声音已开启”，已有配置中误存的声音不支持标记自动修正；此接口未公开 `generate_audio` 开关字段，因此请求保持原生字段，由渠道默认生成声音，不混入其他协议参数。\n\n模型配置拉取通过后端读取官方 `api_parameters`，解析该型号的时长、比例、分辨率和各类参考数量，不再将所有 Seedance 2.5 统一覆盖为同一份参数。更新后需重新拉取并保存极途模型配置。官方目录中的规格与真实执行不一致时，应以明确的上游错误为准，不静默删图、变更资产绑定或改动素材编号。\n\n`sd-2.0-mini-J1` 使用同一创建与查询协议，模型 ID 原样提交；本地和插件校验均允许该模型，参考上限为 10 张图片、3 段视频和 3 段音频。\n\n`sd-2.5-j2-V` 与 `sd-2.5-J2` 支持全模态参考：最多 30 张图、10 段视频、10 段音频。佳速 V 版素材总量超过 100 MiB 时，应用会先将参考图片压缩至约原体积一半后上传提交；本地不会按总字节数拦截，若上游明确拒绝素材体积，则压缩图片后自动重试一次。两者时长参数范围为 5–30 秒；V 版分辨率固定为 720p，J2 版提供 480p、720p、1080p。\n\n不同版本的参考上限不能只按模型家族推断。插件不额外套用“SD2.5 一律 30 图、其他一律 10 图”的旧校验；具体能力由目录提供，素材数组原序提交，上游返回的数量限制不伪装成本地参数错误。\n\n`minimax-h3` 缺省为 4–30 秒、768p，提交采用节点选择，不再固定 15 秒、2k，也不套用旧的全部素材合计 10 个规则。参考视频仍须提供真实时长；视频时长校验不代表输出时长。\n\n`dola-sd-2.5` 工作区时长范围为 1–30 秒、默认 5 秒，选择 30 秒时以 `duration: 30` 原样提交；`dola-sd-2.0` 保留 1–15 秒。模型能力由本地目录和接口参数分别约束；实际生成未在此修复中执行。\n\n使用首帧或尾帧时不能同时提交音频，系统会提示调整参考方式，不静默丢弃素材。媒体名称与顺序保持一致。\n\n## 任务与结果\n\n### 本地参考图预处理\n\n仅佳速 `dola-sd-2.5`、`dola-sd-2.0` 在创建任务前执行离线人脸检测。默认使用半透明网格，可在视频节点「人脸遮罩」中切换马赛克或关闭，并逐图调整框。检测失败会要求手动框选或关闭，不静默上传未处理图片；未检出人脸时可手动补框，否则使用原图。\n\n原件与处理副本分开保存；处理副本按用户、原图内容、遮罩样式和区域缓存，重开可复用。预览只在本地运行，开始生成后才保存处理副本并在视频任务中上传图床。失效链接重新上传对应副本，保持图片引用名称和顺序。`videoJiasuFaceMask` 与 `jiasuFaceMasks` 是宿主本地设置，不进入上游 JSON；`images[].url` 为处理后的公网地址。服务端 `face` 选项保持独立。\n\n创建读取 `id`，不拿本地任务 ID 查询上游。状态 `queued` 为等待，`in_progress` 为处理中，`completed` 为成功，`failed` 为失败。完成后从 `result_urls` 读取视频；失败显示 `error.message`。宿主下载并保存生成结果。\n\n## Gway 专属参考素材上传\n\n上传会话的 `items` 按每批 1–20 项提交，`name`、`content_type`、`size`、`kind` 分别填写素材名称、实际 MIME、原文件字节数和 image/video/audio 类型。超过 20 项自动分批，大文件组合按内存占用提前切批；上传批次限制不作为模型参考数量限制。响应逐项对应各自的 `upload_id`、`put.url` 与 `put.headers`，完成确认后才将 URL 写回原位置。\n\n仅 `jiasu-video` 且上游主机为 `gway.dev` 或 `www.gway.dev` 时，宿主使用本渠道 API Key 调用 `POST /v1/media/uploads`，按预签名地址 PUT 原文件，并在 `complete` 成功后使用公开链接。上传会话失败且原文件不超过官方直传上限 32 MiB 时，尝试 `POST /v1/media/upload` 的 `file`、`kind` 表单；专属上传仍不可用才回退 Uguu。取消操作不会触发兜底上传。\n\n此流程不修改原始图片、不改变生成请求参数，不影响其他渠道，也不会把 Gway 密钥转发到预签名对象存储地址。\n\n<!-- BEEFTV_PLUGIN_MANIFEST_START -->\n## Manifest 完整接口定义\n\n以下 JSON 与插件包内实际 `manifest.json` 逐字段一致，覆盖插件身份、权限、配置、鉴权、参数、校验、创建、Agent、查询、取消、结果下载、响应和 Agent 响应映射。`documentation` 字段的值就是当前完整文档；为避免文档在自身内部无限递归，JSON 中仅用等义占位文本表示正文。\n\n```json\n{\n  \"apiVersion\": \"beeftv.plugin/v2\",\n  \"id\": \"jiasu-video\",\n  \"name\": \"极途 Gway\",\n  \"version\": \"1.0.3\",\n  \"author\": \"Eggfans TV\",\n  \"description\": \"极途 Gway 独立视频协议，支持 dola-sd-2.5、dola-sd-2.0、minimax-h3、sd-2.5-j2-V、sd-2.5-J2。\",\n  \"documentation\": \"<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>\",\n  \"permissions\": [\n    \"generation.run\",\n    \"media.read\"\n  ],\n  \"configuration\": {\n    \"fields\": [\n      {\n        \"name\": \"apiKey\",\n        \"type\": \"secret\",\n        \"label\": \"API Key\",\n        \"required\": true\n      }\n    ]\n  },\n  \"contributes\": {\n    \"providers\": [\n      {\n        \"id\": \"jiasu-video\",\n        \"label\": \"极途 Gway\",\n        \"capabilities\": [\n          \"video\"\n        ],\n        \"scopes\": [\n          \"admin.system-channel\",\n          \"user.custom-channel\",\n          \"canvas\",\n          \"creation\",\n          \"agent\"\n        ],\n        \"baseUrl\": \"https://ai.jiasuapi.com\",\n        \"requiresPublicMediaUrls\": true,\n        \"auth\": {\n          \"type\": \"bearer\",\n          \"field\": \"apiKey\"\n        },\n        \"parameters\": [\n          {\n            \"name\": \"model\",\n            \"description\": \"极途模型目录中的公开视频模型 ID，原样提交，不使用固定名称白名单。\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"model\"\n          },\n          {\n            \"name\": \"prompt\",\n            \"description\": \"视频提示词；@引用名称必须与提交素材 name 对齐。\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"prompt\"\n          },\n          {\n            \"name\": \"duration\",\n            \"description\": \"输出时长（整数秒）；按所选模型的实时规格和节点选择提交，不固定 H3 时长。\",\n            \"type\": \"integer\",\n            \"mapping\": \"duration\"\n          },\n          {\n            \"name\": \"ratio\",\n            \"description\": \"画面比例：16:9、9:16 或 1:1。\",\n            \"type\": \"string\",\n            \"mapping\": \"aspectRatio\",\n            \"values\": [\n              \"16:9\",\n              \"9:16\",\n              \"1:1\"\n            ]\n          },\n          {\n            \"name\": \"resolution\",\n            \"description\": \"输出分辨率，按所选模型的实时规格和节点选择提交。\",\n            \"type\": \"string\",\n            \"mapping\": \"resolution\"\n          },\n          {\n            \"name\": \"images\",\n            \"description\": \"图片 URL 与可选名称；首尾帧映射到 images[].type 的 first_frame/end_frame。\",\n            \"type\": \"array\",\n            \"mapping\": \"images\"\n          },\n          {\n            \"name\": \"videos\",\n            \"description\": \"参考视频 URL 与可选名称，数量以所选模型实时规格为准。\",\n            \"type\": \"array\",\n            \"mapping\": \"videos\"\n          },\n          {\n            \"name\": \"audios\",\n            \"description\": \"参考音频 URL 与可选名称，数量以所选模型实时规格为准。\",\n            \"type\": \"array\",\n            \"mapping\": \"audios\"\n          },\n          {\n            \"name\": \"face\",\n            \"description\": \"佳速独立人脸处理选项：enabled=false 保持原图，enabled=true 配合 light/heavy，省略采用服务端默认。\",\n            \"type\": \"object\",\n            \"mapping\": \"providerOptions.jiasu-video.face\"\n          }\n        ],\n        \"validations\": [\n          {\n            \"assert\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$eq\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    \"minimax-h3\"\n                  ]\n                },\n                \"then\": {\n                  \"$lte\": [\n                    {\n                      \"$add\": [\n                        {\n                          \"$coalesce\": [\n                            {\n                              \"$ref\": \"request.videos.0.metadata.durationMs\"\n                            },\n                            0\n                          ]\n                        },\n                        {\n                          \"$coalesce\": [\n                            {\n                              \"$ref\": \"request.videos.1.metadata.durationMs\"\n                            },\n                            0\n                          ]\n                        },\n                        {\n                          \"$coalesce\": [\n                            {\n                              \"$ref\": \"request.videos.2.metadata.durationMs\"\n                            },\n                            0\n                          ]\n                        }\n                      ]\n                    },\n                    15000\n                  ]\n                },\n                \"else\": true\n              }\n            },\n            \"message\": \"佳速 H3 参考视频总时长不能超过 15 秒\"\n          },\n          {\n            \"assert\": {\n              \"$eq\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$concatArrays\": [\n                          {\n                            \"$ref\": \"request.images\"\n                          },\n                          {\n                            \"$ref\": \"request.videos\"\n                          },\n                          {\n                            \"$ref\": \"request.audios\"\n                          }\n                        ]\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$in\": [\n                          {\n                            \"$first\": {\n                              \"$split\": [\n                                {\n                                  \"$ref\": \"media.url\"\n                                },\n                                \"://\"\n                              ]\n                            }\n                          },\n                          {\n                            \"$if\": {\n                              \"condition\": {\n                                \"$eq\": [\n                                  {\n                                    \"$ref\": \"request.model\"\n                                  },\n                                  \"minimax-h3\"\n                                ]\n                              },\n                              \"then\": [\n                                \"https\"\n                              ],\n                              \"else\": [\n                                \"http\",\n                                \"https\"\n                              ]\n                            }\n                          }\n                        ]\n                      }\n                    }\n                  }\n                },\n                {\n                  \"$add\": [\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.images\"\n                      }\n                    },\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.videos\"\n                      }\n                    },\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.audios\"\n                      }\n                    }\n                  ]\n                }\n              ]\n            },\n            \"message\": \"佳速视频只接受公网 URL，H3 素材必须使用 HTTPS\"\n          },\n          {\n            \"assert\": {\n              \"$if\": {\n                \"condition\": {\n                  \"$eq\": [\n                    {\n                      \"$ref\": \"request.model\"\n                    },\n                    \"minimax-h3\"\n                  ]\n                },\n                \"then\": {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.videos\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$gt\": [\n                              {\n                                \"$ref\": \"media.metadata.durationMs\"\n                              },\n                              0\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.videos\"\n                      }\n                    }\n                  ]\n                },\n                \"else\": true\n              }\n            },\n            \"message\": \"佳速 H3 每段参考视频必须提供实际时长\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"first_frame\",\n                                \"last_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$ref\": \"request.audios\"\n                      }\n                    },\n                    0\n                  ]\n                }\n              ]\n            },\n            \"message\": \"佳速首尾帧模式不能同时提交参考音频\"\n          },\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$ref\": \"request.images\"\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$eq\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"first_frame\"\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"佳速最多只能设置一个首帧\"\n          },\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$ref\": \"request.images\"\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$eq\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"last_frame\"\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"佳速最多只能设置一个尾帧\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$eq\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              \"last_frame\"\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$eq\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              \"first_frame\"\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    1\n                  ]\n                }\n              ]\n            },\n            \"message\": \"佳速使用尾帧时必须设置首帧\"\n          }\n        ],\n        \"create\": {\n          \"method\": \"POST\",\n          \"path\": \"/v1/video/generations\",\n          \"contentType\": \"application/json\",\n          \"body\": {\n            \"model\": {\n              \"$ref\": \"request.model\"\n            },\n            \"prompt\": {\n              \"$ref\": \"request.prompt\"\n            },\n            \"duration\": {\n              \"$omitEmpty\": {\n                \"$ref\": \"request.duration\"\n              }\n            },\n            \"ratio\": {\n              \"$coalesce\": [\n                {\n                  \"$ref\": \"request.aspectRatio\"\n                },\n                \"16:9\"\n              ]\n            },\n            \"resolution\": {\n              \"$coalesce\": [\n                {\n                  \"$ref\": \"request.resolution\"\n                },\n                {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$eq\": [\n                        {\n                          \"$ref\": \"request.model\"\n                        },\n                        \"minimax-h3\"\n                      ]\n                    },\n                    \"then\": \"768p\",\n                    \"else\": {\n                      \"$if\": {\n                        \"condition\": {\n                          \"$eq\": [\n                            {\n                              \"$lower\": {\n                                \"$ref\": \"request.model\"\n                              }\n                            },\n                            \"wan3-特惠\"\n                          ]\n                        },\n                        \"then\": \"1080p\",\n                        \"else\": \"720p\"\n                      }\n                    }\n                  }\n                }\n              ]\n            },\n            \"images\": {\n              \"$omitEmpty\": {\n                \"$map\": {\n                  \"from\": {\n                    \"$ref\": \"request.images\"\n                  },\n                  \"as\": \"media\",\n                  \"in\": {\n                    \"url\": {\n                      \"$ref\": \"media.url\"\n                    },\n                    \"name\": {\n                      \"$omitEmpty\": {\n                        \"$ref\": \"media.name\"\n                      }\n                    },\n                    \"type\": {\n                      \"$if\": {\n                        \"condition\": {\n                          \"$eq\": [\n                            {\n                              \"$ref\": \"media.role\"\n                            },\n                            \"first_frame\"\n                          ]\n                        },\n                        \"then\": \"first_frame\",\n                        \"else\": {\n                          \"$if\": {\n                            \"condition\": {\n                              \"$eq\": [\n                                {\n                                  \"$ref\": \"media.role\"\n                                },\n                                \"last_frame\"\n                              ]\n                            },\n                            \"then\": \"end_frame\"\n                          }\n                        }\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"videos\": {\n              \"$omitEmpty\": {\n                \"$map\": {\n                  \"from\": {\n                    \"$ref\": \"request.videos\"\n                  },\n                  \"as\": \"media\",\n                  \"in\": {\n                    \"url\": {\n                      \"$ref\": \"media.url\"\n                    },\n                    \"name\": {\n                      \"$omitEmpty\": {\n                        \"$ref\": \"media.name\"\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"audios\": {\n              \"$omitEmpty\": {\n                \"$map\": {\n                  \"from\": {\n                    \"$ref\": \"request.audios\"\n                  },\n                  \"as\": \"media\",\n                  \"in\": {\n                    \"url\": {\n                      \"$ref\": \"media.url\"\n                    },\n                    \"name\": {\n                      \"$omitEmpty\": {\n                        \"$ref\": \"media.name\"\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"face\": {\n              \"$omitEmpty\": {\n                \"$ref\": \"request.providerOptions.jiasu-video.face\"\n              }\n            }\n          }\n        },\n        \"poll\": {\n          \"method\": \"GET\",\n          \"path\": \"/v1/videos/tasks/{{taskId}}\"\n        },\n        \"response\": {\n          \"taskId\": {\n            \"$ref\": \"response.id\"\n          },\n          \"status\": {\n            \"$ref\": \"response.status\"\n          },\n          \"message\": {\n            \"$ref\": \"response.error.message\"\n          },\n          \"videos\": {\n            \"$ref\": \"response.result_urls\"\n          },\n          \"resultEphemeral\": true\n        }\n      }\n    ]\n  }\n}\n```\n<!-- BEEFTV_PLUGIN_MANIFEST_END -->\n",
   "permissions": [
     "generation.run",
     "media.read"
@@ -44,7 +44,7 @@
         "parameters": [
           {
             "name": "model",
-            "description": "佳速视频模型 ID：dola-sd-2.5、dola-sd-2.0、minimax-h3、sd-2.5-j2-V 或 sd-2.5-J2，按模型目录原样提交。",
+            "description": "极途模型目录中的公开视频模型 ID，原样提交，不使用固定名称白名单。",
             "type": "string",
             "required": true,
             "mapping": "model"
@@ -58,7 +58,7 @@
           },
           {
             "name": "duration",
-            "description": "输出时长（秒）；dola 未传采用模型默认值，H3 固定 15 秒。",
+            "description": "输出时长（整数秒）；按所选模型的实时规格和节点选择提交，不固定 H3 时长。",
             "type": "integer",
             "mapping": "duration"
           },
@@ -75,7 +75,7 @@
           },
           {
             "name": "resolution",
-            "description": "dola 为 480p、720p 或 1080p；H3 固定 2k。",
+            "description": "输出分辨率，按所选模型的实时规格和节点选择提交。",
             "type": "string",
             "mapping": "resolution"
           },
@@ -87,13 +87,13 @@
           },
           {
             "name": "videos",
-            "description": "视频 URL 与可选名称；J2/J2-V 最多 10 段参考视频；H3 每项需携带实际 duration_seconds，总计不超过 15 秒。",
+            "description": "参考视频 URL 与可选名称，数量以所选模型实时规格为准。",
             "type": "array",
             "mapping": "videos"
           },
           {
             "name": "audios",
-            "description": "音频 URL 与可选名称；J2/J2-V 最多 10 段参考音频；不能与图片首尾帧同时使用。",
+            "description": "参考音频 URL 与可选名称，数量以所选模型实时规格为准。",
             "type": "array",
             "mapping": "audios"
           },
@@ -232,236 +232,6 @@
               ]
             },
             "message": "佳速视频只接受公网 URL，H3 素材必须使用 HTTPS"
-          },
-          {
-            "assert": {
-              "$lte": [
-                {
-                  "$len": {
-                    "$ref": "request.images"
-                  }
-                },
-                {
-                  "$if": {
-                    "condition": {
-                      "$or": [
-                        {
-                          "$gt": [
-                            {
-                              "$len": {
-                                "$split": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.model"
-                                    }
-                                  },
-                                  "sd2.5"
-                                ]
-                              }
-                            },
-                            1
-                          ]
-                        },
-                        {
-                          "$gt": [
-                            {
-                              "$len": {
-                                "$split": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.model"
-                                    }
-                                  },
-                                  "sd-2.5"
-                                ]
-                              }
-                            },
-                            1
-                          ]
-                        },
-                        {
-                          "$gt": [
-                            {
-                              "$len": {
-                                "$split": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.model"
-                                    }
-                                  },
-                                  "seedance-2.5"
-                                ]
-                              }
-                            },
-                            1
-                          ]
-                        },
-                        {
-                          "$gt": [
-                            {
-                              "$len": {
-                                "$split": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.model"
-                                    }
-                                  },
-                                  "seedance-2-5"
-                                ]
-                              }
-                            },
-                            1
-                          ]
-                        },
-                        {
-                          "$gt": [
-                            {
-                              "$len": {
-                                "$split": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.model"
-                                    }
-                                  },
-                                  "seedance2.5"
-                                ]
-                              }
-                            },
-                            1
-                          ]
-                        }
-                      ]
-                    },
-                    "then": 30,
-                    "else": 10
-                  }
-                }
-              ]
-            },
-            "message": "佳速参考图片超过模型限制（SD2.5 为 30 张，其余为 10 张）"
-          },
-          {
-            "assert": {
-              "$if": {
-                "condition": {
-                  "$in": [
-                    {
-                      "$ref": "request.model"
-                    },
-                    [
-                      "dola-sd-2.5",
-                      "sd-2.5-j2-V",
-                      "sd-2.5-J2"
-                    ]
-                  ]
-                },
-                "then": {
-                  "$lte": [
-                    {
-                      "$len": {
-                        "$ref": "request.audios"
-                      }
-                    },
-                    10
-                  ]
-                },
-                "else": true
-              }
-            },
-            "message": "佳速 dola-sd-2.5、J2 和 J2-V 最多支持 10 段参考音频"
-          },
-          {
-            "assert": {
-              "$if": {
-                "condition": {
-                  "$eq": [
-                    {
-                      "$ref": "request.model"
-                    },
-                    "minimax-h3"
-                  ]
-                },
-                "then": {
-                  "$and": [
-                    {
-                      "$lte": [
-                        {
-                          "$len": {
-                            "$ref": "request.videos"
-                          }
-                        },
-                        3
-                      ]
-                    },
-                    {
-                      "$lte": [
-                        {
-                          "$len": {
-                            "$ref": "request.audios"
-                          }
-                        },
-                        3
-                      ]
-                    },
-                    {
-                      "$lte": [
-                        {
-                          "$add": [
-                            {
-                              "$len": {
-                                "$ref": "request.images"
-                              }
-                            },
-                            {
-                              "$len": {
-                                "$ref": "request.videos"
-                              }
-                            },
-                            {
-                              "$len": {
-                                "$ref": "request.audios"
-                              }
-                            }
-                          ]
-                        },
-                        10
-                      ]
-                    }
-                  ]
-                },
-                "else": true
-              }
-            },
-            "message": "佳速 H3 最多支持 3 视频、3 音频，全部参考素材合计最多 10 个"
-          },
-          {
-            "assert": {
-              "$if": {
-                "condition": {
-                  "$in": [
-                    {
-                      "$ref": "request.model"
-                    },
-                    [
-                      "sd-2.5-j2-V",
-                      "sd-2.5-J2"
-                    ]
-                  ]
-                },
-                "then": {
-                  "$lte": [
-                    {
-                      "$len": {
-                        "$ref": "request.videos"
-                      }
-                    },
-                    10
-                  ]
-                },
-                "else": true
-              }
-            },
-            "message": "佳速 J2/J2-V 最多支持 10 段参考视频"
           },
           {
             "assert": {
@@ -667,21 +437,8 @@
               "$ref": "request.prompt"
             },
             "duration": {
-              "$if": {
-                "condition": {
-                  "$eq": [
-                    {
-                      "$ref": "request.model"
-                    },
-                    "minimax-h3"
-                  ]
-                },
-                "then": 15,
-                "else": {
-                  "$omitEmpty": {
-                    "$ref": "request.duration"
-                  }
-                }
+              "$omitEmpty": {
+                "$ref": "request.duration"
               }
             },
             "ratio": {
@@ -693,22 +450,22 @@
               ]
             },
             "resolution": {
-              "$if": {
-                "condition": {
-                  "$eq": [
-                    {
-                      "$ref": "request.model"
-                    },
-                    "minimax-h3"
-                  ]
+              "$coalesce": [
+                {
+                  "$ref": "request.resolution"
                 },
-                "then": "2k",
-                "else": {
-                  "$coalesce": [
-                    {
-                      "$ref": "request.resolution"
+                {
+                  "$if": {
+                    "condition": {
+                      "$eq": [
+                        {
+                          "$ref": "request.model"
+                        },
+                        "minimax-h3"
+                      ]
                     },
-                    {
+                    "then": "768p",
+                    "else": {
                       "$if": {
                         "condition": {
                           "$eq": [
@@ -724,9 +481,9 @@
                         "else": "720p"
                       }
                     }
-                  ]
+                  }
                 }
-              }
+              ]
             },
             "images": {
               "$omitEmpty": {
@@ -789,43 +546,6 @@
                       "$omitEmpty": {
                         "$ref": "media.name"
                       }
-                    },
-                    "duration_seconds": {
-                      "$if": {
-                        "condition": {
-                          "$eq": [
-                            {
-                              "$ref": "request.model"
-                            },
-                            "minimax-h3"
-                          ]
-                        },
-                        "then": {
-                          "$divide": [
-                            {
-                              "$ref": "media.metadata.durationMs"
-                            },
-                            1000
-                          ]
-                        }
-                      }
-                    },
-                    "mime": {
-                      "$if": {
-                        "condition": {
-                          "$eq": [
-                            {
-                              "$ref": "request.model"
-                            },
-                            "minimax-h3"
-                          ]
-                        },
-                        "then": {
-                          "$omitEmpty": {
-                            "$ref": "media.mimeType"
-                          }
-                        }
-                      }
                     }
                   }
                 }
@@ -845,23 +565,6 @@
                     "name": {
                       "$omitEmpty": {
                         "$ref": "media.name"
-                      }
-                    },
-                    "mime": {
-                      "$if": {
-                        "condition": {
-                          "$eq": [
-                            {
-                              "$ref": "request.model"
-                            },
-                            "minimax-h3"
-                          ]
-                        },
-                        "then": {
-                          "$omitEmpty": {
-                            "$ref": "media.mimeType"
-                          }
-                        }
                       }
                     }
                   }

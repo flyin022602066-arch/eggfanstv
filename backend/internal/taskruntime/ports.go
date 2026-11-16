@@ -104,6 +104,7 @@ type Session interface {
 
 // Config 是运行时调度参数。零值由 New 填成与现网 worker 相同的租约和轮询间隔。
 type Config struct {
+	Unbounded        bool
 	WorkerID         string
 	SlotScope        string
 	SlotTTL          time.Duration

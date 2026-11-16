@@ -95,8 +95,14 @@ type Core struct {
 }
 
 type UnitSummaries struct {
-	Units        []model.ProjectUnit `json:"units"`
-	CanvasCounts map[string]int64    `json:"canvasCounts"`
+	Units         []model.ProjectUnit          `json:"units"`
+	CanvasCounts  map[string]int64             `json:"canvasCounts"`
+	VideoProgress map[string]UnitVideoProgress `json:"videoProgress"`
+}
+
+type UnitVideoProgress struct {
+	ShotCount       int64 `json:"shotCount"`
+	ReadyVideoCount int64 `json:"readyVideoCount"`
 }
 
 type Overview struct {
@@ -163,6 +169,11 @@ type MergeProjectPropRequest struct {
 type MergeProjectPropResult struct {
 	Asset       AssetSummary `json:"asset"`
 	MergedShots int          `json:"mergedShots"`
+}
+
+type MergeSameNameProjectPropsResult struct {
+	Merged   int `json:"merged"`
+	Deferred int `json:"deferred"`
 }
 
 type CreateAssetVersionRequest struct {

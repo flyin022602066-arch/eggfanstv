@@ -22,7 +22,7 @@ export function characterIdentitySource(versions: CharacterReferenceVersion[], a
 }
 
 export function characterIdentityConstraint(name: string) {
-    return `【基础版身份继承／图片编辑】参考图是${name}的基础版，必须以此图编辑出同一人物的新造型，不得重新设计一个新角色。保留脸型、五官比例、眼鼻口、面部辨识特征与人物身份；服装、姿态、道具和普通伤态变化不构成换脸理由。参考图用于锁定身份，不照搬基础服装、动作或背景，按本次单套设定修改。只有本次剧本或用户设定明确说明头部变化时，才修改明确指定的发型、头饰、疤痕、年龄或变身部位；未说明的面部特征仍沿用基础版，禁止推测、额外换脸或混合其他人物。独立头部特写与正侧背身体三视图保持同一套造型，身体三视图不含头部。`;
+    return `【基础版身份继承／图片编辑】参考图是${name}的基础版，必须以此图编辑出同一人物的新造型，不得重新设计一个新角色。保留脸型、五官比例、眼鼻口、面部辨识特征与人物身份；服装、姿态、道具和普通伤态变化不构成换脸理由。参考图用于锁定身份，不照搬基础服装、动作或背景，按本次单套设定修改。只有本次剧本或用户设定明确说明头部变化时，才修改明确指定的发型、头饰、疤痕、年龄或变身部位；未说明的面部特征仍沿用基础版，禁止推测、额外换脸或混合其他人物。所有视图保持同一套造型，具体排版严格使用本次所选角色参考图格式，不照搬基础图的旧排版。`;
 }
 
 export function characterLookGenerationDefinition(base: CharacterReferenceVersion, target: CharacterReferenceVersion, definition: Record<string, unknown>) {
@@ -53,5 +53,5 @@ export function characterLookEditConstraint(base: CharacterReferenceVersion, tar
         return current && current !== previous ? [`${label}：${current}`] : [];
     });
     if (!changes.length) return "";
-    return `【本次造型编辑清单：${target.referenceProfile?.name || `v${target.version}`}】\n保持基础参考图的同一人物身份与未明确改变的五官；以下是本次必须落实到画面中的变化：\n${changes.join("\n")}\n当前造型的明确设定优先于参考图的旧服装、配件和身体状态，也优先于画风中的常规一致性要求。已去除或替换的旧物必须从独立头部特写以及正、侧、背视图全部移除；新增或重铸的结构须在对应视图清楚展示。保持同一人脸不能成为照抄整张参考图的理由，不得只改变标题或背景而保留旧造型。仅执行上述已明确的变化，不自行添加其他变化。`;
+    return `【本次造型编辑清单：${target.referenceProfile?.name || `v${target.version}`}】\n保持基础参考图的同一人物身份与未明确改变的五官；以下是本次必须落实到画面中的变化：\n${changes.join("\n")}\n当前造型的明确设定优先于参考图的旧服装、配件和身体状态，也优先于画风中的常规一致性要求。已去除或替换的旧物必须从全部头部与身体视图移除；新增或重铸的结构须在对应视图清楚展示。保持同一人脸不能成为照抄整张参考图的理由，不得只改变标题或背景而保留旧造型。仅执行上述已明确的变化，不自行添加其他变化。`;
 }

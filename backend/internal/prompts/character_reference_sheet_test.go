@@ -46,7 +46,7 @@ func TestCharacterReferenceSheetRulesSurviveSavedPrompts(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, required := range []string{"独立头部特写", "正面、右侧面、背面", "颈部以下至脚底", "三视图区不得出现头部", "以本规则为准", "水墨画风"} {
+				for _, required := range []string{"横版2×2四宫格", "左上为正面", "右上为右侧面", "左下为正面身体", "右下为背面身体", "以本规则为准", "水墨画风"} {
 					if !strings.Contains(compiled.Content, required) {
 						t.Errorf("%s prompt missing %q", operation, required)
 					}

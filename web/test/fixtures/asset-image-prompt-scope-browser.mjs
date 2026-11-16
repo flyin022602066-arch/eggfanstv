@@ -38,7 +38,37 @@ try {
         const supplement = () => page.getByRole("textbox", { name: /通用生图补充要求|本次资产生图补充要求/ });
         const open = async (name) => { await page.getByRole("button", { name, exact: true }).click(); await supplement().waitFor(); };
         const generate = async () => { await page.getByRole("dialog").getByRole("button", { name: "开始生成", exact: true }).click(); await page.getByRole("dialog").waitFor({ state: "hidden" }); };
-        if (scenario !== "legacy") {
+        if (scenario === "templates") {
+            const select = async (label, choice) => { await page.getByRole("combobox", { name: label, exact: true }).click(); await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText(choice, { exact: true }).click(); };
+            await open("角色甲");
+            await page.getByText("双头像＋正背身体四宫格（默认）", { exact: true }).waitFor();
+            await page.getByText("遵循项目画风（默认）", { exact: true }).waitFor();
+            await select("角色参考图格式", "正侧背全身三视图（参考模板）");
+            await select("角色形象生成模板", "千人千面·3D海外真人");
+            await supplement().fill("仅当前角色保留蓝色眼睛");
+            await page.getByRole("dialog").screenshot({ path: join(artifactDir, `${theme}-character-template-select.png`), animations: "disabled" });
+            await generate();
+            const first = await page.evaluate(() => window.promptScopeFixture.submissions);
+            assert.equal(first.length, 2);
+            assert.ok(first.every((entry) => entry.layoutId === "source-classic-turnaround" && entry.templateId === "distinct-overseas-realistic"));
+            await open("角色乙");
+            assert.equal(await supplement().inputValue(), "");
+            await page.getByText("正侧背全身三视图（参考模板）", { exact: true }).waitFor();
+            await generate();
+            assert.equal((await page.evaluate(() => window.promptScopeFixture.submissions.at(-1))).prompt.includes("蓝色眼睛"), false);
+            await page.getByRole("button", { name: "统一生图设置", exact: true }).click();
+            await select("角色参考图格式", "双头像＋正背身体四宫格（默认）");
+            await select("角色形象生成模板", "千人千面·2D国漫");
+            await page.getByRole("button", { name: "保存设置", exact: true }).click();
+            await page.getByRole("dialog").waitFor({ state: "hidden" });
+            await open("角色乙");
+            await generate();
+            assert.equal((await page.evaluate(() => window.promptScopeFixture.submissions.at(-1))).layoutId, "portrait-body-grid");
+            assert.equal((await page.evaluate(() => window.promptScopeFixture.submissions.at(-1))).templateId, "distinct-2d-animation");
+            await open("场景甲");
+            assert.equal(await page.getByRole("combobox", { name: "角色参考图格式", exact: true }).count(), 0);
+            await page.getByRole("dialog").getByRole("button", { name: /取\s*消/ }).click();
+        } else if (scenario !== "legacy") {
             await open("角色甲");
             await supplement().fill(scar);
             assert.equal(await page.evaluate(() => window.promptScopeFixture.readConfig().projectAssetImagePresets.character.extraPrompt), "", "typing a character supplement must not mutate the shared preset");

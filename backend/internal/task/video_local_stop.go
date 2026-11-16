@@ -21,7 +21,8 @@ func (s *Service) StopVideoLocally(userID, id string) (*model.Task, error) {
 	if task.Status == model.TaskStatusCancelled && task.Stage == "本地已停止" {
 		return presentTask(s.deps.Present, *task)
 	}
-	if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning {
+	uncertain := strings.HasPrefix(task.Model, "doubao-browser::") && task.Status == model.TaskStatusFailed && (task.Stage == "submission_unknown" || task.Stage == "原任务回执缺失" || task.Stage == "原任务查询失败")
+	if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning && !uncertain {
 		return nil, kernel.NewAppError(kernel.CodeConflict, "任务已经结束，无需停止本地跟进")
 	}
 	stopped, err := s.store.StopVideoLocallyIfStatus(userID, id, task.Status, s.now())

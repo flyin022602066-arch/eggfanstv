@@ -399,6 +399,8 @@ func FinishRouteAttempt(store RouteStore, attempt *model.RouteAttempt, task *mod
 		if task != nil && task.Type == "canvas_image" {
 			if image.Err == nil && image.Found && image.Accepted {
 				attempt.DispatchState = "accepted"
+			} else if image.Err == nil && info.ImageRejected && attempt.ProviderRequestID == "" {
+				attempt.DispatchState = "rejected_no_job"
 			} else if image.Err != nil {
 				attempt.DispatchState = "submission_unknown"
 			}

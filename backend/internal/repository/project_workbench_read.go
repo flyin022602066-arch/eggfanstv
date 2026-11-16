@@ -37,6 +37,33 @@ type ProjectAssetCountRow struct {
 	Count int64  `gorm:"column:count"`
 }
 
+type UnitVideoProgress struct {
+	ShotCount       int64 `json:"shotCount"`
+	ReadyVideoCount int64 `json:"readyVideoCount"`
+}
+
+func (r *Repository) ProjectUnitVideoProgress(projectID string) (map[string]UnitVideoProgress, error) {
+	var rows []struct {
+		UnitID string
+		UnitVideoProgress
+	}
+	err := r.db.Raw(`SELECT u.id AS unit_id, COUNT(DISTINCT s.id) AS shot_count,
+ COUNT(DISTINCT CASE WHEN a.id IS NOT NULL THEN s.id END) AS ready_video_count
+ FROM project_units u
+ LEFT JOIN shots s ON s.project_id = u.project_id AND s.unit_id = u.id
+ LEFT JOIN shot_artifacts a ON a.project_id = s.project_id AND a.unit_id = s.unit_id AND a.shot_id = s.id
+ AND a.type = ? AND a.selected = ? AND a.status = ? AND TRIM(COALESCE(a.resource_id, '')) <> ''
+ WHERE u.project_id = ? GROUP BY u.id`, "video", true, "ready", projectID).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	progress := make(map[string]UnitVideoProgress, len(rows))
+	for _, row := range rows {
+		progress[row.UnitID] = row.UnitVideoProgress
+	}
+	return progress, nil
+}
+
 func (r *Repository) ProjectUnitCanvasCounts(projectID string) (map[string]int64, error) {
 	var rows []ProjectAssetCountRow
 	if err := r.db.Table("canvas_unit_links").Select("unit_id AS key, COUNT(DISTINCT canvas_id) AS count").Where("project_id = ?", projectID).Group("unit_id").Scan(&rows).Error; err != nil {

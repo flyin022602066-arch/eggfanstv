@@ -96,7 +96,7 @@ export function projectCharacterAppearances<T extends ProjectCharacterIdentity>(
             const expressiveAction = /^(?:守在|立(?:在|于|着)|分(?:立|站|坐)|张(?:嘴|口)|倾身|仰(?:着|起|头)|按(?:下|住|停|着)|(?:摘|脱|褪|卸)(?:下|去|掉|除|开|手|衣|帽)|(?:搓|揉|捏)(?:了|着|住|紧|手|指)|松(?:开|手)|面(?:朝|向)|向(?:前|后|左|右)(?:一|两|半|迈|走|跨|退|移|挪|伸)|一(?:怔|愣|惊|颤|笑|叹)|(?:的)?(?:睫毛|眉梢|嘴角|嘴唇|指尖|肩膀)(?:轻轻|微微|轻|微)?(?:颤|抖|扬|垂|动|紧|勾))/u;
             const visibleState = /^(?:的)?(?:(?:胸前|胸口|额头|脸上|肩头|身上|手上|身旁)(?:虽|却|仍|还|已|正)?(?:有|留|露|浮现|泛起|缠绕)|处于(?:可用)?景深(?:内|中)|(?:位于|处在)(?:前景|中景|后景)|呈(?:半?弧形|扇形|一字形|环形)(?:围站|站|围坐|坐)|围站|肩宽|腰窄|面无血色|双目紧闭|昏迷|沉睡|被(?:抬|抱|扶|推|拉|绑|捆)|扛(?:着|出|起|住))/u;
             const placedCharacter = /(?:坐着|躺着|站着|卧着)(?:[^。！？；，,\n]{0,20})$/u.test(before) && /^[\s，,。！？；\n]|^$/u.test(after);
-            if (physicalAction.test(collectiveAction) || englishAction.test(action.trimStart()) || expressiveAction.test(collectiveAction) || visibleState.test(collectiveAction) || placedCharacter || /(?:看向|望向|对着|注视|凝视|盯着|扶着|拥抱|抱住|拽住|拉住|推向|看见|看到)\s*$/u.test(before) || /照片|画像|肖像|屏幕|影像|回忆画面|闪回画面/u.test(before)) return true;
+            if (physicalAction.test(collectiveAction) || englishAction.test(action.trimStart()) || expressiveAction.test(collectiveAction) || /^(?:查验|检查)/u.test(collectiveAction) || visibleState.test(collectiveAction) || placedCharacter || /(?:看向|望向|对着|注视|凝视|盯着|扶着|拥抱|抱住|拽住|拉住|推向|看见|看到)\s*$/u.test(before) || /照片|画像|肖像|屏幕|影像|回忆画面|闪回画面/u.test(before)) return true;
             if (/^[与和跟、]/u.test(action) && /交谈|对视|并肩|分立|站|坐|走|握手|拥抱|挥手|争吵|推|拉|打/u.test(action)) return true;
             if (normalizeName(source) === name) return true;
         }

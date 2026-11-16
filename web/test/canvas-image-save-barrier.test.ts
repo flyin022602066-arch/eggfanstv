@@ -81,6 +81,40 @@ test("a target deleted while saving stops before submission and is not recreated
     expect(useCanvasStore.getState().projects[0]?.nodes).toEqual([]);
 });
 
+test("old template nodes acquire assets before generation saves and preserve edits made during registration", async () => {
+    const reference = { ...project.nodes[0], id: "pose", metadata: { storageKey: "resource:pose", referenceTemplateMediaId: "pose" } };
+    useCanvasStore.setState({ projects: [{ ...project, nodes: [...project.nodes, reference] }] });
+    const events: string[] = [];
+    await persistCanvasGenerationTarget({ ...input, expectedScope: captureUserScope() }, async (_id, patch) => {
+        events.push("save");
+        expect(patch.nodes?.find(node => node.id === "pose")?.metadata?.assetId).toBe("asset-pose");
+        expect(patch.nodes?.[0].metadata?.prompt).toBe("刚修改");
+    }, async options => {
+        events.push("asset");
+        useCanvasStore.getState().updateProject(project.id, { nodes: [{ ...project.nodes[0], metadata: { prompt: "刚修改" } }, reference] });
+        return options.nodes.map(node => node.id === "pose" ? { ...node, metadata: { ...node.metadata, assetId: "asset-pose" } } : node);
+    });
+    expect(events).toEqual(["asset", "save"]);
+});
+
+test("a deleted target during template repair is never resurrected or submitted", async () => {
+    const reference = { ...project.nodes[0], id: "pose", metadata: { storageKey: "resource:pose" } };
+    useCanvasStore.setState({ projects: [{ ...project, nodes: [...project.nodes, reference] }] });
+    let saves = 0;
+    await expect(persistCanvasGenerationTarget({ ...input, expectedScope: captureUserScope() }, async () => { saves++; }, async options => {
+        useCanvasStore.getState().updateProject(project.id, { nodes: [] });
+        return options.nodes;
+    })).rejects.toThrow("生成节点已不存在");
+    expect(saves).toBe(0);
+    expect(useCanvasStore.getState().openProject(project.id)?.nodes).toEqual([]);
+});
+
+test("save failure retains the actionable reason rather than only a generic save notice", async () => {
+    await expect(persistCanvasGenerationTarget({ ...input, expectedScope: captureUserScope() }, async () => {
+        throw new ApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400, reason: "bad_request" });
+    })).rejects.toThrow("素材库");
+});
+
 test("abort and abandoned account saves cannot proceed to a paid task", async () => {
     const controller = new AbortController();
     await expect(persistCanvasGenerationTarget({ ...input, signal: controller.signal, expectedScope: captureUserScope() }, async () => { controller.abort(); })).rejects.toMatchObject({ name: "AbortError" });

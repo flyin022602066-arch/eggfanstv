@@ -30,6 +30,7 @@ try {
         const target = new URL(request.url());
         if (target.origin !== url.origin) { unexpected.push(request.url()); return route.abort(); }
         const reply = (data) => route.fulfill({ json: { code: 0, data, msg: "" } });
+        if (request.method() === "POST" && target.pathname.endsWith("/assets/merge-same-name-props")) return reply({ merged: 0, deferred: 0 });
         if (target.pathname.endsWith("/workspace")) return reply(workspace());
         if (target.pathname === "/api/projects/preview-project/assets") return reply({ assets: currentAssets() });
         if (target.pathname === "/api/projects/preview-project/core") return reply({ project: { id: "preview-project", revision: merged ? 2 : 1 } });

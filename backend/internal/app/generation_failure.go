@@ -27,8 +27,8 @@ func applyAppFailureWrappers(err error, failure generation.Failure) generation.F
 	if errors.As(err, &imageRecovery) {
 		failure.Category = generation.CategorySubmissionUncertain
 		failure.Uncertain = true
-		failure.Reason = "图片结果尚未确认，自动恢复已停止"
-		failure.Action = "请保留任务记录并联系支持查询结果，不要重复提交"
+		failure.Reason = "图片提交结果尚未确认"
+		failure.Action = "请查看原任务的上游响应和排查信息，核对前不要重复提交"
 		return failure
 	}
 	var unknown providerSubmissionUnknownError

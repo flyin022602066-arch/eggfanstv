@@ -46,6 +46,10 @@ func (s *Service) MergeProjectProp(userID, projectID, assetID string, req MergeP
 	return s.projectDomain().MergeProjectProp(userID, projectID, assetID, req)
 }
 
+func (s *Service) MergeSameNameProjectProps(userID, projectID string) (localproject.MergeSameNameProjectPropsResult, error) {
+	return s.projectDomain().MergeSameNameProjectProps(userID, projectID)
+}
+
 func (s *Service) UpdateProjectAsset(userID string, projectID string, assetID string, req UpdateProjectAssetRequest) (ProjectAssetSummary, error) {
 	return s.projectDomain().UpdateProjectAsset(userID, projectID, assetID, req)
 }

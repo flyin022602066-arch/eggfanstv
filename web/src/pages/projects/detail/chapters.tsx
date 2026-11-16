@@ -1,4 +1,4 @@
-import { App, Button, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select } from "antd";
+import { App, Button, Dropdown, Form, Input, InputNumber, Modal, Popconfirm } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
@@ -51,7 +51,7 @@ import {
 
 import { useNavigate, useParams } from "react-router";
 
-import { SkillRuntimePicker, useSkillRuntimeCatalog } from "@/components/skills/skill-runtime-picker";
+import { useSkillRuntimeCatalog } from "@/components/skills/skill-runtime-picker";
 import { SkillRuntimePreparationError } from "@/services/skill-runtime";
 import { ModelPicker } from "@/components/model-picker";
 import { WorkspaceState } from "@/components/layout/workspace-state";
@@ -91,7 +91,8 @@ import { ChapterStoryboardRecoveryReview } from "./chapter-storyboard-recovery-r
 import type { ProjectShotReplacementInput } from "./chapter-storyboard-production";
 import type { CharacterReferenceVersion } from "@/services/api/project-character-references";
 import { ChapterBatchPanel } from "./chapter-batch-panel";
-import { chapterBatchIsActive, chapterBatchTask } from "./project-chapter-batch";
+import { ChapterGenerationSettings } from "./chapter-generation-settings";
+import { chapterBatchIsActive, chapterBatchTask, completeChapterBatchStoryboardReview } from "./project-chapter-batch";
 
 const CHAPTER_ROW_HEIGHT = 62;
 const MAX_NOVEL_IMPORT_CHAPTERS = 2500;
@@ -376,6 +377,13 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         const preferences = useConfigStore.getState().config.projectWorkflowModels || {};
         updateConfig("projectWorkflowModels", { ...preferences, [detail.project.id]: { ...preferences[detail.project.id], chapterText: model } });
     };
+    const chapterGenerationSettings = {
+        config: effectiveConfig, textModel: selectedTextModel, textModelUnavailable: selectedTextModelUnavailable, onTextModelChange: changeTextModel,
+        systemPresentation, onSystemPresentationChange: changeSystemPresentation,
+        skills: availableSkills, skillsLoading, selectedSkillIds, onSkillsChange: setSelectedSkillIds,
+        storyboardMode, onStoryboardModeChange: (mode: ChapterStoryboardMode) => updateConfig("projectChapterStoryboardModes", { ...useConfigStore.getState().config.projectChapterStoryboardModes, [detail.project.id]: mode }),
+        dialogueConstraintMode, onDialogueConstraintModeChange: (mode: ChapterDialogueConstraintMode) => updateConfig("projectChapterDialogueConstraintModes", { ...useConfigStore.getState().config.projectChapterDialogueConstraintModes, [detail.project.id]: mode }),
+    };
     const chapterAnalysisInput = (textModel: string) => {
         const unit = selectedUnit;
         if (!unit) throw new Error("章节正文尚未加载完成");
@@ -646,9 +654,9 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
     });
     const confirmRecoveredStoryboardWrite = async (pending: PendingStoryboardRecovery, expectedScope: CapturedUserScope) => {
         const [{ assets }, catalog, workspace] = await Promise.all([
-            listProjectAssets(detail.project.id),
+            listProjectAssets(detail.project.id, expectedScope),
             getCharacterReferenceCatalog(detail.project.id, expectedScope),
-            getProjectUnitWorkspace(detail.project.id, pending.chapterId),
+            getProjectUnitWorkspace(detail.project.id, pending.chapterId, undefined, expectedScope),
         ]);
         const currentDetail = { ...detail, ...workspace, assets };
         return new Promise<ProjectShotReplacementInput[] | null>((resolve) => {
@@ -853,11 +861,26 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                         <Tooltip title="添加章节"><Button type="text" size="small" icon={<Plus className="size-4" />} aria-label="添加章节" onClick={() => setCreateOpen(true)} /></Tooltip>
                     </div>
                 </div>
-                <ChapterBatchPanel projectId={detail.project.id} units={orderedUnits} disabled={dirty || detail.project.status === "archived" || Boolean(runningOperationCount)} onProgress={refreshProject} onBusy={setBatchRunning} prepare={() => {
+                <ChapterBatchPanel projectId={detail.project.id} units={orderedUnits} disabled={dirty || detail.project.status === "archived" || Boolean(runningOperationCount)} onProgress={refreshProject} onBusy={setBatchRunning} onReview={async (row) => {
+                    const taskId = row.taskIds.storyboard;
+                    if (!taskId) throw new Error("没有可核对的分镜任务，原进度保留");
+                    const expectedScope = captureUserScope();
+                    const task = await queryGenerationTask(taskId, { expectedScope });
+                    const identity = chapterTaskIdentity(task);
+                    if (task.status !== "succeeded" || task.projectId !== detail.project.id || identity?.chapterId !== row.id || identity.kind !== "storyboard") throw new Error("分镜任务尚未完成或不属于本集，不能写入");
+                    const recovered = chapterStoryboardFromGenerationTask(task);
+                    const approved = await readCurrentStoryboardApproval(row.id, expectedScope);
+                    const shots = await confirmRecoveredStoryboardWrite({ taskId, chapterId: row.id, rows: recovered.rows }, expectedScope);
+                    if (!shots) return;
+                    await storeGeneratedStoryboard(row.id, recovered.rows, approved, { sourceTaskId: taskId, expectedScope, preparedShots: shots, promptReview: recovered.promptReview });
+                    await completeChapterBatchStoryboardReview(detail.project.id, row.id, taskId, expectedScope);
+                    clearPendingStoryboardRecovery(row.id); refreshProject();
+                    message.success({ content: `${row.title}分镜已核对写入，未重新调用模型`, duration: 3 });
+                }} renderSettings={(mode, disabled) => <ChapterGenerationSettings {...chapterGenerationSettings} includeStoryboard={mode !== "assets"} disabled={disabled} />} settingsReady={(mode) => Boolean(selectedTextModel && !selectedTextModelUnavailable && (mode === "assets" || !skillsLoading))} prepare={(mode) => {
                     if (!configuredModelMatchesCapability(effectiveConfig, selectedTextModel, "text")) throw new Error("请选择可用的文本模型，不会自动切换模型");
                     const config = { ...effectiveConfig, model: selectedTextModel, textModel: selectedTextModel };
                     if (!isAiConfigReady(config, selectedTextModel)) throw new Error("请先完成文本模型渠道配置");
-                    if (skillsLoading) throw new Error("分镜技能仍在加载，请稍后再试");
+                    if (mode !== "assets" && skillsLoading) throw new Error("分镜技能仍在加载，请稍后再试");
                     const style = resolveProjectCanvasStyle(detail.project.stylePresetId, detail.project.styleProfileJson);
                     if (!style?.prompt.trim()) throw new Error("请先在项目设置中选择画风");
                     return { config, skills: availableSkills, selectedSkillIds, projectStyle: { presetId: style.id, title: style.title, prompt: style.prompt, profileJson: detail.project.styleProfileJson }, storyboardMode, dialogueConstraintMode, systemPresentation: normalizeSystemPresentationSettings(systemPresentation) };
@@ -975,36 +998,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                         <div className="mt-1 text-[var(--fs-tiny)] text-foreground/38">正文将作为分镜依据，生成结果会直接写入“分镜制作”。</div>
                     </div>
                     {storyboardImpact.shotCount ? <Callout tone="warning" title={`本章已有 ${storyboardImpact.shotCount} 个分镜`}>继续后会先生成新分镜；生成成功后，再按确认内容整体替换旧镜头及其关联数据。</Callout> : null}
-                    <ProjectSystemPresentationSettings value={systemPresentation} onChange={changeSystemPresentation} />
-                    <label className="block">
-                        <span className="mb-1.5 block text-xs font-medium text-foreground/68">文本模型</span>
-                        <ModelPicker config={effectiveConfig} capability="text" value={selectedTextModel} onChange={changeTextModel} variant="creation" fullWidth placeholder="选择用于生成分镜的文本模型" onMissingConfig={() => navigateToSettings({ continueCreation: true })} />
-                        <p className="mt-2 text-xs text-foreground/50">未选择时跟随模型配置；选择后记住本项目的文本模型。</p>
-                    </label>
-                    {selectedTextModelUnavailable ? <Callout tone="warning" title="文本模型不可用">上次选择的文本模型当前不可用，请重新选择；不会自动切换到其他模型。</Callout> : null}
-                    <div>
-                        <label className="block">
-                            <span className="mb-1.5 block text-xs font-medium text-foreground/68">分镜技能</span>
-                            <SkillRuntimePicker profile="shortDrama" skills={availableSkills} loading={skillsLoading} value={selectedSkillIds} onChange={setSelectedSkillIds} placeholder="选择本项目分镜默认使用的技能" />
-                        </label>
-                        <p className="mt-2 text-[var(--fs-tiny)] leading-5 text-foreground/42">可不选，最多 5 个，建议选择互补技能，避免重复规则。已按项目自动记忆，后续各集及重启后沿用；修改后作为本项目新的默认选择。生成时按需读取技能，并记录实际使用的版本和文件。</p>
-                    </div>
-                    <label className="block">
-                        <span className="mb-1.5 block text-xs font-medium text-foreground/68">分镜拆解模式</span>
-                        <Select className="w-full" aria-label="分镜拆解模式" value={storyboardMode} onChange={(mode: ChapterStoryboardMode) => updateConfig("projectChapterStoryboardModes", { ...useConfigStore.getState().config.projectChapterStoryboardModes, [detail.project.id]: mode })} options={[{ value: "standard", label: "常规精细分镜" }, { value: "continuous_30s", label: "30 秒连续分镜（2.5 视频模型）" }]} />
-                        <span className="mt-2 block text-xs leading-5 text-foreground/50">{storyboardMode === "continuous_30s" ? "每段总时长 30 秒，优先按自然语速和完整对白分配剧情；对白密集时增加连续分镜，不强塞 800–1000 字原文。资产与声音说明优先精简至 600 字符以内，镜头已有台词不重复附加；提示词整体不受此字数限制。按整体设定、镜头1 / 镜头2 / 镜头3 …、结尾约束组织，每镜写起幅 → 落幅、单一运镜、动作与声音，不写秒数或阶段。保留场景道具绑定。已记住本项目的选择。" : "按动作与对白拆分短镜头，每镜绑定对应场景和实际可见道具。"}</span>
-                    </label>
-                    <label className="block">
-                        <span className="mb-1.5 block text-xs font-medium text-foreground/68">对白字数规则</span>
-                        <Segmented
-                            block
-                            aria-label="分镜对白限制模式"
-                            value={dialogueConstraintMode}
-                            onChange={(value) => updateConfig("projectChapterDialogueConstraintModes", { ...useConfigStore.getState().config.projectChapterDialogueConstraintModes, [detail.project.id]: value as ChapterDialogueConstraintMode })}
-                            options={[{ value: "paced", label: "当前节奏限制" }, { value: "unrestricted", label: "不限制对白字数" }]}
-                        />
-                        <span className="mt-2 block text-xs leading-5 text-foreground/50">{dialogueConstraintMode === "paced" ? "按当前对白节奏规则评估承载量；仍保留完整台词，超出时在自然边界安排后续分镜。此选择会记住并沿用到本项目后续各集。" : "不套用对白字数区间、语速换算或超字阈值；按剧情和自然话轮拆解，仍保留原文台词，不截断、不删改。此选择会记住并沿用到本项目后续各集。"}</span>
-                    </label>
+                    <ChapterGenerationSettings {...chapterGenerationSettings} />
                 </div>
             </Modal>
             <Modal className="library-modal" title="移动章节" open={Boolean(moveTargetId)} width={400} okText="移动" cancelText="取消" okButtonProps={{ disabled: !movePosition || movePosition < 1 || movePosition > orderedUnits.length, loading: reorderMutation.isPending }} onCancel={() => { setMoveTargetId(""); setMovePosition(null); }} onOk={moveChapterToPosition} styles={{ body: { paddingTop: 12 } }}>

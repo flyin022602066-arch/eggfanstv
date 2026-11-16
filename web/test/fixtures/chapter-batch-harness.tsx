@@ -14,9 +14,9 @@ const dark = new URLSearchParams(location.search).get("theme") !== "light";
 document.documentElement.classList.toggle("dark", dark);
 setActiveUserScope("batch-browser-offline");
 useUserStore.setState({ hydrated: true, storageMode: "local", user: null });
-const channel = createModelChannel({ id: "batch-offline", name: "离线文本模型", baseUrl: "https://example.invalid", apiKey: "offline-test-key", interfaceType: "chat-completion", models: ["offline-text"], modelProfiles: [{ model: "offline-text", capability: "text" }] });
+const channel = createModelChannel({ id: "batch-offline", name: "离线文本模型", baseUrl: "https://example.invalid", apiKey: "offline-test-key", interfaceType: "chat-completion", models: ["offline-text", "offline-director"], modelProfiles: [{ model: "offline-text", capability: "text" }, { model: "offline-director", capability: "text" }] });
 const model = encodeChannelModel(channel.id, "offline-text");
-useConfigStore.setState({ config: { ...defaultConfig, channels: [channel], model, textModel: model } });
+useConfigStore.setState({ config: { ...defaultConfig, ...useConfigStore.getState().config, channels: [channel], model, textModel: model } });
 const units = [1, 2, 3].map((number) => ({ id: "u" + number, projectId: "batch-p", title: "第" + number + "集", sourceText: "林夏走进旧屋，拿出旧信。", position: number - 1, wordCount: 15, status: "ready", createdAt: "", updatedAt: "" }));
 const initial = { project: { id: "batch-p", name: "区间离线测试", stylePresetId: "urban-live-action", status: "active", revision: 1 }, units, assets: [], assetCandidates: [], shots: [], shotRevisions: [], shotReferences: [], shotArtifacts: [], workflows: [], canvases: [], canvasUnitLinks: [], assetFolders: [], tasks: [] } as unknown as ProjectDetail;
 function Harness() {

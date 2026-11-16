@@ -17,6 +17,10 @@ import { defaultModelCapabilityConfig } from '@/lib/model-capabilities';
 import { getAntThemeConfig } from '@/lib/app-theme';
 import { useCanvasThemeStore } from '@/stores/canvas/use-canvas-theme-store';
 import { referenceTemplateRepository } from '@/services/canvas-reference-templates';
+import { useCanvasStore, type CanvasProject } from '@/stores/canvas/use-canvas-store';
+import { persistCanvasGenerationTarget } from '@/services/canvas-generation-target';
+import { captureUserScope } from '@/lib/user-scope-guard';
+import { http } from '@/services/api/request';
 
 const dark = new URLSearchParams(location.search).get('theme') !== 'light';
 document.documentElement.classList.toggle('dark', dark);
@@ -41,7 +45,7 @@ referenceTemplateRepository.materialize = async (...args) => {
 useCanvasThemeStore.setState({ theme: dark ? 'dark' : 'light' });
 const makeTarget = (): CanvasNodeData => ({ id: 'target', type: CanvasNodeType.Image, title: '生图', position: { x: 600, y: 50 }, width: 320, height: 240, metadata: { nodeRole: 'generator', prompt: '主角走在街上', composerContent: '主角走在街上', model } });
 type Graph = { nodes: CanvasNodeData[]; connections: CanvasConnection[] };
-const sourceNode: CanvasNodeData = { id: 'original', type: CanvasNodeType.Image, title: '上传的角色原图', position: { x: 50, y: 100 }, width: 320, height: 240, metadata: { nodeRole: 'result', resultOrigin: 'upload', content: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', storageKey: 'resource:fixture-original' } };
+const sourceNode: CanvasNodeData = { id: 'original', type: CanvasNodeType.Image, title: '上传的角色原图', position: { x: 50, y: 100 }, width: 320, height: 240, metadata: { nodeRole: 'result', resultOrigin: 'upload', content: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', storageKey: 'resource:fixture-original', assetId: 'fixture-original-asset' } };
 const unused = () => {};
 function Harness() {
     const [projectId, setProjectId] = useState('project-a');
@@ -63,6 +67,12 @@ function Harness() {
         switchProject: () => { setProjectId(value => value === 'project-a' ? 'project-b' : 'project-a'); setGraph({ nodes: [makeTarget()], connections: [] }); },
         switchUser: (scope: string) => { setActiveUserScope(scope); setGraph({ nodes: [makeTarget()], connections: [] }); },
         graph: () => graphRef.current,
+        verifySave: async () => {
+            const canvas: CanvasProject = { id: projectId, title: '测试画布', ...graphRef.current, createdAt: '2026-01-01', updatedAt: '2026-01-01', chatSessions: [], activeChatId: null, backgroundMode: 'grid', showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
+            useCanvasStore.setState({ projects: [canvas] });
+            await persistCanvasGenerationTarget({ projectId, nodeId: targetId, expectedScope: captureUserScope() }, async (_id, patch) => { await http.post('/fixture-save', patch); });
+            return useCanvasStore.getState().openProject(projectId)?.nodes;
+        },
         sourceMode: () => { setGraph({ nodes: [structuredClone(sourceNode)], connections: [] }); setTargetId(''); setSourceMode(true); },
         lockSource: () => setNodes(current => current.map(row => row.id === 'original' ? { ...row, metadata: { ...row.metadata, locked: true } } : row)),
         pauseMaterialize: () => { materializeGate = new Promise(resolve => { resumeMaterialize = resolve; }); },

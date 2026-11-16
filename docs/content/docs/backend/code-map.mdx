@@ -24,17 +24,21 @@ Wails / local dev
 
 ## 主要目录
 
+最终提示词的文本兜底设置位于 `web/src/pages/settings/model-default-grid.tsx`，由 `use-config-store.ts` 保存 `textFallbackModel`，`services/api/generation-task.ts` 生成隔离的主备文本模型快照。后端 `app/video_prompt_text.go` 负责主备执行、切换状态与共同的局部替换校验，`video_prompt_preflight.go` 与 `video_prompt_repair.go` 分别编排提交前检查和失败后的合规编辑；不参与视频渠道参数构造。
+
 看海与 nono 的独立目录解析分别位于 `modelcatalog/kanhai.go`、`modelcatalog/nono.go`，内置视频清单在 `providerpreset/catalog`。原生提交、查询及下载合同位于 `plugin-packages/kanhai-video`、`plugin-packages/nono-video`；看海特殊音视频参考文件装配在 `generation/kanhai.go`。渠道删除标记由 `workspace/provider_channel_deletion.go` 保存，前端 `use-config-store.ts` 的启动种子合并也尊重该标记。
 
 憨包本地视频入口在 `generation/hanbao.go`，账号 CLI 与飞狐表单协议分别在 `provider/hanbao/cli.go`、`provider/hanbao/feihu.go`。`app/hanbao.go` 绑定当前工作区，`repository/local_video_receipt.go` 按任务租约原子保存完整任务号、实际账号及提交记录。HTTP 窄端口在 `handler/hanbao.go`，前端入口在 `pages/settings/hanbao-account-manager.tsx`；发布组件位于 `tools/hanbao`。
 
-章节分镜结果回填由 `web/src/pages/projects/detail/chapters.tsx` 协调；`chapter-storyboard-recovery-review.tsx` 在写入前展示资产重名核对，`chapter-storyboard-production.ts` 将确认结果转为镜头脚本。`web/src/lib/project-shot-asset-matching.ts` 默认拒绝歧义，核对模式仅接受用户从候选中明确选择的资产，不自动合并或删除同名资产。
+章节分镜结果回填由 `web/src/pages/projects/detail/chapters.tsx` 协调；`chapter-storyboard-recovery-review.tsx` 在写入前展示资产及版本核对，`chapter-storyboard-production.ts` 将确认结果转为镜头脚本。角色 ID 无效时只按本项目角色名称或别名准确匹配，名称唯一且版本归属一致才恢复身份；多候选必须由用户选择，不能仅根据返回版本改绑其他角色。`web/src/lib/project-shot-asset-matching.ts` 默认拒绝歧义，不自动合并或删除同名角色资产。
 
 角色造型目录、标注、空图新造型、镜头选择与生成前核对位于 `backend/internal/project/character_reference.go`；原子选择事务在 `repository/character_reference.go`，v18 迁移在 `database/local_schema_character_looks.go`。前端 `lib/character-look-selection.ts` 负责候选与模型结果校验，`services/project-character-references.ts` 负责文本任务编排，角色造型管理和镜头右侧入口分别在 `project-character-looks-modal.tsx`、`workflow-character-references.tsx`；`workflow-shot-references.ts` 统一构建精确版本的图片、声音和提交快照。
 
 主角人脸预设由 `web/src/pages/projects/detail/project-character-face-presets-modal.tsx` 管理上传与角色绑定，`web/src/lib/project-character-face-presets.ts` 解析预设并生成身份约束，`project-character-media.ts` 在单张与批量角色生图前读取最新预设并提交参考图。`backend/internal/project/character_face_presets.go` 校验资源归属、角色绑定与项目范围，`projects.character_face_presets_json` 保存小型配置；数据库 v17 的追加列迁移与就绪检查位于 `database/local_schema_character_face_presets.go`，资源引用与删除保护仍由 `repository/resource_reference.go` 处理。
 
 资产辨识设计规则由 `backend/internal/prompts/asset_visual_design.go` 定义，`prompt_template_defaults.go` 在角色提取、章节资产提取与角色设定图的受保护上下文中装配，保存模板及自定义模板仍接收这些规则。视觉锚点写入既有外貌、体态和各套服装字段，避免拆分造型重建提示词时丢失；不增加数据库字段或输出契约。前端 `web/src/lib/asset-visual-design.ts` 提供实际生图的角色设计及场景、道具多视图规则，`character-reference-generation.ts` 保留仅供理解的剧情身份，`project-character-media.ts` 从同项目角色目录构造不含图片的差异化参考。`project-asset-image.ts` 生成可编辑默认提示词，`project-asset-image-generation.ts` 提交用户最终文字及原有渠道配置，不在提交时重新覆盖用户编辑。`workflow-shot-references.ts` 在资产参考附录中追加一条多视图使用规则，不改变实际参考资源、编号、渠道参数或最终编辑提示词的优先级。
+
+角色参考图目录使用 `backend/internal/prompts/character_reference_templates.json` 单一数据源：后端 embed 后只解析内置 ID，前端 `web/src/lib/character-reference-templates.ts` 读取同一目录。布局与形象模板 ID 存在既有角色生图预设中，经 `project-character-media.ts` 和 `project-chapter-ai.ts` 写入任务变量；编译时追加所选保护规则，不改资源表、提取 JSON 合同或渠道请求格式。
 
 | 边界 | 位置 | 职责 |
 | --- | --- | --- |

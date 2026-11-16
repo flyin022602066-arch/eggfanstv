@@ -16,6 +16,8 @@ try {
         { id: "fixture-scene", title: "基地训练区", category: "environment", primaryVersionId: "version-scene", storageKey: "resource:picture-scene" },
         { id: "fixture-prop", title: "训练护具", category: "prop", primaryVersionId: "version-prop", storageKey: "resource:picture-prop" },
         { id: "duplicate-prop", title: "备用护具", category: "prop", primaryVersionId: "version-duplicate", storageKey: "resource:picture-duplicate" },
+        { id: "sealed-prop", title: "封存护具", category: "prop", primaryVersionId: "version-sealed", storageKey: "resource:picture-sealed", definitionJson: JSON.stringify({ aliases: ["备用护具"] }) },
+        { id: "tray-prop", title: "护具与托盘", category: "prop", primaryVersionId: "version-tray", storageKey: "resource:picture-tray", definitionJson: JSON.stringify({ aliases: ["备用护具"] }) },
     ].map((asset) => ({ ...asset, mediaType: "image", status: "confirmed", usages: [], versionCount: 1 }));
     const shot = { id: "shot-a", projectId: "preview-project", unitId: "preview-chapter", title: "镜头01", position: 0, durationMs: 30000, status: "active", currentRevisionId: "asset-case-revision", description: "训练结束，收好护具。备用护具放在训练区门口。" };
     const revision = { id: shot.currentRevisionId, shotId: shot.id, version: 1, durationMs: 30000, plotDescription: shot.description, videoPrompt: "镜头1：固定机位。起幅：纪星站在训练区。→ 落幅：纪星收起护具。\n【场景与道具参考】\n基地训练区：@[asset:fixture-scene]\n训练护具：@[asset:fixture-prop]\n备用护具：@[asset:duplicate-prop]", actionBeatsJson: JSON.stringify([{ type: "asset_context", sceneAssetId: "fixture-scene", propNames: ["训练护具", "备用护具"] }]) };
@@ -27,6 +29,7 @@ try {
         const target = new URL(request.url());
         if (target.origin !== url.origin) { unexpected.push(request.url()); return route.abort(); }
         const reply = (data) => route.fulfill({ json: { code: 0, data, msg: "" } });
+        if (request.method() === "POST" && target.pathname.endsWith("/assets/merge-same-name-props")) return reply({ merged: 0, deferred: 0 });
         if (target.pathname.endsWith("/workspace")) return reply(workspace());
         if (target.pathname === "/api/projects/preview-project/assets") return reply({ assets });
         if (request.method() === "DELETE" && target.pathname.includes("/shots/shot-a/assets/")) {
@@ -80,6 +83,9 @@ try {
     assert.equal(links.length, automaticLinks, "repair and submission cannot automatically restore deleted references");
     assert.equal(submissions[0].input.referenceImages.length, 2);
     assert.ok(!JSON.stringify(submissions[0].input.referenceImages).includes("picture-duplicate"));
+    assert.ok(!JSON.stringify(submissions[0]).includes("picture-sealed"));
+    assert.ok(!JSON.stringify(submissions[0]).includes("picture-tray"));
+    assert.ok(!links.some((input) => ["version-sealed", "version-tray"].includes(input.assetVersionId)), "shared aliases must not replace the removed exact prop");
     assert.ok(!submissions[0].prompt.includes("@[asset:duplicate-prop]"));
     assert.ok(!submissions[0].prompt.includes("图片3"));
     await excluded.locator(":scope > summary").click();

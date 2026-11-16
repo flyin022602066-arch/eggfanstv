@@ -163,6 +163,7 @@ func routeFailureInfo(err error) modelcatalog.FailureInfo {
 		info.RetryAfter = upstream.RetryAfter
 	}
 	info.ImageThrottle = definiteImageThrottle(err)
+	info.ImageRejected = definiteImageRejection(err)
 	info.Canceled = errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 	return info
 }
