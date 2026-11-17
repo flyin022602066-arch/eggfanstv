@@ -12,7 +12,7 @@ require (
 	github.com/volcengine/volc-sdk-golang v1.0.258
 	github.com/wailsapp/wails/v2 v2.16.0
 	golang.org/x/image v0.47.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
 	gorm.io/driver/sqlite v1.6.0
